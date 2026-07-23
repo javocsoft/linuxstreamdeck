@@ -7,6 +7,9 @@ Software para **Elgato Stream Deck** en Linux con integración **OBS Studio comp
 
 - **Deck virtual en la UI**: la rejilla de la ventana refleja el deck físico y permite
   configurar y probar acciones sin tener el aparato conectado.
+- **Organización cómoda**: mueve teclas con **arrastrar y soltar** (intercambia
+  posiciones) y **copia/pega** cualquier tecla para duplicarla (clic derecho →
+  Copiar/Pegar, o `Ctrl+C`/`Ctrl+V`; `Supr` la limpia). Funciona con cualquier tipo de tecla.
 - **Tres tipos de tecla**:
   - *Acción simple* — una acción, con feedback de estado en la tecla.
   - *Acciones múltiples* — lista ordenada de acciones que se ejecutan en secuencia
@@ -81,6 +84,8 @@ LSD_DEBUG=1 ./run.sh     # con log de depuración
 3. En **Icono**, elige uno de la biblioteca integrada, usa tu propia imagen, o deja el
    que trae la acción por defecto. Añade una **Etiqueta** solo si quieres texto en la tecla.
 4. **Probar** ejecuta la acción sin necesidad del deck físico.
+5. **Reordena** las teclas arrastrándolas de una posición a otra, y **duplica** una
+   tecla con clic derecho → Copiar y luego Pegar sobre otra (o `Ctrl+C`/`Ctrl+V`).
 
 > La app es de **instancia única**: cierra cualquier ventana anterior antes de abrir otra.
 

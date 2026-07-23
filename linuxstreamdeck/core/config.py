@@ -5,6 +5,7 @@ Archivo: ~/.config/linuxstreamdeck/config.json
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from dataclasses import asdict, dataclass, field
@@ -64,6 +65,10 @@ class KeyConfig:
         if self.kind == KIND_TOGGLE:
             return not (self.steps_on or self.steps_off)
         return True
+
+    def clone(self) -> "KeyConfig":
+        """Copia profunda e independiente (para copiar/pegar y mover teclas)."""
+        return copy.deepcopy(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "KeyConfig":

@@ -76,6 +76,41 @@ class DeckController:
         self.config.save()
         self.set_page(len(self.config.pages) - 1)
 
+    # ---------- edición de teclas (mover / copiar / pegar / limpiar) ----------
+
+    def swap_keys(self, a: int, b: int) -> None:
+        """Intercambia dos teclas (para drag & drop). También su estado ON/OFF."""
+        if a == b:
+            return
+        page = self.page
+        page.keys[str(a)], page.keys[str(b)] = page.key(b), page.key(a)
+        # limpiar entradas None que set_key normalmente elimina
+        for i in (a, b):
+            if page.keys.get(str(i)) is None:
+                page.keys.pop(str(i), None)
+        # el estado de conmutación viaja con la tecla
+        pa, pb = (self.current_page, a), (self.current_page, b)
+        sa, sb = self._toggle.pop(pa, None), self._toggle.pop(pb, None)
+        if sb is not None:
+            self._toggle[pa] = sb
+        if sa is not None:
+            self._toggle[pb] = sa
+        self.config.save()
+        self.refresh()
+
+    def paste_key(self, index: int, kc: KeyConfig) -> None:
+        """Coloca una copia independiente de kc en la posición index."""
+        self.page.set_key(index, kc.clone())
+        self._toggle.pop((self.current_page, index), None)  # estado nuevo (OFF)
+        self.config.save()
+        self.refresh()
+
+    def clear_key(self, index: int) -> None:
+        self.page.set_key(index, None)
+        self._toggle.pop((self.current_page, index), None)
+        self.config.save()
+        self.refresh()
+
     # ---------- pulsaciones ----------
 
     def _on_deck_key(self, topic: str, data: dict) -> None:

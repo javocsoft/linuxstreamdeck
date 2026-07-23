@@ -9,7 +9,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
 from .. import APP_NAME  # noqa: E402
 from .editor import EditorPanel  # noqa: E402
@@ -40,6 +40,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._key_buttons: list[Gtk.Button] = []
         self._key_pictures: list[Gtk.Picture] = []
         self._updating_pages = False
+        self._clipboard = None            # KeyConfig copiada (para pegar)
 
         css = Gtk.CssProvider()
         css.load_from_data(_CSS)
@@ -47,6 +48,7 @@ class MainWindow(Adw.ApplicationWindow):
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
 
+        self._setup_key_editing()
         self._build_ui()
         self._connect_bus()
         self._refresh_page_dropdown()
@@ -96,12 +98,16 @@ class MainWindow(Adw.ApplicationWindow):
             pic.set_size_request(KEY_PIXELS, KEY_PIXELS)
             btn.set_child(pic)
             btn.connect("clicked", self._on_key_clicked, index)
+            self._add_key_dnd(btn, index)
+            self._add_key_contextmenu(btn, index)
+            self._add_key_shortcuts(btn, index)
             grid.attach(btn, index % GRID_COLS, index // GRID_COLS, 1, 1)
             self._key_buttons.append(btn)
             self._key_pictures.append(pic)
         grid_box.append(grid)
         hint = Gtk.Label(
-            label="Haz clic en una tecla para configurarla · «Probar» la ejecuta"
+            label="Arrastra para mover · clic derecho para copiar/pegar · "
+                  "«Probar» ejecuta la acción"
         )
         hint.add_css_class("dim-label")
         hint.set_margin_top(12)
@@ -143,13 +149,133 @@ class MainWindow(Adw.ApplicationWindow):
             self._key_pictures[index].set_paintable(texture)
 
     def _on_key_clicked(self, btn, index: int) -> None:
-        log.info("[ui] clic en tecla %d", index)
-        if self.selected is not None:
+        self._select(index)
+
+    def _select(self, index: int) -> None:
+        """Selecciona una tecla (marca el botón y carga el editor)."""
+        if self.selected is not None and self.selected < len(self._key_buttons):
             self._key_buttons[self.selected].remove_css_class("sel")
         self.selected = index
-        btn.add_css_class("sel")
+        self._key_buttons[index].add_css_class("sel")
         self.editor.load(index)
-        log.info("[ui] editor cargado para tecla %d", index)
+
+    # ---------- mover / copiar / pegar / limpiar teclas ----------
+
+    def _setup_key_editing(self) -> None:
+        """Menú contextual (clic derecho) y acciones de copiar/pegar/limpiar."""
+        menu = Gio.Menu()
+        menu.append("Copiar", "win.key-copy")
+        menu.append("Pegar", "win.key-paste")
+        menu.append("Limpiar tecla", "win.key-clear")
+        self._key_popover = Gtk.PopoverMenu.new_from_model(menu)
+
+        self._key_actions = {}
+        for name, cb in (("key-copy", self._copy_selected),
+                         ("key-paste", self._paste_selected),
+                         ("key-clear", self._clear_selected)):
+            act = Gio.SimpleAction.new(name, None)
+            act.connect("activate", lambda a, p, cb=cb: cb())
+            self.add_action(act)
+            self._key_actions[name] = act
+
+    # --- drag & drop (intercambia dos teclas) ---
+
+    def _add_key_dnd(self, btn: Gtk.Button, index: int) -> None:
+        drag = Gtk.DragSource()
+        drag.set_actions(Gdk.DragAction.MOVE)
+        drag.connect("prepare", self._on_drag_prepare, index)
+        drag.connect("drag-begin", self._on_drag_begin, index)
+        btn.add_controller(drag)
+
+        drop = Gtk.DropTarget.new(GObject.TYPE_INT, Gdk.DragAction.MOVE)
+        drop.connect("drop", self._on_drop, index)
+        btn.add_controller(drop)
+
+    def _on_drag_prepare(self, source, x, y, index):
+        return Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_INT, index))
+
+    def _on_drag_begin(self, source, drag, index):
+        paintable = self._key_pictures[index].get_paintable()
+        if paintable is not None:                       # el icono arrastrado = la tecla
+            source.set_icon(paintable, KEY_PIXELS // 2, KEY_PIXELS // 2)
+
+    def _on_drop(self, target, value, x, y, index):
+        if isinstance(value, GObject.Value):     # normalmente GTK ya entrega un int
+            value = value.get_int()
+        src = int(value)
+        if src != index:
+            self.app.controller.swap_keys(src, index)
+            self._select(index)
+        return True
+
+    # --- menú contextual (clic derecho) ---
+
+    def _add_key_contextmenu(self, btn: Gtk.Button, index: int) -> None:
+        gesture = Gtk.GestureClick(button=Gdk.BUTTON_SECONDARY)
+        gesture.connect("pressed", self._on_key_right_click, index)
+        btn.add_controller(gesture)
+
+    def _on_key_right_click(self, gesture, n_press, x, y, index):
+        self._select(index)
+        kc = self.app.controller.page.key(index)
+        self._key_actions["key-copy"].set_enabled(kc is not None)
+        self._key_actions["key-clear"].set_enabled(kc is not None)
+        self._key_actions["key-paste"].set_enabled(self._clipboard is not None)
+        pop = self._key_popover
+        if pop.get_parent() is not None:
+            pop.unparent()
+        pop.set_parent(self._key_buttons[index])
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        pop.set_pointing_to(rect)
+        pop.popup()
+
+    # --- atajos de teclado (activos cuando la tecla tiene el foco) ---
+
+    def _add_key_shortcuts(self, btn: Gtk.Button, index: int) -> None:
+        sc = Gtk.ShortcutController()
+        for accel, cb in (("<Control>c", self._copy_key),
+                          ("<Control>v", self._paste_key),
+                          ("Delete", self._clear_key)):
+            sc.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(accel),
+                Gtk.CallbackAction.new(lambda w, a, cb=cb, i=index: (cb(i), True)[1]),
+            ))
+        btn.add_controller(sc)
+
+    # --- operaciones ---
+
+    def _copy_key(self, index: int) -> None:
+        kc = self.app.controller.page.key(index)
+        self._clipboard = kc.clone() if kc is not None else None
+        if self._clipboard is not None:
+            self.app.bus.emit("status", text=f"Tecla {index + 1} copiada")
+
+    def _paste_key(self, index: int) -> None:
+        if self._clipboard is None:
+            self.app.bus.emit("status", text="No hay ninguna tecla copiada")
+            return
+        self.app.controller.paste_key(index, self._clipboard)
+        if self.selected == index:
+            self.editor.load(index)
+        self.app.bus.emit("status", text=f"Pegada en la tecla {index + 1}")
+
+    def _clear_key(self, index: int) -> None:
+        self.app.controller.clear_key(index)
+        if self.selected == index:
+            self.editor.load(index)
+
+    def _copy_selected(self):
+        if self.selected is not None:
+            self._copy_key(self.selected)
+
+    def _paste_selected(self):
+        if self.selected is not None:
+            self._paste_key(self.selected)
+
+    def _clear_selected(self):
+        if self.selected is not None:
+            self._clear_key(self.selected)
 
     def _on_page_selected(self, dropdown, _pspec) -> None:
         if self._updating_pages:
