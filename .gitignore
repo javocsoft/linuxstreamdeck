@@ -1,0 +1,65 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ---- Entornos virtuales ----
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ---- Empaquetado / build ----
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+pip-wheel-metadata/
+*.whl
+
+# ---- Cachés de herramientas ----
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.dmypy.json
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ---- Configuración de la app en tiempo de ejecución ----
+# La config del usuario vive en ~/.config/linuxstreamdeck/ (fuera del repo),
+# pero por si alguien la copia aquí:
+config.json
+
+# ---- Editores / IDE ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.\#*
+\#*\#
+
+# ---- Sistema operativo ----
+.DS_Store
+Thumbs.db
+
+# ---- Claude Code ----
+# Ajustes locales por usuario (permisos, etc.). El settings.json compartido,
+# si existiera, sí se versiona.
+.claude/settings.local.json
+
+# ---- Registros / temporales ----
+*.log
+*.tmp
+
+# NOTA: los assets NO se ignoran a propósito
+#   linuxstreamdeck/assets/icons/*.ttf, *.json, LICENSE-MDI.txt
+#   data/udev/*.rules
+# son parte del proyecto y deben versionarse.
