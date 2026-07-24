@@ -44,7 +44,10 @@ implemented actions, no guessing. It runs, and it's useful.
 - 🧩 **Three key types** — *single action*, *multiple actions* (run in sequence, with an
   optional **Wait** action to pause between them), and *toggle (ON/OFF)* with two action
   lists and its own look per state. Multi and toggle keys show **RUN** with a subtle
-  slow blue breathing halo while their actions are queued or running.
+  slow blue breathing halo while their actions are queued or running; blocking
+  single **Wait** and **Play audio file** actions use the same feedback.
+- 🔊 **Local audio playback** — play WAV, MP3, OGG, FLAC or Opus files at a chosen
+  volume, for the full file or an optional maximum duration.
 - 🎨 **Built-in icon library** — ~7,400 Material Design Icons, categorized and searchable.
   Every action ships with a sensible default icon; pick another, or use your own image.
 - ✋ **Drag & drop and copy/paste** — reorder keys by dragging, duplicate any key with
@@ -54,7 +57,7 @@ implemented actions, no guessing. It runs, and it's useful.
 - 🔌 **Auto-reconnect & hotplug** — connects to OBS on its own and picks up the deck when
   you plug it in.
 - 💾 **Portable configuration backups** — export or import profiles, pages, keys,
-  settings and custom key icons in one file.
+  settings, custom key icons and referenced action audio in one file.
 - 🔐 **Secure OBS password storage** — the password stays in your desktop keyring,
   never in the configuration file or an export.
 - ✨ **AI-assisted key creation** — describe the key you want, get a locally
@@ -73,14 +76,15 @@ implemented actions, no guessing. It runs, and it's useful.
 | **Media** | Play / pause / restart / stop / next / previous |
 | **Advanced** | Scene collections & profiles · internal hotkeys · **raw request** (100% of the API) |
 
-Plus system actions (run a command, open a URL, wait a set time) and navigation
-between pages.
+Plus system actions (run a command, open a URL, wait a set time or play a local
+audio file) and navigation between pages.
 
 ## 📦 Requirements
 
 - Linux desktop (Pop!_OS / Ubuntu 24.04 or similar), Python ≥ 3.10
 - OBS Studio 28+ with the WebSocket server enabled (*Tools → WebSocket Server Settings*)
 - Secret Service through GNOME Keyring (installed by the `.deb` or `./build.sh --apt`)
+- GStreamer 1.0 with the base and good plugin sets for local audio playback
 
 ## ⚙️ Installation
 
@@ -117,7 +121,9 @@ sudo ./install-udev.sh
 
 ```bash
 # System dependencies
-sudo apt install gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-secret-1 gnome-keyring libhidapi-libusb0 python3-gi python3-gi-cairo
+sudo apt install gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-secret-1 \
+  gir1.2-gstreamer-1.0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  gnome-keyring libhidapi-libusb0 python3-gi python3-gi-cairo
 
 # Verify the generated Claude and Codex custom agent adapters
 python3 agent-definitions/sync.py --check
@@ -149,8 +155,9 @@ The build keeps the version in sync across `pyproject.toml` and
 `linuxstreamdeck/__init__.py`, so passing an explicit `X.Y.Z` bumps both. The
 package is architecture-independent: it vendors the two pip-only Python
 dependencies and pulls GTK4/Libadwaita, Secret Service, GNOME Keyring, Pillow,
-hidapi, websocket-client and the HTTPS CA certificate bundle through apt. AI
-provider calls use Python's standard library, so they add no pip dependency.
+hidapi, websocket-client, GStreamer with its playback plugins and the HTTPS CA
+certificate bundle through apt. AI provider calls use Python's standard library,
+so they add no pip dependency.
 
 After installing or upgrading the package, refresh the system AppStream cache
 so software centres show the current application metadata:
@@ -201,6 +208,25 @@ editing**, because saving immediately before overwriting it would have no effect
 Your non-secret configuration lives in `~/.config/linuxstreamdeck/config.json` (with an
 automatic backup in `config.json.bak`). Point `LSD_CONFIG_DIR` somewhere else to relocate it.
 
+### 🔊 Play a local audio file
+
+Choose **System → Play audio file**, then select a local WAV (`.wav` or `.wave`),
+MP3, OGG/OGA, FLAC or Opus file with the file chooser. Volume is adjustable from
+0 to 100%. Leave **Maximum play time** blank to play the full file, or enter
+`MM:SS` / `H:MM:SS` to stop earlier.
+
+In a multiple-action or toggle sequence, the next step waits until playback
+reaches the end of the file or the configured limit. The key shows the animated
+**RUN** feedback while playback is active, including when audio is the only
+action. Playback stops promptly when LinuxStreamDeck shuts down, and file,
+decoder or pipeline failures appear as an action error.
+
+Press the same key again during playback to stop its current invocation and
+restart that key's sequence, including the audio, from the beginning. The
+replacement waits until the previous audio pipeline has stopped, so clips never
+overlap. If you press rapidly several times, canceled queued invocations are
+skipped and only the latest restart runs.
+
 ### 🔐 OBS password storage
 
 Your OBS password is stored asynchronously in the desktop Secret Service (GNOME
@@ -242,17 +268,21 @@ and parameter, then press **Save** only if you want to keep it.
 Use the profiles menu (⋮) in the header to choose **Export configuration** or
 **Import configuration**.
 
-- **Export** creates a portable `.lsdconfig` ZIP archive. It contains the full
-  JSON configuration, custom key icon files and non-secret OBS settings, but
-  never the OBS password or provider API keys. Built-in Material Design Icons
-  remain lightweight `mdi:` references because they are bundled with
-  LinuxStreamDeck. If a custom icon file can no longer be found, it is not
-  included and the app shows a warning.
+- **Export** creates a portable `.lsdconfig` ZIP archive. Format v2 contains the
+  full JSON configuration, custom key icons, supported audio referenced by
+  **Play audio file**, and non-secret OBS settings, but never the OBS password or
+  provider API keys. Identical audio files are stored once. Each audio file is
+  limited to 200 MiB and bundled audio to 500 MiB total. Built-in Material Design
+  Icons remain lightweight `mdi:` references because they ship with
+  LinuxStreamDeck. Missing or oversized files, and audio with an unsupported
+  extension, keep their original local reference and produce an export warning.
 - **Import** replaces all current profiles, pages, keys and settings after you
   confirm the warning. The previous configuration is saved as
-  `~/.config/linuxstreamdeck/config.json.bak`. Bundled custom icons are restored
-  under `~/.config/linuxstreamdeck/imported-icons/`; brightness and OBS settings
-  are applied immediately, and OBS reconnects with the imported settings. The
+  `~/.config/linuxstreamdeck/config.json.bak`. Bundled custom icons and audio are
+  restored under `~/.config/linuxstreamdeck/imported-icons/` and
+  `~/.config/linuxstreamdeck/imported-audio/` after validating their archive
+  paths. Brightness and OBS settings are applied immediately, and OBS reconnects
+  with the imported settings. Current v2 and older v1 exports are accepted. The
   import keeps this computer's keyring credentials and ignores password fields in
   older exports. When moving to another computer, enter the OBS password and any
   provider API keys again.
@@ -264,7 +294,7 @@ build.sh · run.sh · install-udev.sh    # prepare / launch / USB permissions
 packaging/         # build-deb.sh, .desktop, icon, AppStream metainfo, scripts → .deb
 linuxstreamdeck/
 ├── ai/            # OpenAI/Claude requests, bounded context and proposal validation
-├── core/          # event bus, config, credential storage, action registry, controller, icons
+├── core/          # events, config, secrets, actions, controller, audio playback, icons
 ├── device/        # physical Stream Deck (hidapi) and key rendering (Pillow)
 ├── obs/           # obs-websocket v5 client + full catalogue of OBS actions
 ├── ui/            # GTK4/Libadwaita: window, editor, AI assistant, OBS settings

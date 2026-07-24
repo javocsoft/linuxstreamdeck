@@ -5,7 +5,7 @@
 # The package is Architecture: all — it ships the pure-Python app plus the two
 # pip-only dependencies (StreamDeck, obsws_python) vendored under
 # /usr/lib/linuxstreamdeck/_vendor, and pulls the system pieces (GTK4/Adw via
-# PyGObject, Pillow, hidapi, websocket-client) through apt Depends.
+# PyGObject, GStreamer, Pillow, hidapi and websocket-client) through apt Depends.
 #
 # Usage:
 #   ./packaging/build-deb.sh            # version taken from pyproject.toml
@@ -141,7 +141,7 @@ Architecture: all
 Maintainer: $MAINTAINER
 Homepage: $HOMEPAGE
 Installed-Size: $SIZE_KB
-Depends: python3 (>= 3.10), ca-certificates, python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-secret-1, gnome-keyring, libhidapi-libusb0, python3-pil, python3-websocket
+Depends: python3 (>= 3.10), ca-certificates, python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-secret-1, gir1.2-gstreamer-1.0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gnome-keyring, libhidapi-libusb0, python3-pil, python3-websocket
 Description: Elgato Stream Deck controller for Linux with OBS Studio integration
  LinuxStreamDeck is a GTK4/Libadwaita desktop application to control the Elgato
  Stream Deck on Linux, built around full OBS Studio integration (obs-websocket

@@ -424,13 +424,23 @@ class MainWindow(Adw.ApplicationWindow):
             log.exception("Could not export the configuration")
             self._show_configuration_error("Export failed", str(error))
             return
-        if exported.missing_icons:
+        if exported.missing_icons or exported.missing_audio:
+            warnings = []
+            if exported.missing_icons:
+                warnings.append(
+                    f"{exported.missing_icons} custom icon file(s) could not "
+                    "be found or included."
+                )
+            if exported.missing_audio:
+                warnings.append(
+                    f"{exported.missing_audio} audio file(s) could not be "
+                    "found or included."
+                )
             self._show_configuration_error(
                 "Configuration exported with warnings",
                 (
                     f"Saved to {destination}.\n\n"
-                    f"{exported.missing_icons} custom icon file(s) could not "
-                    "be found and were not included."
+                    + "\n".join(warnings)
                 ),
             )
         else:
@@ -495,6 +505,13 @@ class MainWindow(Adw.ApplicationWindow):
             f"Imported {imported.profiles} profile(s), {imported.pages} "
             f"page(s) and {imported.keys} configured key(s)"
         )
+        restored = []
+        if imported.restored_icons:
+            restored.append(f"{imported.restored_icons} custom icon(s)")
+        if imported.restored_audio:
+            restored.append(f"{imported.restored_audio} audio file(s)")
+        if restored:
+            text += f"; restored {', '.join(restored)}"
         GLib.idle_add(lambda: (self._flash_status(text), False)[1])
 
     @staticmethod

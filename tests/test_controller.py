@@ -3,10 +3,13 @@ from __future__ import annotations
 import threading
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from linuxstreamdeck import basic_actions as _basic_actions  # noqa: F401
+from linuxstreamdeck.core import actions as action_registry
 from linuxstreamdeck.core.config import (
     KIND_MULTI,
+    KIND_SINGLE,
     KIND_TOGGLE,
     ActionStep,
     Config,
@@ -106,6 +109,95 @@ class ControllerActivityTests(unittest.TestCase):
         idle = self.controller._key_spec(0, toggle, self.deck.image_size)
         self.assertEqual(idle["badge"], "ON")
         self.assertTrue(idle["active"])
+
+    def test_single_audio_action_uses_running_feedback(self) -> None:
+        key = self.controller._tkey(0)
+        audio = KeyConfig(
+            kind=KIND_SINGLE,
+            action="sys.audio",
+            params={"file": "/tmp/tone.mp3"},
+        )
+        self.controller._begin_running(key)
+
+        self.assertEqual(
+            self.controller._key_spec(0, audio, self.deck.image_size)["badge"],
+            "RUN",
+        )
+
+        self.controller._end_running(key)
+        self.assertEqual(
+            self.controller._key_spec(0, audio, self.deck.image_size)["badge"],
+            "",
+        )
+
+    def test_rapid_audio_repress_stops_then_starts_latest_invocation(self) -> None:
+        key_config = KeyConfig(
+            kind=KIND_SINGLE,
+            action="sys.audio",
+            params={"marker": "first"},
+        )
+        self.config.pages[0].set_key(0, key_config)
+        audio_action = action_registry.get("sys.audio")
+        self.assertIsNotNone(audio_action)
+
+        first_started = threading.Event()
+        first_cancelled = threading.Event()
+        release_first = threading.Event()
+        latest_started = threading.Event()
+        release_latest = threading.Event()
+        latest_finished = threading.Event()
+        state_lock = threading.Lock()
+        order = []
+        active = 0
+        maximum_active = 0
+
+        def fake_execute(ctx, params) -> None:
+            nonlocal active, maximum_active
+            marker = params["marker"]
+            with state_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+                order.append(f"start:{marker}")
+            try:
+                if marker == "first":
+                    first_started.set()
+                    if ctx.wait_until_stopped(1):
+                        first_cancelled.set()
+                    release_first.wait(1)
+                elif marker == "third":
+                    latest_started.set()
+                    release_latest.wait(1)
+                else:
+                    release_latest.wait(1)
+            finally:
+                with state_lock:
+                    order.append(f"stop:{marker}")
+                    active -= 1
+                if marker == "third":
+                    latest_finished.set()
+
+        with patch.object(audio_action, "execute", side_effect=fake_execute):
+            self.controller.press(0)
+            self.assertTrue(first_started.wait(1))
+
+            key_config.params = {"marker": "second"}
+            self.controller.press(0)
+            self.assertTrue(first_cancelled.wait(1))
+
+            key_config.params = {"marker": "third"}
+            self.controller.press(0)
+            release_first.set()
+
+            self.assertTrue(latest_started.wait(1))
+            with state_lock:
+                self.assertEqual(
+                    order,
+                    ["start:first", "stop:first", "start:third"],
+                )
+                self.assertEqual(maximum_active, 1)
+
+            release_latest.set()
+            self.assertTrue(latest_finished.wait(1))
 
     def test_rendering_is_not_starved_by_two_wait_actions(self) -> None:
         rendered = set()

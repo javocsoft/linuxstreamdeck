@@ -22,6 +22,9 @@ SYSTEM_PKGS=(
     gir1.2-gtk-4.0
     gir1.2-adw-1
     gir1.2-secret-1
+    gir1.2-gstreamer-1.0
+    gstreamer1.0-plugins-base
+    gstreamer1.0-plugins-good
     gnome-keyring
     libhidapi-libusb0
     python3-gi
@@ -50,6 +53,8 @@ info "Checking custom agent definitions…"
 missing=()
 "$PY" -c "import gi; gi.require_version('Gtk','4.0'); gi.require_version('Adw','1'); gi.require_version('Secret','1')" 2>/dev/null \
     || missing+=(gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-secret-1 python3-gi)
+"$PY" -c "import gi; gi.require_version('Gst','1.0'); from gi.repository import Gst; Gst.init(None); assert all(Gst.ElementFactory.find(name) for name in ('playbin','wavparse','mpg123audiodec','flacdec','vorbisdec','opusdec'))" 2>/dev/null \
+    || missing+=(gir1.2-gstreamer-1.0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good)
 command -v gnome-keyring-daemon >/dev/null 2>&1 || missing+=(gnome-keyring)
 ldconfig -p 2>/dev/null | grep -q "libhidapi" || missing+=(libhidapi-libusb0)
 

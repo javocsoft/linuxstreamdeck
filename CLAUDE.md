@@ -29,9 +29,13 @@ of truth; everything here is Claude-specific and additive.
 - Treat AI output as untrusted proposal data. Keep provider keys in Secret
   Service, context opt-in and bounded, dangerous actions excluded, and the final
   save under explicit user control. See AGENTS.md §3 and §5.
-- Keep action execution separate from rendering so long waits cannot starve
-  running-key feedback, including the controller's teardown order. See AGENTS.md
-  §3 and §5.
+- Keep action execution separate from rendering so long waits or audio playback
+  cannot starve running-key feedback, including the controller's teardown order.
+  See AGENTS.md §3 and §5.
+- Keep restartable action cancellation scoped by profile/page/key. A replacement
+  must wait for its predecessor to release resources, and canceled queued runs
+  must not execute. Use the cancellation-aware `ActionContext` methods for
+  blocking work. See AGENTS.md §3 and §5.
 
 ### Standard verification loop
 

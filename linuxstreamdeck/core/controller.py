@@ -34,6 +34,13 @@ log = logging.getLogger(__name__)
 BUSY_PULSE_SECONDS = 0.75
 
 
+class _ExecutionControl:
+    def __init__(self, predecessor: threading.Event | None = None) -> None:
+        self.cancel = threading.Event()
+        self.finished = threading.Event()
+        self.predecessor = predecessor
+
+
 class DeckController:
     def __init__(self, config: Config, bus: EventBus, obs, deck: DeckManager) -> None:
         self.config = config
@@ -54,11 +61,17 @@ class DeckController:
         self._stopping = threading.Event()
         # ON/OFF state of toggle keys, keyed by (profile, page, key)
         self._toggle: dict[tuple[int, int, int], bool] = {}
-        # Number of queued/running multi-action invocations for each key.
+        # Number of queued/running feedback-enabled invocations for each key.
         self._running: dict[tuple[int, int, int], int] = {}
         self._running_lock = threading.Lock()
         self._busy_phase = False
         self._busy_wakeup = threading.Event()
+        # Restartable executions (currently audio) are replaced per key.
+        self._execution_lock = threading.Lock()
+        self._execution_controls: dict[
+            tuple[int, int, int],
+            _ExecutionControl,
+        ] = {}
         self._busy_thread = threading.Thread(
             target=self._busy_loop,
             daemon=True,
@@ -263,11 +276,18 @@ class DeckController:
             steps = list(kc.steps_on if new_state else kc.steps_off)
         else:
             return
-        runtime_key = (
-            self._tkey(index)
-            if kc.kind in (KIND_MULTI, KIND_TOGGLE)
+        single_action = (
+            action_registry.get(kc.action)
+            if kc.kind == KIND_SINGLE
             else None
         )
+        show_running = (
+            kc.kind in (KIND_MULTI, KIND_TOGGLE)
+            or bool(single_action and single_action.running_feedback)
+        )
+        execution_key = self._tkey(index)
+        runtime_key = execution_key if show_running else None
+        control = self._prepare_execution(execution_key, steps)
         if runtime_key is not None:
             self._begin_running(runtime_key)
         try:
@@ -276,8 +296,12 @@ class DeckController:
                 steps,
                 index,
                 runtime_key,
+                control,
+                execution_key,
             )
         except RuntimeError:
+            if control is not None:
+                self._finish_execution(execution_key, control)
             if runtime_key is not None:
                 self._end_running(runtime_key)
             if not self._stopping.is_set():
@@ -288,10 +312,23 @@ class DeckController:
         steps: list[ActionStep],
         index: int,
         runtime_key: tuple[int, int, int] | None = None,
+        control: _ExecutionControl | None = None,
+        execution_key: tuple[int, int, int] | None = None,
     ) -> None:
+        run_ctx = ActionContext(
+            obs=self.obs,
+            controller=self,
+            bus=self.bus,
+            cancellation=control.cancel if control is not None else None,
+        )
         try:
+            if control is not None and control.predecessor is not None:
+                while not control.predecessor.wait(0.05):
+                    # The predecessor also observes shutdown and will finish.
+                    if self._stopping.is_set():
+                        return
             for step in steps:
-                if self._stopping.is_set():
+                if run_ctx.stop_requested():
                     return
                 action = action_registry.get(step.action)
                 if action is None:
@@ -299,14 +336,58 @@ class DeckController:
                         log.warning("Unknown action on key %d: %s", index, step.action)
                     continue
                 try:
-                    action.execute(self.ctx, dict(step.params))
+                    action.execute(run_ctx, dict(step.params))
                     log.debug("Ran %s (key %d)", action.id, index)
                 except Exception as e:
                     log.exception("Error running %s", action.id)
                     self.bus.emit("status", text=f"Error in «{action.name}»: {e}")
         finally:
+            if control is not None:
+                self._finish_execution(
+                    execution_key or runtime_key or self._tkey(index),
+                    control,
+                )
             if runtime_key is not None:
                 self._end_running(runtime_key)
+
+    # ---------- replaceable executions ----------
+
+    def _prepare_execution(
+        self,
+        key: tuple[int, int, int],
+        steps: list[ActionStep],
+    ) -> _ExecutionControl | None:
+        restartable = any(
+            bool(
+                (action := action_registry.get(step.action))
+                and action.restart_on_repress
+            )
+            for step in steps
+        )
+        with self._execution_lock:
+            previous = self._execution_controls.get(key)
+            if previous is not None:
+                previous.cancel.set()
+            if not restartable and previous is None:
+                return None
+            control = _ExecutionControl(
+                previous.finished if previous is not None else None
+            )
+            if restartable:
+                self._execution_controls[key] = control
+            else:
+                self._execution_controls.pop(key, None)
+            return control
+
+    def _finish_execution(
+        self,
+        key: tuple[int, int, int],
+        control: _ExecutionControl,
+    ) -> None:
+        control.finished.set()
+        with self._execution_lock:
+            if self._execution_controls.get(key) is control:
+                self._execution_controls.pop(key, None)
 
     # ---------- running feedback ----------
 
@@ -416,7 +497,7 @@ class DeckController:
             return {"size": size, "label": kc.label, "icon_path": icon,
                     "bg": kc.bg_color, "busy": busy, "busy_phase": phase,
                     "badge": "RUN" if busy else "⋯"}
-        return self._single_spec(kc, size)
+        return self._single_spec(index, kc, size)
 
     @staticmethod
     def _first_step_icon(steps) -> str:
@@ -426,7 +507,7 @@ class DeckController:
                 return action.default_icon
         return ""
 
-    def _single_spec(self, kc: KeyConfig, size) -> dict:
+    def _single_spec(self, index: int, kc: KeyConfig, size) -> dict:
         fb = None
         action = action_registry.get(kc.action)
         if action is not None:
@@ -439,13 +520,16 @@ class DeckController:
         # user set explicitly is shown (without it the icon stays centered; the
         # action name is not used, which used to push the icon upwards).
         icon = kc.icon or (action.default_icon if action else "")
+        busy, phase = self._busy_state(index)
         return {
             "size": size,
             "label": kc.label,
             "icon_path": icon,
             "bg": fb.get("color") or kc.bg_color,
             "active": fb.get("active", False),
-            "badge": fb.get("badge", ""),
+            "busy": busy,
+            "busy_phase": phase,
+            "badge": "RUN" if busy else fb.get("badge", ""),
         }
 
     def _toggle_spec(self, index: int, kc: KeyConfig, size) -> dict:

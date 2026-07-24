@@ -16,7 +16,8 @@ it is fully usable and testable **without the physical hardware connected**.
 
 - **Language / UI:** Python ≥ 3.10, PyGObject (GTK 4 + Libadwaita/`Adw`).
 - **Key dependencies:** `streamdeck` (python-elgato-streamdeck, HID), `pillow`
-  (key image composition), `obsws-python` (obs-websocket v5 client).
+  (key image composition), `obsws-python` (obs-websocket v5 client), GStreamer
+  1.0 `playbin` (local audio playback).
 - **Target device:** Stream Deck Original V2 (`0fd9:006d`), 15 keys, 5 columns,
   keys rendered at 72×72 px. The grid layout constant lives in `ui/window.py`.
 - **License:** GPL-3.0-or-later. **Author:** JavocSoft.
@@ -39,6 +40,7 @@ LSD_DEBUG=1 ./run.sh    # launch with debug logging
 ```
 
 System packages required: `gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-secret-1
+gir1.2-gstreamer-1.0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 gnome-keyring libhidapi-libusb0 python3-gi python3-gi-cairo`.
 
 **Compile check (use after any code change):**
@@ -63,10 +65,12 @@ the GUI to "see" a change (see §5).
 `dist/linux-stream-deck-<version>.deb`. It is `Architecture: all`: the pure-Python
 app plus the two pip-only deps (`StreamDeck`, `obsws_python`) are vendored under
 `/usr/lib/linuxstreamdeck/_vendor`, while GTK4/Adw (PyGObject), Secret Service,
-GNOME Keyring, Pillow, hidapi, websocket-client and `ca-certificates` come from
-apt `Depends`. AI provider HTTPS calls use the Python standard library, so there
-is no additional pip dependency. The launcher `/usr/bin/linuxstreamdeck` runs the
-system `python3` with those paths on `sys.path`. It also installs a
+GNOME Keyring, GStreamer plus its base/good plugins, Pillow, hidapi,
+websocket-client and `ca-certificates` come from apt `Depends`. AI provider HTTPS
+calls and the local audio wrapper use the Python standard library / system GI
+bindings, so there is no additional pip dependency. The launcher
+`/usr/bin/linuxstreamdeck` runs the system `python3` with those paths on
+`sys.path`. It also installs a
 desktop entry, the app icon, an **AppStream metainfo** (so installed software
 catalogues can discover its icon, description and screenshot), and the udev rule
 (reloaded by the `postinst`). Version defaults to `pyproject.toml`; the build
@@ -90,7 +94,7 @@ linuxstreamdeck/
 ├── __main__.py        Entry point; logging setup; `linuxstreamdeck` console script.
 ├── app.py             LinuxStreamDeckApp: builds config, credential stores, AI service,
 │                      EventBus, OBS client, deck/controller and MainWindow; app lifecycle.
-├── basic_actions.py   System/navigation actions (run command, open URL, wait, go to page…).
+├── basic_actions.py   System/navigation actions (command, URL, wait, audio, page…).
 ├── ai/
 │   ├── constants.py   OpenAI/Claude provider ids, labels and default models.
 │   └── service.py     Provider calls, bounded optional context, local proposal validation.
@@ -102,6 +106,7 @@ linuxstreamdeck/
 │   │                  Migration, backup and portable `.lsdconfig` import/export.
 │   ├── actions.py     Action framework: `Action` base, declarative `Param`,
 │   │                  `ActionContext`, global `REGISTRY`, `@register`, `by_category`.
+│   ├── audio.py       Blocking local playback via GStreamer playbin; shutdown-aware.
 │   ├── controller.py  DeckController: handles presses, separate action/render workers,
 │   │                  running feedback, page/profile/key operations and imports.
 │   ├── icons.py       Built-in icon library (Material Design Icons glyphs via
@@ -155,13 +160,23 @@ Actions are declarative and self-registering:
 
 - Subclass `Action`, set `id`, `name`, `category`, `params`, optional
   `default_icon` (`"mdi:name"`), and decorate with `@register`.
-- Each `Param` has a `kind` (`string | int | float | choice | duration`, the last
-  a `MM:SS` time field — see `parse_duration`/`format_duration`) and may set
+- Each `Param` has a `kind` (`string | int | float | choice | duration |
+  optional_duration | file`). Duration fields accept `MM:SS` / `H:MM:SS`;
+  `optional_duration` may stay blank. Numeric parameters may declare
+  `minimum` / `maximum` / `step`; file parameters may declare `extensions` and
+  `file_filter_name` for the native chooser. A parameter may also set
   `choices_source` so the editor fills the dropdown **live from OBS**
   (`scenes`, `inputs`, `media_inputs`, `transitions`, `scene_collections`,
   `profiles`, `sources_in_scene`, `filters_of_source`, `hotkeys`, `pages`).
 - `execute(ctx, params)` performs the action; `feedback(ctx, params)` optionally
   returns `{"active": bool, "color": "#rrggbb", "badge": str}` for live key state.
+- Set `running_feedback = True` on a blocking action that should show the
+  controller's temporary `RUN`/breathing feedback even as a single-action key.
+- Set `restart_on_repress = True` when pressing the same profile/page/key again
+  should cancel its prior invocation and restart the complete key sequence.
+  Long-running actions must cooperate through `ActionContext.stop_requested()`
+  or `ActionContext.wait_until_stopped()`, which observe both application
+  shutdown and replacement cancellation.
 - `apply_default_icons({action_id: "mdi:…"})` assigns default icons after
   registration. Registration happens on import (`app.py` imports the catalogues).
 
@@ -170,6 +185,31 @@ render value. The editor Appearance preview must resolve the same effective
 action/default icon as the controller and deck grid, but must keep the stored
 reference empty. Clearing an explicit icon therefore restores inheritance instead
 of copying the current fallback into config.
+
+### Local audio action
+
+`sys.audio` (**Play audio file**) uses GStreamer `playbin` for local `.wav`,
+`.wave`, `.mp3`, `.ogg`, `.oga`, `.flac` and `.opus` files. Its declarative
+parameters are a filtered `file` chooser, integer volume from 0 to 100 with a
+step of 5, and an optional maximum duration. Blank duration means play to EOS;
+otherwise `MM:SS` / `H:MM:SS` limits playback.
+
+Playback is deliberately blocking on the action worker so the next multi/toggle
+step starts only after EOS or the limit. The player polls
+`ActionContext.stop_requested()`, returns promptly during application shutdown or
+replacement cancellation and always resets the pipeline to `NULL`.
+Missing/unsupported files, pipeline creation/start failures and decoder errors
+must surface through the normal action error status. Both `sys.audio` and
+`sys.wait` opt single-action keys into running feedback.
+
+`sys.audio` sets `restart_on_repress = True`, making its entire containing key
+sequence restartable. Execution controls are scoped by `(profile, page, key)`.
+A same-key press signals the prior control and chains its replacement behind the
+prior `finished` event, so the old GStreamer pipeline reaches `NULL` before the
+new invocation starts. Rapid presses cancel queued replacements before they run,
+collapsing the queue to the latest invocation. `sys.wait` uses
+`ActionContext.wait_until_stopped()` so a wait anywhere in an audio-containing
+sequence can be interrupted promptly before the restart.
 
 ### AI-assisted key proposals
 
@@ -205,12 +245,14 @@ loads it into the existing editor, reviews it, and presses **Save** to persist i
 
 ### Running key feedback and workers
 
-Multi and multi-toggle invocations are counted from queueing through completion,
-keyed by `(profile, page, key)`. While the count is nonzero, that key shows a
-`RUN` badge and a subtle slow blue breathing halo. Repeated presses increment the
-count, so the feedback remains until every invocation finishes. Toggle keys keep
-their ON/OFF state underneath the temporary running feedback and restore the
-appropriate badge when the final invocation completes.
+Multi and multi-toggle invocations, plus single actions with
+`running_feedback = True`, are counted from queueing through completion, keyed by
+`(profile, page, key)`. While the count is nonzero, that key shows a `RUN` badge
+and a subtle slow blue breathing halo. Repeated presses increment the count; for
+restartable sequences, canceled running or queued invocations remain counted
+until they finish unwinding, so feedback stays visible across the replacement.
+Toggle keys keep their ON/OFF state underneath the temporary running feedback
+and restore the appropriate badge when the final invocation completes.
 
 Action execution and rendering use separate `ThreadPoolExecutor` instances. Two
 long `Wait` actions may occupy both action workers, but must never prevent a key
@@ -221,9 +263,10 @@ current view.
 
 Controller shutdown order is deliberate: set the stopping signal, shut down the
 action executor, join the activity thread, then shut down the render executor.
-`Wait` observes the stopping signal so running waits can end promptly. Do not
-merge the executors or reorder teardown in a way that lets actions/activity submit
-work after the render executor has stopped.
+`Wait` observes both the stopping signal and per-invocation cancellation through
+its `ActionContext`, so shutdown and same-key replacement can end it promptly.
+Do not merge the executors or reorder teardown in a way that lets
+actions/activity submit work after the render executor has stopped.
 
 ### Unsaved editor protection
 
@@ -257,11 +300,17 @@ and the password is session-only. OpenAI and Claude API keys are also stored onl
 in Secret Service, under separate provider identities; AI preferences in config
 never contain either key.
 
-The profiles menu can export a portable `.lsdconfig` ZIP archive containing the
-full JSON configuration and available custom key icons. Built-in `mdi:` icons
-stay as references, and OBS passwords and provider API keys are never exported.
-Import validates the archive, restores bundled custom icons below
-`CONFIG_DIR/imported-icons`, replaces the complete configuration and writes the
+The profiles menu exports `.lsdconfig` ZIP format v2 with the full JSON
+configuration, available custom key icons and supported files referenced by
+`sys.audio`; identical audio content is deduplicated. Audio is limited to 200 MiB
+per file and 500 MiB total. Built-in `mdi:` icons stay as references, and OBS
+passwords and provider API keys are never exported. Missing, unreadable,
+unsupported or oversized audio remains a local reference and produces an export
+warning.
+
+Import accepts format v1 and v2, validates archive member paths and size limits,
+restores bundled icons below `CONFIG_DIR/imported-icons` and audio below
+`CONFIG_DIR/imported-audio`, replaces the complete configuration and writes the
 prior configuration to `config.json.bak`. It keeps the destination computer's
 keyring credentials and ignores password fields in old exports, so an OBS password
 must be entered once after moving to a new computer.
@@ -346,6 +395,17 @@ hard-to-diagnose failures.
    pulse only busy keys in the active view, and preserve shutdown order: action
    executor, activity thread, render executor.
 
+9. **Restartable actions must never overlap.** Keep cancellation controls scoped
+   by profile/page/key, cancel the prior same-key invocation and wait for its
+   `finished` event before starting the replacement. Long-running actions and
+   waits must observe their `ActionContext`; canceled queued replacements must
+   exit without executing so rapid presses collapse to the latest invocation.
+
+10. **Portable audio must stay bounded and path-safe.** Keep `.lsdconfig` v1 import
+   compatibility while exporting v2. Bundle only supported `sys.audio` files,
+   deduplicate content, enforce per-file/total limits, validate archive paths
+   before extraction and restore only below `CONFIG_DIR/imported-audio`.
+
 ---
 
 ## 6. Safe local experimentation
@@ -356,7 +416,7 @@ unless `LSD_CONFIG_DIR` is set. Any script that exercises code calling `save()`
 `paste_key`, `clear_key`, brightness changes, saving a key) will **overwrite the
 user's real config** — this has happened and lost real keys and settings.
 `Config.import_bundle()` also saves a replacement configuration and writes imported
-icons below the config directory, so it must always be isolated too.
+icons and audio below the config directory, so it must always be isolated too.
 
 **Always redirect the config directory before importing the package:**
 

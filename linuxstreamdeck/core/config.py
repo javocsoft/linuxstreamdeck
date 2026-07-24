@@ -23,6 +23,7 @@ from ..ai.constants import (
     PROVIDERS,
 )
 from .actions import format_duration
+from .audio import SUPPORTED_AUDIO_EXTENSIONS
 
 log = logging.getLogger(__name__)
 
@@ -37,13 +38,16 @@ BACKUP_FILE = CONFIG_DIR / "config.json.bak"
 DEFAULT_KEY_BG = "#1e1e28"
 
 EXPORT_FORMAT = "linuxstreamdeck-configuration"
-EXPORT_VERSION = 1
+EXPORT_VERSION = 2
 EXPORT_CONFIG_FILE = "config.json"
 EXPORT_MANIFEST_FILE = "manifest.json"
 EXPORT_ICON_PREFIX = "bundle:"
+EXPORT_AUDIO_PREFIX = "bundle-audio:"
 MAX_CONFIG_BYTES = 10 * 1024 * 1024
 MAX_ICON_BYTES = 50 * 1024 * 1024
 MAX_TOTAL_ICON_BYTES = 200 * 1024 * 1024
+MAX_AUDIO_BYTES = 200 * 1024 * 1024
+MAX_TOTAL_AUDIO_BYTES = 500 * 1024 * 1024
 
 # Key types
 KIND_SINGLE = "single"          # a single action (with state feedback)
@@ -55,6 +59,8 @@ KIND_TOGGLE = "multi_toggle"    # toggle: two action lists (ON/OFF state)
 class ExportResult:
     bundled_icons: int
     missing_icons: int
+    bundled_audio: int = 0
+    missing_audio: int = 0
 
 
 @dataclass(frozen=True)
@@ -63,6 +69,7 @@ class ImportResult:
     pages: int
     keys: int
     restored_icons: int
+    restored_audio: int = 0
 
 
 @dataclass
@@ -403,10 +410,13 @@ class Config:
     # ---------- portable import / export ----------
 
     def export_bundle(self, destination: Path) -> ExportResult:
-        """Write a portable configuration archive, including custom key icons."""
+        """Write a portable archive with custom icons and action audio files."""
         raw = self._serializable_dict()
         icon_files: dict[str, bytes] = {}
         missing_icons: set[str] = set()
+        audio_files: dict[str, bytes] = {}
+        missing_audio: set[str] = set()
+        total_audio_bytes = 0
 
         for profile in raw["profiles"]:
             for page in profile["pages"]:
@@ -429,6 +439,36 @@ class Config:
                         archive_name = f"icons/{digest}{suffix}"
                         icon_files.setdefault(archive_name, data)
                         key[field_name] = f"{EXPORT_ICON_PREFIX}{archive_name}"
+                    for action, params in self._raw_action_params(key):
+                        if action != "sys.audio":
+                            continue
+                        ref = str(params.get("file", "") or "")
+                        if not ref:
+                            continue
+                        try:
+                            source = Path(ref).expanduser()
+                            if (
+                                not source.is_file()
+                                or source.stat().st_size > MAX_AUDIO_BYTES
+                                or source.suffix.lower()
+                                not in SUPPORTED_AUDIO_EXTENSIONS
+                            ):
+                                missing_audio.add(ref)
+                                continue
+                            data = source.read_bytes()
+                        except OSError:
+                            missing_audio.add(ref)
+                            continue
+                        digest = hashlib.sha256(data).hexdigest()
+                        suffix = source.suffix.lower()
+                        archive_name = f"audio/{digest}{suffix}"
+                        if archive_name not in audio_files:
+                            if total_audio_bytes + len(data) > MAX_TOTAL_AUDIO_BYTES:
+                                missing_audio.add(ref)
+                                continue
+                            audio_files[archive_name] = data
+                            total_audio_bytes += len(data)
+                        params["file"] = f"{EXPORT_AUDIO_PREFIX}{archive_name}"
 
         manifest = {
             "format": EXPORT_FORMAT,
@@ -458,12 +498,16 @@ class Config:
                 )
                 for archive_name, data in icon_files.items():
                     archive.writestr(archive_name, data)
+                for archive_name, data in audio_files.items():
+                    archive.writestr(archive_name, data)
             temporary_path.replace(destination)
         finally:
             temporary_path.unlink(missing_ok=True)
         return ExportResult(
             bundled_icons=len(icon_files),
             missing_icons=len(missing_icons),
+            bundled_audio=len(audio_files),
+            missing_audio=len(missing_audio),
         )
 
     def import_bundle(self, source: Path) -> ImportResult:
@@ -480,7 +524,7 @@ class Config:
             )
             if (
                 manifest.get("format") != EXPORT_FORMAT
-                or manifest.get("version") != EXPORT_VERSION
+                or manifest.get("version") not in (1, EXPORT_VERSION)
             ):
                 raise ValueError("This LinuxStreamDeck export version is not supported")
             raw = self._read_bundle_json(
@@ -492,8 +536,11 @@ class Config:
             replacement.obs.password = current_password
             replacement.obs_password_needs_migration = password_needs_migration
             icon_payloads: dict[Path, bytes] = {}
+            audio_payloads: dict[Path, bytes] = {}
             restored_members: dict[str, Path] = {}
+            restored_audio_members: dict[str, Path] = {}
             total_icon_bytes = 0
+            total_audio_bytes = 0
 
             for key in replacement._key_configs():
                 for field_name in ("icon", "icon_off"):
@@ -519,10 +566,38 @@ class Config:
                     icon_payloads[target] = data
                     restored_members[archive_name] = target
                     setattr(key, field_name, str(target))
+                for action, params in replacement._action_params(key):
+                    if action != "sys.audio":
+                        continue
+                    ref = str(params.get("file", "") or "")
+                    if not ref.startswith(EXPORT_AUDIO_PREFIX):
+                        continue
+                    archive_name = ref.removeprefix(EXPORT_AUDIO_PREFIX)
+                    if archive_name in restored_audio_members:
+                        params["file"] = str(
+                            restored_audio_members[archive_name]
+                        )
+                        continue
+                    self._validate_audio_member(archive_name)
+                    data = self._read_bundle_member(
+                        archive, archive_name, MAX_AUDIO_BYTES
+                    )
+                    total_audio_bytes += len(data)
+                    if total_audio_bytes > MAX_TOTAL_AUDIO_BYTES:
+                        raise ValueError("The exported audio files are too large")
+                    suffix = PurePosixPath(archive_name).suffix.lower()
+                    digest = hashlib.sha256(data).hexdigest()
+                    target = CONFIG_DIR / "imported-audio" / f"{digest}{suffix}"
+                    audio_payloads[target] = data
+                    restored_audio_members[archive_name] = target
+                    params["file"] = str(target)
 
         for target, data in icon_payloads.items():
             target.parent.mkdir(parents=True, exist_ok=True)
-            self._write_imported_icon(target, data)
+            self._write_imported_file(target, data)
+        for target, data in audio_payloads.items():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            self._write_imported_file(target, data)
 
         replacement.save()
         self.profiles = replacement.profiles
@@ -542,12 +617,32 @@ class Config:
                 for page in profile.pages
             ),
             restored_icons=len(icon_payloads),
+            restored_audio=len(audio_payloads),
         )
 
     def _key_configs(self):
         for profile in self.profiles:
             for page in profile.pages:
                 yield from page.keys.values()
+
+    @staticmethod
+    def _raw_action_params(key: dict):
+        action = key.get("action", "")
+        params = key.get("params", {})
+        if isinstance(params, dict):
+            yield action, params
+        for field_name in ("steps", "steps_on", "steps_off"):
+            for step in key.get(field_name, []):
+                if isinstance(step, dict) and isinstance(step.get("params"), dict):
+                    yield step.get("action", ""), step["params"]
+
+    @staticmethod
+    def _action_params(key: KeyConfig):
+        if isinstance(key.params, dict):
+            yield key.action, key.params
+        for step in (*key.steps, *key.steps_on, *key.steps_off):
+            if isinstance(step.params, dict):
+                yield step.action, step.params
 
     @staticmethod
     def _safe_icon_suffix(suffix: str) -> str:
@@ -561,7 +656,7 @@ class Config:
         return ".img"
 
     @staticmethod
-    def _write_imported_icon(target: Path, data: bytes) -> None:
+    def _write_imported_file(target: Path, data: bytes) -> None:
         temporary = tempfile.NamedTemporaryFile(
             prefix=f".{target.name}.",
             suffix=".tmp",
@@ -606,6 +701,18 @@ class Config:
             or any(part in ("", ".", "..") for part in path.parts)
         ):
             raise ValueError("The export contains an invalid icon path")
+
+    @staticmethod
+    def _validate_audio_member(name: str) -> None:
+        path = PurePosixPath(name)
+        if (
+            path.is_absolute()
+            or len(path.parts) != 2
+            or path.parts[0] != "audio"
+            or any(part in ("", ".", "..") for part in path.parts)
+            or path.suffix.lower() not in SUPPORTED_AUDIO_EXTENSIONS
+        ):
+            raise ValueError("The export contains an invalid audio path")
 
     @staticmethod
     def _read_bundle_member(

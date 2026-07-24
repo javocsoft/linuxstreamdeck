@@ -17,6 +17,12 @@ class EditorIconTests(unittest.TestCase):
             "mdi:broadcast",
         )
 
+    def test_audio_action_default_icon_is_resolved(self) -> None:
+        self.assertEqual(
+            EditorPanel._action_icon("sys.audio"),
+            "mdi:music-note",
+        )
+
     def test_multiple_action_uses_first_available_default_icon(self) -> None:
         steps = [
             ActionStep(action=""),

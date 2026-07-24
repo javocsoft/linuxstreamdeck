@@ -52,9 +52,10 @@ maintenance contract.
   `send`, `RENDER_LOCK`, Pillow `BASIC` layout, config isolation via
   `LSD_CONFIG_DIR`, single-instance / no self-launch of the GUI, the EventBus
   threading model, running-feedback concurrency, default-icon inheritance,
-  unsaved-editor guards, AI credential/context/proposal safety, reusing feedback
-  color constants, and English-only with no accents. It only reports; it does not
-  edit code.
+  unsaved-editor guards, GStreamer audio lifecycle, same-key restart cancellation
+  and ordering, portable-archive limits/path safety, AI
+  credential/context/proposal safety, reusing feedback color constants, and
+  English-only with no accents. It only reports; it does not edit code.
 
 ## `obs-action-author` — action scaffolder
 
@@ -62,10 +63,11 @@ maintenance contract.
   catalogue (*"add an action for X"*, *"expose that obs-websocket request on a
   key"*).
 - **What it does:** generates the action with the correct declarative pattern
-  (`Param` / `choices_source`, `feedback` with the shared colors, `default_icon`,
-  `@register`, `apply_default_icons`), OBS access always under the lock, verifies
-  the id is unique and the category exists, compiles, and flags when the docs need
-  updating.
+  (`Param` kinds/bounds/file filters, `choices_source`, feedback with the shared
+  colors, blocking-action running feedback, cooperative cancellation and optional
+  same-key restart semantics, `default_icon`, `@register`,
+  `apply_default_icons`), OBS access always under the lock, verifies the id is
+  unique and the category exists, compiles, and flags when the docs need updating.
 
 ## `render-qa` — offscreen render verifier
 

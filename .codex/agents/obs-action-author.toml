@@ -24,10 +24,13 @@ style.
    - `name` and `category`: reuse an existing category string exactly.
    - `params: list[Param]`, `description` and optionally `default_icon`.
 2. **Declare parameters with `Param`.** Pick the appropriate `kind` (`string`,
-   `int`, `float`, `choice` or `duration`). For options loaded live, use one of
-   the existing `choices_source` values: `scenes`, `inputs`, `media_inputs`,
-   `transitions`, `scene_collections`, `profiles`, `sources_in_scene`,
-   `filters_of_source`, `hotkeys` or `pages`. Never hardcode live OBS lists.
+   `int`, `float`, `choice`, `duration`, `optional_duration` or `file`). Use
+   `minimum` / `maximum` / `step` for bounded numbers and `extensions` /
+   `file_filter_name` for a filtered local file chooser. For options loaded live,
+   use one of the existing `choices_source` values: `scenes`, `inputs`,
+   `media_inputs`, `transitions`, `scene_collections`, `profiles`,
+   `sources_in_scene`, `filters_of_source`, `hotkeys` or `pages`. Never hardcode
+   live OBS lists.
 3. **Implement `execute(ctx, params)`.** Access OBS only through `ctx.obs`, whose
    `OBSClient` serializes complete requests. Never touch the raw request client or
    websocket. Use `ctx.controller` for deck/page operations and `ctx.bus` for
@@ -39,6 +42,14 @@ style.
 5. **Register the action** with `@register`. Add its id and `"mdi:name"` reference
    to `apply_default_icons({...})` when it needs a default icon, after confirming
    the icon exists in `linuxstreamdeck/assets/icons/icons.json`.
+6. Set **`running_feedback = True`** for a blocking action whose single-action
+   key should show the temporary `RUN`/breathing feedback. Its execution must
+   use `ctx.stop_requested()` or `ctx.wait_until_stopped()` to observe controller
+   shutdown and release resources in every exit path.
+7. Set **`restart_on_repress = True`** only when a second press on the same
+   profile/page/key should cancel the prior invocation and restart the complete
+   key sequence. The action must cooperate with its `ActionContext` cancellation
+   and finish releasing resources before the replacement can start.
 
 ## Rules
 

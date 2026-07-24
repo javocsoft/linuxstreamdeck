@@ -13,6 +13,7 @@ import re
 import socket
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -454,6 +455,9 @@ def _action_catalog(context: dict[str, Any]) -> list[dict[str, Any]]:
                 "default": "" if param.default is None else str(param.default),
                 "choices_source": param.choices_source,
                 "available_values": choices,
+                "minimum": param.minimum,
+                "maximum": param.maximum,
+                "extensions": param.extensions,
             })
         catalog.append({
             "id": action.id,
@@ -606,18 +610,38 @@ def _coerce_parameter(
             raise AIResponseError(
                 f"Parameter {param.name} for {action_id} must be finite"
             )
-    elif param.kind == "duration":
+    elif param.kind in ("duration", "optional_duration"):
+        if param.kind == "optional_duration" and not value:
+            return ""
         if _DURATION_RE.fullmatch(value) is None:
             raise AIResponseError(
                 f"Parameter {param.name} for {action_id} must be a duration"
             )
         seconds = parse_duration(value)
         if seconds > 3600:
-            raise AIResponseError("A generated Wait cannot exceed one hour")
+            raise AIResponseError("A generated duration cannot exceed one hour")
         result = format_duration(seconds)
     else:
         result = value
 
+    if param.minimum is not None and isinstance(result, (int, float)):
+        if result < param.minimum:
+            raise AIResponseError(
+                f"Parameter {param.name} for {action_id} must be at least "
+                f"{param.minimum:g}"
+            )
+    if param.maximum is not None and isinstance(result, (int, float)):
+        if result > param.maximum:
+            raise AIResponseError(
+                f"Parameter {param.name} for {action_id} must be at most "
+                f"{param.maximum:g}"
+            )
+    if param.extensions and result:
+        suffix = Path(result).suffix.lower()
+        if suffix not in {ext.lower() for ext in param.extensions}:
+            raise AIResponseError(
+                f"Invalid file type for {param.name} in {action_id}"
+            )
     if param.choices and result not in param.choices:
         raise AIResponseError(
             f"Invalid value for {param.name} in {action_id}: {result}"

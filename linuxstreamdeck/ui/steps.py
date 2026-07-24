@@ -50,6 +50,53 @@ def _clear(box: Gtk.Box) -> None:
         box.remove(child)
 
 
+class _FileEntry(Gtk.Box):
+    """Editable path plus a filtered native file chooser."""
+
+    def __init__(self, param: Param, value) -> None:
+        super().__init__(spacing=6)
+        self.param = param
+        self.entry = Gtk.Entry(
+            text=str(value if value is not None else param.default or ""),
+            hexpand=True,
+        )
+        self.entry.set_placeholder_text("Choose a local file")
+        self.entry.connect(
+            "changed",
+            lambda entry: entry.set_tooltip_text(entry.get_text() or None),
+        )
+        self.entry.set_tooltip_text(self.entry.get_text() or None)
+        self.append(self.entry)
+
+        button = Gtk.Button.new_from_icon_name("document-open-symbolic")
+        button.set_tooltip_text("Choose file")
+        button.connect("clicked", self._choose)
+        self.append(button)
+
+    def get_text(self) -> str:
+        return self.entry.get_text()
+
+    def _choose(self, _button) -> None:
+        dialog = Gtk.FileDialog(title=f"Choose {self.param.label.lower()}")
+        if self.param.extensions:
+            file_filter = Gtk.FileFilter()
+            file_filter.set_name(self.param.file_filter_name or "Supported files")
+            for extension in self.param.extensions:
+                suffix = extension if extension.startswith(".") else f".{extension}"
+                file_filter.add_pattern(f"*{suffix.lower()}")
+                file_filter.add_pattern(f"*{suffix.upper()}")
+            dialog.set_default_filter(file_filter)
+        dialog.open(self.get_root(), None, self._chosen)
+
+    def _chosen(self, dialog, result) -> None:
+        try:
+            file = dialog.open_finish(result)
+        except Exception:
+            return
+        if file is not None and (path := file.get_path()):
+            self.entry.set_text(path)
+
+
 # =========================== single-step editor ===========================
 
 class StepEditor(Gtk.Box):
@@ -159,13 +206,23 @@ class StepEditor(Gtk.Box):
     def _param_widget(self, param: Param, value) -> Gtk.Widget:
         if param.kind == "choice":
             return self._choice_dd(param.choices, value or param.default)
-        if param.kind == "duration":
-            return self._duration_entry(value if value is not None else param.default)
+        if param.kind in ("duration", "optional_duration"):
+            return self._duration_entry(
+                value if value is not None else param.default,
+                optional=param.kind == "optional_duration",
+            )
+        if param.kind == "file":
+            return _FileEntry(param, value)
         if param.kind in ("int", "float"):
             digits = 0 if param.kind == "int" else 1
+            lower = param.minimum if param.minimum is not None else -100000
+            upper = param.maximum if param.maximum is not None else 100000
             adj = Gtk.Adjustment(
                 value=float(value if value is not None else param.default or 0),
-                lower=-100000, upper=100000, step_increment=1,
+                lower=lower,
+                upper=upper,
+                step_increment=param.step,
+                page_increment=param.step * 10,
             )
             return Gtk.SpinButton(adjustment=adj, digits=digits)
         if param.choices_source:
@@ -269,8 +326,12 @@ class StepEditor(Gtk.Box):
 
     @staticmethod
     def _widget_value(param: Param, widget: Gtk.Widget):
-        if param.kind == "duration":
+        if param.kind in ("duration", "optional_duration"):
+            if param.kind == "optional_duration" and not widget.get_text().strip():
+                return ""
             return format_duration(parse_duration(widget.get_text()))
+        if isinstance(widget, _FileEntry):
+            return widget.get_text()
         if isinstance(widget, Gtk.SpinButton):
             return int(widget.get_value()) if param.kind == "int" else widget.get_value()
         if isinstance(widget, Gtk.DropDown):
@@ -288,17 +349,22 @@ class StepEditor(Gtk.Box):
         return dd
 
     @staticmethod
-    def _duration_entry(value) -> Gtk.Entry:
+    def _duration_entry(value, optional: bool = False) -> Gtk.Entry:
         """Small 'MM:SS' time field that normalizes itself when edited."""
+        text = str(value or "").strip()
         entry = Gtk.Entry(
-            text=format_duration(parse_duration(value)),
-            placeholder_text="MM:SS",
-            max_width_chars=6, width_chars=6,
+            text="" if optional and not text else format_duration(parse_duration(text)),
+            placeholder_text="MM:SS (full file)" if optional else "MM:SS",
+            max_width_chars=16 if optional else 6,
+            width_chars=16 if optional else 6,
             xalign=0.5, halign=Gtk.Align.START,
         )
 
         def _normalize(*_a):
-            entry.set_text(format_duration(parse_duration(entry.get_text())))
+            current = entry.get_text().strip()
+            if optional and not current:
+                return
+            entry.set_text(format_duration(parse_duration(current)))
 
         entry.connect("activate", _normalize)
         focus = Gtk.EventControllerFocus()

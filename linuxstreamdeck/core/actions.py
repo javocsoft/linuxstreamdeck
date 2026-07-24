@@ -8,7 +8,9 @@ the live options from (OBS scenes, audio inputs...).
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
+from threading import Event
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -18,9 +20,15 @@ log = logging.getLogger(__name__)
 class Param:
     name: str
     label: str
-    kind: str = "string"          # string | int | float | choice | duration
+    # string | int | float | choice | duration | optional_duration | file
+    kind: str = "string"
     default: Any = None
     choices: list[str] = field(default_factory=list)   # for kind == "choice"
+    minimum: float | None = None
+    maximum: float | None = None
+    step: float = 1
+    file_filter_name: str = ""
+    extensions: list[str] = field(default_factory=list)
     # Dynamic source of options that the editor fills in live:
     #   scenes | inputs | media_inputs | transitions | scene_collections
     #   profiles | sources_in_scene | filters_of_source | hotkeys | pages
@@ -61,10 +69,29 @@ def format_duration(seconds) -> str:
 class ActionContext:
     """Everything an action needs to run."""
 
-    def __init__(self, obs, controller, bus):
+    def __init__(self, obs, controller, bus, cancellation: Event | None = None):
         self.obs = obs                # linuxstreamdeck.obs.client.OBSClient
         self.controller = controller  # linuxstreamdeck.core.controller.DeckController
         self.bus = bus
+        self._cancellation = cancellation
+
+    def stop_requested(self) -> bool:
+        """Whether app shutdown or a replacement execution cancelled this run."""
+        return (
+            bool(self._cancellation and self._cancellation.is_set())
+            or self.controller.wait_until_stopped(0)
+        )
+
+    def wait_until_stopped(self, timeout: float) -> bool:
+        """Wait up to timeout, returning early for shutdown or replacement."""
+        deadline = time.monotonic() + max(0.0, timeout)
+        while not self.stop_requested():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if self.controller.wait_until_stopped(min(0.1, remaining)):
+                return True
+        return True
 
 
 class Action:
@@ -74,6 +101,8 @@ class Action:
     params: list[Param] = []
     description: str = ""
     default_icon: str = ""      # "mdi:..." reference used when the key has no icon of its own
+    running_feedback: bool = False
+    restart_on_repress: bool = False
 
     def execute(self, ctx: ActionContext, params: dict) -> None:
         raise NotImplementedError

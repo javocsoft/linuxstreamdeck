@@ -240,6 +240,60 @@ class AIServiceTests(unittest.TestCase):
 
         self.assertEqual(generated.key.steps[1].params["duration"], "00:05")
 
+    def test_audio_parameters_are_validated_and_optional_duration_stays_empty(
+        self,
+    ) -> None:
+        raw = proposal(
+            action="sys.audio",
+            parameters=[
+                {"name": "file", "value": "/home/user/sound.mp3"},
+                {"name": "volume", "value": "75"},
+                {"name": "duration", "value": ""},
+            ],
+        )
+        http = FakeHTTP({
+            "output": [{
+                "type": "function_call",
+                "name": "propose_key_configuration",
+                "arguments": json.dumps(raw),
+            }],
+        })
+
+        generated = AIService(http_post=http).generate(
+            "openai",
+            "gpt-test",
+            "secret",
+            "Play my sound",
+        )
+
+        self.assertEqual(generated.key.params["volume"], 75)
+        self.assertEqual(generated.key.params["duration"], "")
+
+    def test_audio_volume_outside_the_ui_range_is_rejected(self) -> None:
+        raw = proposal(
+            action="sys.audio",
+            parameters=[
+                {"name": "file", "value": "/home/user/sound.wav"},
+                {"name": "volume", "value": "101"},
+                {"name": "duration", "value": "00:05"},
+            ],
+        )
+        http = FakeHTTP({
+            "content": [{
+                "type": "tool_use",
+                "name": "propose_key_configuration",
+                "input": raw,
+            }],
+        })
+
+        with self.assertRaisesRegex(AIResponseError, "must be at most 100"):
+            AIService(http_post=http).generate(
+                "anthropic",
+                "claude-test",
+                "secret",
+                "Play my sound",
+            )
+
     def test_context_is_bounded_and_contains_no_credentials(self) -> None:
         config = Config()
         context = collect_generation_context(config, FakeOBS())
