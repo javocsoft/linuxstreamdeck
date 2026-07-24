@@ -72,6 +72,8 @@ AppStream cache for software centres, then reopen the software centre.
 Composition root is `app.py::LinuxStreamDeckApp`, which wires everything together
 and wraps a single-instance `Adw.Application`. Components communicate through a
 thread-safe **pub/sub `EventBus`**; UI never talks to the device or OBS directly.
+`LinuxStreamDeckApp` also owns shutdown: it stops controller workers before the
+HID manager and OBS client, so no background work outlives application teardown.
 
 ```
 linuxstreamdeck/

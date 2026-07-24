@@ -63,12 +63,17 @@ class OBSClient:
         if self._monitor and self._monitor.is_alive():
             return
         self._stop.clear()
-        self._monitor = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._monitor = threading.Thread(
+            target=self._monitor_loop, daemon=True, name="obs-monitor"
+        )
         self._monitor.start()
 
     def stop(self) -> None:
         self._stop.set()
         self._teardown(emit=False)
+        monitor, self._monitor = self._monitor, None
+        if monitor is not None and monitor is not threading.current_thread():
+            monitor.join()
 
     def reconnect_now(self) -> None:
         """Force an immediate reconnection (e.g. when settings change)."""
@@ -87,6 +92,8 @@ class OBSClient:
             self._stop.wait(RECONNECT_SECONDS)
 
     def _try_connect(self) -> None:
+        req = None
+        events = None
         try:
             kwargs = dict(
                 host=self.host, port=self.port, password=self.password, timeout=5
@@ -95,12 +102,22 @@ class OBSClient:
             events = obsws.EventClient(**kwargs)
             events.callback.register(self._event_handlers())
         except Exception as e:
+            self._disconnect_clients(req, events)
             log.debug("OBS unavailable (%s): %s", type(e).__name__, e)
             return
         with self._lock:
-            self._req, self._events = req, events
-        self.connected = True
+            if self._stop.is_set():
+                discard = True
+            else:
+                self._req, self._events = req, events
+                self.connected = True
+                discard = False
+        if discard:
+            self._disconnect_clients(req, events)
+            return
         self._prime_state()
+        if self._stop.is_set() or not self.connected:
+            return
         log.info("Connected to OBS at %s:%s", self.host, self.port)
         self.bus.emit("obs.connected")
         self.bus.emit("obs.state", what="connected")
@@ -109,18 +126,22 @@ class OBSClient:
         with self._lock:
             req, events = self._req, self._events
             self._req = self._events = None
-        was_connected = self.connected
-        self.connected = False
+            was_connected = self.connected
+            self.connected = False
         self.state.reset()
+        self._disconnect_clients(req, events)
+        if emit and was_connected:
+            self.bus.emit("obs.disconnected")
+            self.bus.emit("obs.state", what="disconnected")
+
+    @staticmethod
+    def _disconnect_clients(req, events) -> None:
         for client in (req, events):
             try:
                 if client is not None:
                     client.disconnect()
             except Exception:
                 pass
-        if emit and was_connected:
-            self.bus.emit("obs.disconnected")
-            self.bus.emit("obs.state", what="disconnected")
 
     # ---------- requests ----------
 

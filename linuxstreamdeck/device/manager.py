@@ -39,12 +39,19 @@ class DeckManager:
     # ---------- lifecycle ----------
 
     def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._scan_loop, daemon=True)
+        self._thread = threading.Thread(
+            target=self._scan_loop, daemon=True, name="deck-monitor"
+        )
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        thread, self._thread = self._thread, None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join()
         self._close(emit=False)
 
     def _scan_loop(self) -> None:
@@ -68,8 +75,13 @@ class DeckManager:
             log.debug("Could not enumerate HID devices: %s", e)
             return
         for dev in devices:
+            if self._stop.is_set():
+                return
             try:
                 dev.open()
+                if self._stop.is_set():
+                    dev.close()
+                    return
                 dev.reset()
                 dev.set_brightness(self.brightness)
                 dev.set_key_callback(self._on_key)
@@ -103,10 +115,20 @@ class DeckManager:
             deck, self.deck = self.deck, None
         if deck is not None:
             try:
+                deck.set_key_callback(None)
+            except Exception:
+                pass
+            try:
                 deck.reset()
+            except Exception:
+                pass
+            try:
                 deck.close()
             except Exception:
                 pass
+            reader = getattr(deck, "read_thread", None)
+            if reader is not None and reader is not threading.current_thread():
+                reader.join()
             if emit:
                 self.bus.emit("deck.disconnected")
 

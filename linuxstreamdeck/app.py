@@ -60,3 +60,4 @@ class LinuxStreamDeckApp:
         self.controller.shutdown()
         self.deck.stop()
         self.obs.stop()
+        log.info("Shutdown complete")

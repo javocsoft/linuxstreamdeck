@@ -38,6 +38,7 @@ class DeckController:
         self.ctx = ActionContext(obs=obs, controller=self, bus=bus)
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="action")
         self._render_pending = threading.Event()
+        self._stopping = threading.Event()
         # ON/OFF state of toggle keys, keyed by (profile, page, key)
         self._toggle: dict[tuple[int, int, int], bool] = {}
 
@@ -197,6 +198,8 @@ class DeckController:
 
     def press(self, index: int) -> None:
         """Run the key (physical or virtual press) according to its type."""
+        if self._stopping.is_set():
+            return
         kc = self.page.key(index)
         if kc is None or kc.is_empty():
             return
@@ -212,10 +215,16 @@ class DeckController:
             self.refresh()  # reflect the new state on the key
         else:
             return
-        self._executor.submit(self._run_steps, steps, index)
+        try:
+            self._executor.submit(self._run_steps, steps, index)
+        except RuntimeError:
+            if not self._stopping.is_set():
+                raise
 
     def _run_steps(self, steps: list[ActionStep], index: int) -> None:
         for step in steps:
+            if self._stopping.is_set():
+                return
             action = action_registry.get(step.action)
             if action is None:
                 if step.action:
@@ -232,15 +241,22 @@ class DeckController:
 
     def refresh(self) -> None:
         """Re-render the active page (coalesces bursts of events)."""
-        if self._render_pending.is_set():
+        if self._stopping.is_set() or self._render_pending.is_set():
             return
         self._render_pending.set()
-        self._executor.submit(self._render_page)
+        try:
+            self._executor.submit(self._render_page)
+        except RuntimeError:
+            self._render_pending.clear()
+            if not self._stopping.is_set():
+                raise
 
     def _render_page(self) -> None:
         self._render_pending.clear()
         size = self.deck.image_size
         for index in range(self.deck.key_count):
+            if self._stopping.is_set():
+                return
             spec = self._key_spec(index, self.page.key(index), size)
             image = renderer.compose(**spec)
             self.deck.set_key_image(index, image)
@@ -299,5 +315,12 @@ class DeckController:
         return {"size": size, "label": kc.label_off or kc.label, "icon_path": icon,
                 "bg": kc.bg_color_off, "badge": "OFF"}
 
+    def wait_until_stopped(self, timeout: float) -> bool:
+        """Wait for timeout seconds, returning early when shutdown begins."""
+        return self._stopping.wait(timeout)
+
     def shutdown(self) -> None:
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        """Cancel queued work and wait for running actions/renders to finish."""
+        self._stopping.set()
+        self._render_pending.clear()
+        self._executor.shutdown(wait=True, cancel_futures=True)

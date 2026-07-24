@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import subprocess
-import time
 import webbrowser
 
 from .core.actions import Action, Param, apply_default_icons, parse_duration, register
@@ -58,7 +57,7 @@ class Wait(Action):
     def execute(self, ctx, p):
         seconds = parse_duration(p.get("duration"))
         if seconds > 0:
-            time.sleep(min(seconds, MAX_WAIT_SECONDS))
+            ctx.controller.wait_until_stopped(min(seconds, MAX_WAIT_SECONDS))
 
 
 @register
