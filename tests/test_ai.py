@@ -164,6 +164,10 @@ class AIServiceTests(unittest.TestCase):
         self.assertNotIn("sys.command", action_ids)
         self.assertNotIn("obs.raw", action_ids)
         self.assertIn("obs.scene_switch", action_ids)
+        self.assertIn("nav.page.next", action_ids)
+        self.assertIn("nav.page.previous", action_ids)
+        self.assertIn("nav.page.go", action_ids)
+        self.assertNotIn("nav.page", action_ids)
 
     def test_context_choices_are_validated(self) -> None:
         raw = proposal()

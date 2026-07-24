@@ -55,6 +55,20 @@ KIND_MULTI = "multi"            # ordered list of actions run in sequence
 KIND_TOGGLE = "multi_toggle"    # toggle: two action lists (ON/OFF state)
 
 
+def _migrate_page_action(action, params) -> tuple[str, dict]:
+    """Split the legacy combined page action into one explicit action."""
+    action_id = str(action or "")
+    values = dict(params) if isinstance(params, dict) else {}
+    if action_id != "nav.page":
+        return action_id, values
+    mode = str(values.get("mode", "go to") or "go to").strip().lower()
+    if mode in ("next", "next page"):
+        return "nav.page.next", {}
+    if mode in ("previous", "previous page"):
+        return "nav.page.previous", {}
+    return "nav.page.go", {"page": str(values.get("page", "") or "")}
+
+
 @dataclass(frozen=True)
 class ExportResult:
     bundled_icons: int
@@ -131,8 +145,11 @@ class KeyConfig:
             for s in raw_steps:
                 if not isinstance(s, dict):
                     raise ValueError("Each action step must be a JSON object")
-                out.append(ActionStep(action=s.get("action", ""),
-                                      params=s.get("params", {})))
+                action, params = _migrate_page_action(
+                    s.get("action", ""),
+                    s.get("params", {}),
+                )
+                out.append(ActionStep(action=action, params=params))
                 # legacy: a per-step "delay after (ms)" becomes an explicit Wait
                 # action (whole seconds), so old configs keep their pauses.
                 secs = round(s.get("delay_ms", 0) / 1000)
@@ -141,10 +158,14 @@ class KeyConfig:
                                           params={"duration": format_duration(secs)}))
             return out
 
+        action, params = _migrate_page_action(
+            d.get("action", ""),
+            d.get("params", {}),
+        )
         return cls(
             kind=d.get("kind", KIND_SINGLE),
-            action=d.get("action", ""),
-            params=d.get("params", {}),
+            action=action,
+            params=params,
             steps=steps("steps"),
             steps_on=steps("steps_on"),
             steps_off=steps("steps_off"),

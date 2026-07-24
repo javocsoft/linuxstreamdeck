@@ -108,26 +108,58 @@ class PlayAudio(Action):
 
 
 @register
+class PageNext(Action):
+    id = "nav.page.next"
+    name = "Next page"
+    category = CAT_NAV
+    description = (
+        "Switch to the next page, wrapping to the first page after the last."
+    )
+
+    def execute(self, ctx, p):
+        controller = ctx.controller
+        controller.set_page(
+            (controller.current_page + 1) % len(controller.config.pages)
+        )
+
+
+@register
+class PagePrevious(Action):
+    id = "nav.page.previous"
+    name = "Previous page"
+    category = CAT_NAV
+    description = (
+        "Switch to the previous page, wrapping to the last page from the first."
+    )
+
+    def execute(self, ctx, p):
+        controller = ctx.controller
+        controller.set_page(
+            (controller.current_page - 1) % len(controller.config.pages)
+        )
+
+
+@register
 class PageGo(Action):
-    id = "nav.page"
+    id = "nav.page.go"
     name = "Go to page"
     category = CAT_NAV
-    description = "Switch the active deck page."
+    description = "Switch directly to a selected page in the current profile."
     params = [
-        Param("mode", "Mode", kind="choice", default="go to",
-              choices=["go to", "next", "previous"]),
-        Param("page", "Page (for 'go to')", choices_source="pages"),
+        Param("page", "Destination page", choices_source="pages"),
     ]
 
     def execute(self, ctx, p):
-        c = ctx.controller
-        mode = p.get("mode", "go to")
-        if mode == "next":
-            c.set_page((c.current_page + 1) % len(c.config.pages))
-        elif mode == "previous":
-            c.set_page((c.current_page - 1) % len(c.config.pages))
-        else:
-            c.set_page_by_name(p.get("page", ""))
+        page = str(p.get("page", "") or "")
+        if not ctx.controller.set_page_by_name(page):
+            ctx.bus.emit(
+                "status",
+                text=(
+                    f"Page not found: {page}"
+                    if page
+                    else "Choose a destination page"
+                ),
+            )
 
 
 apply_default_icons({
@@ -135,5 +167,7 @@ apply_default_icons({
     "sys.url": "mdi:web",
     "sys.wait": "mdi:timer-sand",
     "sys.audio": "mdi:music-note",
-    "nav.page": "mdi:book-open-page-variant",
+    "nav.page.next": "mdi:page-next",
+    "nav.page.previous": "mdi:page-previous",
+    "nav.page.go": "mdi:book-open-page-variant",
 })

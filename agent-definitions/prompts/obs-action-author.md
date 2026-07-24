@@ -22,7 +22,9 @@ style.
    use one of the existing `choices_source` values: `scenes`, `inputs`,
    `media_inputs`, `transitions`, `scene_collections`, `profiles`,
    `sources_in_scene`, `filters_of_source`, `hotkeys` or `pages`. Never hardcode
-   live OBS lists.
+   live OBS lists. The `pages` source is dynamic and scoped to the active profile;
+   an action that persists a page name must account for rename, deletion and
+   uniqueness in the controller/config model.
 3. **Implement `execute(ctx, params)`.** Access OBS only through `ctx.obs`, whose
    `OBSClient` serializes complete requests. Never touch the raw request client or
    websocket. Use `ctx.controller` for deck/page operations and `ctx.bus` for

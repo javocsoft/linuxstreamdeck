@@ -94,7 +94,7 @@ linuxstreamdeck/
 ├── __main__.py        Entry point; logging setup; `linuxstreamdeck` console script.
 ├── app.py             LinuxStreamDeckApp: builds config, credential stores, AI service,
 │                      EventBus, OBS client, deck/controller and MainWindow; app lifecycle.
-├── basic_actions.py   System/navigation actions (command, URL, wait, audio, page…).
+├── basic_actions.py   System actions plus explicit next/previous/go page navigation.
 ├── ai/
 │   ├── constants.py   OpenAI/Claude provider ids, labels and default models.
 │   └── service.py     Provider calls, bounded optional context, local proposal validation.
@@ -103,12 +103,12 @@ linuxstreamdeck/
 │   │                  `dispatcher` (GLib.idle_add) marshals callbacks to the UI thread.
 │   ├── config.py      Data model + atomic user-only JSON persistence: Config →
 │   │                  Profile → Page → KeyConfig (+ ObsSettings, AISettings, ActionStep).
-│   │                  Migration, backup and portable `.lsdconfig` import/export.
+│   │                  Legacy action/profile migration, backup and `.lsdconfig` I/O.
 │   ├── actions.py     Action framework: `Action` base, declarative `Param`,
 │   │                  `ActionContext`, global `REGISTRY`, `@register`, `by_category`.
 │   ├── audio.py       Blocking local playback via GStreamer playbin; shutdown-aware.
-│   ├── controller.py  DeckController: handles presses, separate action/render workers,
-│   │                  running feedback, page/profile/key operations and imports.
+│   ├── controller.py  DeckController: presses, action/render workers, running feedback,
+│   │                  page target maintenance, profile/key operations and imports.
 │   ├── icons.py       Built-in icon library (Material Design Icons glyphs via
 │   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
 │   └── secrets.py     Async Secret Service storage for OBS and per-provider API keys.
@@ -191,6 +191,7 @@ Actions are declarative and self-registering:
   `choices_source` so the editor fills the dropdown **live from OBS**
   (`scenes`, `inputs`, `media_inputs`, `transitions`, `scene_collections`,
   `profiles`, `sources_in_scene`, `filters_of_source`, `hotkeys`, `pages`).
+  The `pages` source reads page names from the active profile, not OBS.
 - `execute(ctx, params)` performs the action; `feedback(ctx, params)` optionally
   returns `{"active": bool, "color": "#rrggbb", "badge": str}` for live key state.
 - Set `running_feedback = True` on a blocking action that should show the
@@ -202,6 +203,34 @@ Actions are declarative and self-registering:
   shutdown and replacement cancellation.
 - `apply_default_icons({action_id: "mdi:…"})` assigns default icons after
   registration. Registration happens on import (`app.py` imports the catalogues).
+
+### Page navigation actions and migration
+
+The visible **Navigation** category contains three explicit actions:
+
+| ID | Parameters | Behavior | Default icon |
+| --- | --- | --- | --- |
+| `nav.page.next` | None | Next page, wrapping last → first | `mdi:page-next` |
+| `nav.page.previous` | None | Previous page, wrapping first → last | `mdi:page-previous` |
+| `nav.page.go` | `page`, labelled **Destination page**, `choices_source="pages"` | Named page in the active profile; emits `status` when missing | `mdi:book-open-page-variant` |
+
+The old combined `nav.page` action is not registered or visible. AI proposals
+therefore see only the three current IDs. `KeyConfig.from_dict()` transparently
+migrates the legacy ID in single actions and every `steps`, `steps_on` and
+`steps_off` entry. Legacy `next` / `next page` and `previous` / `previous page`
+modes become their parameterless actions; other modes become `nav.page.go` with
+the stored page name. Normal serialization writes the new IDs on the next
+configuration save or export, so old local configs and imported bundles remain
+compatible without preserving the deprecated shape.
+
+Named targets must stay unambiguous within a profile. `add_page()` and
+`rename_page()` reject an exact duplicate name and emit `status` without saving.
+A successful rename traverses every key on every page in the active profile,
+including single, multi and toggle steps, and rewrites matching
+`nav.page.go` parameters. Deleting a referenced destination is allowed;
+`PageGo.execute()` reports the missing name when the key is pressed.
+`set_page_by_name()` returns whether the name exists, while `set_page()` treats
+the already active page as a no-op to avoid redundant saves and events.
 
 An empty `KeyConfig.icon` or `icon_off` is an inheritance marker, not a missing
 render value. The editor Appearance preview must resolve the same effective
@@ -315,8 +344,9 @@ the selection, while a real page change clears it.
 
 Persistence is atomic JSON with user-only (`0600`) permissions at
 `~/.config/linuxstreamdeck/config.json`, with a `config.json.bak` backup written
-on every save and migration from the old single-profile format on load. The OBS
-password is stored asynchronously in Secret Service / GNOME Keyring, never in
+on every save. Loading migrates both the old single-profile format and legacy
+combined `nav.page` actions before the model reaches the editor/controller. The
+OBS password is stored asynchronously in Secret Service / GNOME Keyring, never in
 either JSON file. On first run, legacy plaintext password fields are migrated and
 removed from both files; if Secret Service is unavailable, they are still removed
 and the password is session-only. OpenAI and Claude API keys are also stored only
@@ -439,6 +469,13 @@ hard-to-diagnose failures.
    emitting `deck.connected`. Check the monitor stop event during writes and
    waits; only a completed or safely skipped animation may proceed to connection
    publication and the configured-key refresh.
+
+12. **Named page navigation must stay compatible and unambiguous.** Keep the
+   legacy `nav.page` loader migration for single/multi/toggle actions, but never
+   expose that ID in the registry or AI catalogue. Populate `nav.page.go` choices
+   from the active profile, reject duplicate names and update every same-profile
+   reference on rename. Next/previous must wrap, missing names must report status
+   and a same-page selection must not save or emit redundant events.
 
 ---
 

@@ -44,7 +44,8 @@ Never trust a documentation claim without checking its source. Verify at least:
   `linuxstreamdeck/basic_actions.py` against the user-facing action tables.
 - **Key types and config:** `linuxstreamdeck/core/config.py`, config paths,
   `LSD_CONFIG_DIR`, backups, import/export versions and limits, portable audio,
-  and profile/page/key models.
+  legacy page-action migration, named page-target maintenance, and
+  profile/page/key models.
 - **AI-assisted creation:** `linuxstreamdeck/ai/`,
   `linuxstreamdeck/ui/ai_assistant.py` and provider key storage, including
   bounded opt-in context, blocked dangerous actions, local validation and
@@ -52,8 +53,8 @@ Never trust a documentation claim without checking its source. Verify at least:
 - **Critical invariants:** BASIC Pillow layout, shared `RENDER_LOCK`, serialized
   OBS requests, separate action/render workers and ordered activity shutdown,
   same-key restart cancellation and predecessor ordering, exclusive/cancellable
-  physical startup, bounded/path-safe portable audio, isolated config experiments
-  and the single-instance GUI rule.
+  physical startup, unambiguous/migrated page navigation, bounded/path-safe
+  portable audio, isolated config experiments and the single-instance GUI rule.
 - **Device facts:** supported device id, key count, grid columns, render size,
   startup frame/title layout, brightness bounds and connection publication order.
 - **Custom agents:** `agent-definitions/manifest.json` and

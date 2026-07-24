@@ -40,7 +40,8 @@ implemented actions, no guessing. It runs, and it's useful.
 - 🔴 **Real-time feedback on the keys** — active scene highlighted, recording in red,
   streaming in green, muted mic marked… straight from obs-websocket events.
 - 🗂️ **Profiles & pages** — each profile keeps its own set of pages and keys; switch
-  between "Streaming", "Work", "Gaming" in one click. Rename, delete, describe.
+  between "Streaming", "Work", "Gaming" in one click. Rename, delete, describe,
+  or assign keys to move directly, forward or backward through that profile.
 - 🧩 **Three key types** — *single action*, *multiple actions* (run in sequence, with an
   optional **Wait** action to pause between them), and *toggle (ON/OFF)* with two action
   lists and its own look per state. Multi and toggle keys show **RUN** with a subtle
@@ -80,7 +81,8 @@ implemented actions, no guessing. It runs, and it's useful.
 | **Advanced** | Scene collections & profiles · internal hotkeys · **raw request** (100% of the API) |
 
 Plus system actions (run a command, open a URL, wait a set time or play a local
-audio file) and navigation between pages.
+audio file). The **Navigation** category provides separate **Next page**,
+**Previous page** and **Go to page** actions.
 
 ## 📦 Requirements
 
@@ -192,7 +194,7 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
 5. **Reorder** keys by dragging them, and **duplicate** a key with right-click → Copy, then
    Paste onto another (or `Ctrl+C`/`Ctrl+V`).
 6. **Pages** — use the menu (⋮) next to the page selector to add a new page, rename or
-   delete the current one.
+   delete the current one. Page names must be unique within their profile.
 7. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or
    delete a profile. Each profile has its own pages and keys.
 8. **About** — click the About button in the header for application details,
@@ -224,6 +226,22 @@ restores that setting when it finishes. Closing the application cancels startup
 promptly. A disconnect, rendering problem or device I/O failure is handled safely
 without leaving a partially initialized deck. This startup sequence runs only on
 the physical Stream Deck; the virtual deck always shows the configured keys.
+
+### 🗂️ Navigate between pages from a key
+
+Choose the **Navigation** category in the key editor:
+
+- **Next page** and **Previous page** need no parameters. They wrap around, so
+  next from the last page opens the first and previous from the first opens the
+  last.
+- **Go to page** offers a **Destination page** dropdown populated from the
+  current profile. If that named page is later deleted, pressing the key reports
+  that the page was not found.
+
+Renaming a page automatically updates every **Go to page** reference in the same
+profile, and duplicate page names are rejected so targets remain unambiguous.
+Keys created with the older combined page-navigation action are migrated
+automatically; after the next save or export they use the three current actions.
 
 ### 🔊 Play a local audio file
 

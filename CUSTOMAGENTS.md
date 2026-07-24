@@ -54,9 +54,9 @@ maintenance contract.
   threading model, running-feedback concurrency, default-icon inheritance,
   unsaved-editor guards, GStreamer audio lifecycle, same-key restart cancellation
   and ordering, physical startup exclusivity/cancellation/brightness restoration,
-  portable-archive limits/path safety, AI credential/context/proposal safety,
-  reusing feedback color constants, and English-only with no accents. It only
-  reports; it does not edit code.
+  page-navigation migration/reference integrity, portable-archive limits/path
+  safety, AI credential/context/proposal safety, reusing feedback color constants,
+  and English-only with no accents. It only reports; it does not edit code.
 
 ## `obs-action-author` — action scaffolder
 
@@ -66,7 +66,8 @@ maintenance contract.
 - **What it does:** generates the action with the correct declarative pattern
   (`Param` kinds/bounds/file filters, `choices_source`, feedback with the shared
   colors, blocking-action running feedback, cooperative cancellation and optional
-  same-key restart semantics, `default_icon`, `@register`,
+  same-key restart semantics, profile-scoped page choices, `default_icon`,
+  `@register`,
   `apply_default_icons`), OBS access always under the lock, verifies the id is
   unique and the category exists, compiles, and flags when the docs need updating.
 

@@ -148,21 +148,31 @@ class DeckController:
         self.refresh()
 
     def set_page(self, index: int) -> None:
-        if 0 <= index < len(self.config.pages):
+        if (
+            0 <= index < len(self.config.pages)
+            and index != self.current_page
+        ):
             self.config.current_page = index
             self.config.save()
             self.bus.emit("page.changed", index=index, name=self.page.name)
             self.refresh()
 
-    def set_page_by_name(self, name: str) -> None:
+    def set_page_by_name(self, name: str) -> bool:
         for i, p in enumerate(self.config.pages):
             if p.name == name:
                 self.set_page(i)
-                return
+                return True
+        return False
 
     def add_page(self, name: str) -> None:
         from .config import Page
 
+        if any(page.name == name for page in self.config.pages):
+            self.bus.emit(
+                "status",
+                text=f"A page named {name} already exists",
+            )
+            return
         self.config.pages.append(Page(name=name))
         self.config.save()
         self.set_page(len(self.config.pages) - 1)
@@ -170,7 +180,24 @@ class DeckController:
     def rename_page(self, name: str) -> None:
         if not name:
             return
+        old_name = self.page.name
+        if name == old_name:
+            return
+        if any(page.name == name for page in self.config.pages):
+            self.bus.emit(
+                "status",
+                text=f"A page named {name} already exists",
+            )
+            return
         self.page.name = name
+        for page in self.config.pages:
+            for key in page.keys.values():
+                for action, params in self.config._action_params(key):
+                    if (
+                        action == "nav.page.go"
+                        and params.get("page") == old_name
+                    ):
+                        params["page"] = name
         self.config.save()
         self.bus.emit("page.changed", index=self.current_page, name=self.page.name)
 

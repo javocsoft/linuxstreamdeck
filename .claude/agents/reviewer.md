@@ -82,20 +82,28 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    assigning `self.deck`, registering its callback or emitting `deck.connected`.
    The monitor stop event must cancel waits and writes, while rendering/HID
    failures must not prevent a safe normal connection.
-14. **Portable audio archives.** Export v2 must deduplicate supported `sys.audio`
+14. **Page navigation compatibility.** Only `nav.page.next`,
+   `nav.page.previous` and `nav.page.go` may be registered or exposed to AI.
+   `KeyConfig.from_dict()` must migrate legacy `nav.page` actions in single,
+   multi and both toggle lists, preserving named destinations. Next/previous must
+   wrap; go-to choices must use the active profile; missing targets must emit
+   status. Page names must remain unique per profile, and rename must rewrite
+   every same-profile go-to reference without disturbing editor selection.
+   Selecting the current page must not save or emit redundant events.
+15. **Portable audio archives.** Export v2 must deduplicate supported `sys.audio`
    files and enforce per-file/total limits. Import must retain v1 compatibility,
    reject unsafe or unsupported archive paths, enforce limits before writing and
    restore audio only under `CONFIG_DIR/imported-audio`.
-15. **AI proposal safety.** Provider API keys must remain per-provider secrets and
+16. **AI proposal safety.** Provider API keys must remain per-provider secrets and
    never enter config or exports. A saved-key mask is read-only display state and
    must never be sent as a credential; replacement, saved-key reuse and forgetting
    must remain explicit. Context must be opt-in and limited to bounded OBS/page
    names. `sys.command` and `obs.raw` must remain excluded, every provider response
    locally validated, and generation must never execute or save a key before
    explicit editor review and user save.
-16. **English-only.** Flag Spanish or accented text introduced in any versioned
+17. **English-only.** Flag Spanish or accented text introduced in any versioned
    user-facing string, comment, log or document.
-17. **General correctness.** Report proven bugs, resource leaks and broken error
+18. **General correctness.** Report proven bugs, resource leaks and broken error
    handling beyond the specialist checklist.
 
 ## Output

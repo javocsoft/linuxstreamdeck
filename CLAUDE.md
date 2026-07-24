@@ -40,6 +40,9 @@ of truth; everything here is Claude-specific and additive.
   exceed configured brightness, and do not assign the deck, register presses or
   publish `deck.connected` until it finishes or is safely skipped. Shutdown must
   cancel it and every exit must restore brightness. See AGENTS.md §3 and §5.
+- Preserve page-navigation compatibility: keep legacy `nav.page` migration while
+  exposing only the three explicit IDs, keep page names unique per profile and
+  rewrite every `nav.page.go` target on rename. See AGENTS.md §3 and §5.
 
 ### Standard verification loop
 
