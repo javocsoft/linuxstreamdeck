@@ -165,6 +165,8 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
    delete the current one.
 7. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or
    delete a profile. Each profile has its own pages and keys.
+8. **About** — click the About button in the header for application details,
+   licensing and the GitHub link.
 
 > 💡 The app is **single-instance**: close any previous window before opening another.
 

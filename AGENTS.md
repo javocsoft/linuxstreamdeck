@@ -103,11 +103,12 @@ linuxstreamdeck/
 │                      audio, sources/filters, media, advanced + raw request).
 ├── ui/
 │   ├── window.py      MainWindow: key grid (virtual deck), header (profiles,
-│   │                  pages, brightness, OBS settings), DnD move, copy/paste, status bar.
+│   │                  pages, brightness, OBS settings, About), DnD move, copy/paste, status bar.
 │   ├── editor.py      EditorPanel: right-hand key editor; key-type selector.
 │   ├── steps.py       StepEditor / StepList / AppearanceBox — reused by the editor
 │   │                  for single, multi and toggle key types.
 │   ├── icon_picker.py Searchable grid to pick a library icon.
+│   ├── about.py       About dialog: application identity, credits, license and source link.
 │   ├── obs_settings.py OBS connection dialog (host/port/password).
 │   └── profile_dialog.py New/edit profile dialog (name + description).
 └── assets/icons/      MDI font (TTF) + icons.json index (bundled, Apache-2.0).

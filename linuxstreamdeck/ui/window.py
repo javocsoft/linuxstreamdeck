@@ -12,6 +12,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
 from .. import APP_NAME  # noqa: E402
+from .about import AboutDialog  # noqa: E402
 from .editor import EditorPanel  # noqa: E402
 from .obs_settings import ObsSettingsDialog  # noqa: E402
 
@@ -79,6 +80,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         # page selector + pages menu (of the active profile), mirroring profiles
         self.page_dropdown = Gtk.DropDown.new_from_strings([])
+        self.page_dropdown.set_tooltip_text("Active page")
         self.page_dropdown.connect("notify::selected", self._on_page_selected)
         header.pack_start(self.page_dropdown)
         page_menu = Gio.Menu()
@@ -90,14 +92,19 @@ class MainWindow(Adw.ApplicationWindow):
                                        menu_model=page_menu)
         header.pack_start(page_menu_btn)
 
-        # brightness + OBS settings
+        # brightness + OBS settings + about
         self.obs_btn = Gtk.Button.new_from_icon_name("network-offline-symbolic")
         self.obs_btn.set_tooltip_text("OBS connection settings")
         self.obs_btn.connect("clicked", self._on_obs_settings)
         header.pack_end(self.obs_btn)
+        about_btn = Gtk.Button.new_from_icon_name("help-about-symbolic")
+        about_btn.set_tooltip_text("About LinuxStreamDeck")
+        about_btn.connect("clicked", self._on_about)
+        header.pack_end(about_btn)
         brightness = Gtk.ScaleButton.new(
             10, 100, 10, ["display-brightness-symbolic"]
         )
+        brightness.set_tooltip_text("Adjust Stream Deck brightness")
         brightness.set_value(self.app.config.brightness)
         brightness.connect("value-changed", self._on_brightness)
         header.pack_end(brightness)
@@ -173,6 +180,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_key_clicked(self, btn, index: int) -> None:
         self._select(index)
+
+    def _on_about(self, _button) -> None:
+        AboutDialog().present(self)
 
     def _select(self, index: int) -> None:
         """Select a key (marks the button and loads the editor)."""
