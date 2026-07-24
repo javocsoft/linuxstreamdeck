@@ -14,8 +14,15 @@ from io import BytesIO
 
 from PIL import Image
 
-from ..core.config import DEFAULT_SCREENSAVER, SCREENSAVER_IDS
+from ..core.config import (
+    DEFAULT_SCREENSAVER,
+    EXIT_DISPLAY_BLANK,
+    EXIT_DISPLAY_DEFAULT,
+    EXIT_DISPLAY_MODES,
+    SCREENSAVER_IDS,
+)
 from ..core.events import EventBus
+from .exit_display import blank_exit_tiles, exit_image_tiles
 from .screensaver import ScreenSaverFrame, screensaver_frame
 from .startup_animation import startup_frames
 
@@ -35,6 +42,8 @@ class DeckManager:
         screensaver_style: str = DEFAULT_SCREENSAVER,
         screensaver_idle_minutes: int = 5,
         screensaver_intensity: int = 35,
+        exit_display_mode: str = EXIT_DISPLAY_DEFAULT,
+        exit_display_image: str = "",
     ) -> None:
         self.bus = bus
         self.brightness = brightness
@@ -66,6 +75,12 @@ class DeckManager:
         self._screensaver_brightness: int | None = None
         self._last_activity = time.monotonic()
         self._suppressed_keys: set[int] = set()
+        self._exit_display_mode = (
+            exit_display_mode
+            if exit_display_mode in EXIT_DISPLAY_MODES
+            else EXIT_DISPLAY_DEFAULT
+        )
+        self._exit_display_image = str(exit_display_image or "")
 
     @property
     def connected(self) -> bool:
@@ -109,7 +124,7 @@ class DeckManager:
         thread, self._thread = self._thread, None
         if thread is not None and thread is not threading.current_thread():
             thread.join()
-        self._close(emit=False)
+        self._close(emit=False, apply_exit_display=True)
 
     def _scan_loop(self) -> None:
         while not self._stop.is_set():
@@ -149,6 +164,12 @@ class DeckManager:
                     key_count,
                     image_size,
                 ):
+                    if self._stop.is_set():
+                        self._apply_exit_display(
+                            dev,
+                            key_count=key_count,
+                            image_size=image_size,
+                        )
                     dev.close()
                     return
                 if not dev.connected():
@@ -225,7 +246,7 @@ class DeckManager:
         except Exception:
             return False
 
-    def _close(self, emit: bool) -> None:
+    def _close(self, emit: bool, apply_exit_display: bool = False) -> None:
         with self._lock:
             deck, self.deck = self.deck, None
         if deck is not None:
@@ -233,10 +254,13 @@ class DeckManager:
                 deck.set_key_callback(None)
             except Exception:
                 pass
-            try:
-                deck.reset()
-            except Exception:
-                pass
+            if apply_exit_display:
+                self._apply_exit_display(deck)
+            else:
+                try:
+                    deck.reset()
+                except Exception:
+                    pass
             try:
                 deck.close()
             except Exception:
@@ -295,6 +319,63 @@ class DeckManager:
                     self.deck.set_brightness(pct)
                 except Exception:
                     pass
+
+    # ---------- display after exit ----------
+
+    def configure_exit_display(self, mode: str, image_path: str) -> None:
+        """Configure what a connected deck retains after a clean app exit."""
+        self._exit_display_mode = (
+            mode if mode in EXIT_DISPLAY_MODES else EXIT_DISPLAY_DEFAULT
+        )
+        self._exit_display_image = str(image_path or "")
+
+    def _apply_exit_display(
+        self,
+        deck,
+        key_count: int | None = None,
+        image_size: tuple[int, int] | None = None,
+    ) -> None:
+        """Apply the selected persistent hardware state before closing HID."""
+        mode = self._exit_display_mode
+        count = self.key_count if key_count is None else key_count
+        size = self.image_size if image_size is None else image_size
+        if mode == EXIT_DISPLAY_DEFAULT:
+            try:
+                deck.reset()
+            except Exception:
+                log.debug(
+                    "Could not restore the device standby image",
+                    exc_info=True,
+                )
+            return
+
+        try:
+            from StreamDeck.ImageHelpers import PILHelper
+
+            if mode == EXIT_DISPLAY_BLANK:
+                images = blank_exit_tiles(count, size)
+            else:
+                images = exit_image_tiles(
+                    self._exit_display_image,
+                    count,
+                    size,
+                )
+                deck.set_brightness(self.brightness)
+            for index, image in enumerate(images):
+                native = PILHelper.to_native_key_format(deck, image)
+                deck.set_key_image(index, native)
+            if mode == EXIT_DISPLAY_BLANK:
+                deck.set_brightness(0)
+        except Exception as error:
+            log.warning(
+                "Could not apply the configured exit display (%s); using "
+                "the device default",
+                error,
+            )
+            try:
+                deck.reset()
+            except Exception:
+                pass
 
     # ---------- screen saver ----------
 

@@ -28,7 +28,7 @@
     },
     {
       "name": "render-qa",
-      "description": "Verifies LinuxStreamDeck key, startup, and screen-saver rendering offscreen without launching the GUI. Use after changes to device/renderer.py, device/startup_animation.py, device/screensaver.py, core/icons.py, icon assets, or active-state logic, or whenever the user asks to verify how keys or full-deck animations look.",
+      "description": "Verifies LinuxStreamDeck key, startup, screen-saver, and clean-exit display rendering offscreen without launching the GUI. Use after changes to device/renderer.py, device/startup_animation.py, device/screensaver.py, device/exit_display.py, core/icons.py, icon assets, or active-state logic, or whenever the user asks to verify how keys or full-deck displays look.",
       "prompt": "prompts/render-qa.md",
       "claude": {
         "tools": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],

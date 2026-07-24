@@ -27,7 +27,8 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    through the serialized `OBSClient` path.
 2. **Render lock.** Pillow/FreeType drawing must use the shared reentrant
    `RENDER_LOCK` from `linuxstreamdeck/core/icons.py`. Rendering must never cache
-   failed or blank glyphs; full-deck screen-saver rendering uses the same lock.
+   failed or blank glyphs; full-deck screen-saver and clean-exit image rendering
+   use the same lock.
 3. **Pillow layout.** Font loading in `linuxstreamdeck/core/icons.py`,
    `linuxstreamdeck/device/renderer.py` and
    `linuxstreamdeck/device/startup_animation.py` and
@@ -77,7 +78,9 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    target in `finally`. `DeckManager` must finish or safely skip startup before
    assigning `self.deck`, registering its callback or emitting `deck.connected`.
    The monitor stop event must cancel waits and writes, while rendering/HID
-   failures must not prevent a safe normal connection.
+   failures must not prevent a safe normal connection. If shutdown cancels a
+   provisional startup, the configured clean-exit display must be applied before
+   that device closes.
 14. **Page navigation compatibility.** Only `nav.page.next`,
    `nav.page.previous` and `nav.page.go` may be registered or exposed to AI.
    `KeyConfig.from_dict()` must migrate legacy `nav.page` actions in single,
@@ -94,11 +97,14 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    reset one position; page/profile deletion, import and shutdown must clear
    state safely. Emit each completion once, run sounds outside action workers and
    cancel them on reset/shutdown.
-16. **Portable audio archives.** Export v2 must deduplicate supported `sys.audio`
+16. **Portable asset archives.** Export v3 must deduplicate supported `sys.audio`
    files and `sys.timer` `sound` parameters, including identical content across
-   both actions, and enforce per-file/total limits. Import must retain v1
-   compatibility, reject unsafe or unsupported archive paths, enforce limits
-   before writing and restore audio only under `CONFIG_DIR/imported-audio`.
+   both actions, and enforce per-file/total limits. It must include at most one
+   supported BMP/JPEG/PNG/WebP custom exit image with a 50 MiB limit. Import must
+   retain v1/v2 compatibility, reject unsafe or unsupported archive paths,
+   enforce limits before writing, restore audio only below
+   `CONFIG_DIR/imported-audio` and restore the exit image only below
+   `CONFIG_DIR/imported-exit-images`.
 17. **AI proposal safety.** Provider API keys must remain per-provider secrets and
    never enter config or exports. A saved-key mask is read-only display state and
    must never be sent as a credential; replacement, saved-key reuse and forgetting
@@ -123,10 +129,20 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    first physical wake press and release, restore normal brightness and key
    images, and support preview while disabled or without hardware. Temporary
    dialog callbacks must unsubscribe on close. `DeckManager.stop()` must wake and
-   join the saver thread before joining the monitor and closing HID.
-20. **English-only.** Flag Spanish or accented text introduced in any versioned
+   join the saver thread before joining the monitor and applying the clean-exit
+   display.
+20. **Clean-exit display lifecycle.** Preserve the three physical-device modes:
+   `device_default` calls the firmware reset, `blank` writes every key black
+   before setting brightness to 0, and `custom` validates and center-crops one
+   full-grid image before writing it at normal configured brightness. Apply the
+   final state only after device workers join and immediately before HID closes;
+   a custom-image preparation or write failure must fall back to the device
+   default. Clean shutdown during provisional startup must apply it too. Never
+   claim a forced termination, crash or power loss can guarantee these final HID
+   writes.
+21. **English-only.** Flag Spanish or accented text introduced in any versioned
    user-facing string, comment, log or document.
-21. **General correctness.** Report proven bugs, resource leaks and broken error
+22. **General correctness.** Report proven bugs, resource leaks and broken error
    handling beyond the specialist checklist.
 
 ## Output

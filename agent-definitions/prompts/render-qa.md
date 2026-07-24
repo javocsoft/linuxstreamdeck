@@ -9,6 +9,7 @@ application GUI.
 Read `linuxstreamdeck/device/renderer.py`,
 `linuxstreamdeck/device/startup_animation.py`,
 `linuxstreamdeck/device/screensaver.py`,
+`linuxstreamdeck/device/exit_display.py`,
 `linuxstreamdeck/core/icons.py` and `AGENTS.md` sections 5-6 first.
 
 ## Absolute rules
@@ -85,6 +86,20 @@ style, confirm all 15 title characters occupy the full grid over a predominantly
 black background. This is a pure-Pillow check and must not open HID or launch the
 application. Preview the selected frames offscreen and report both objective
 measurements and visual coherence across key boundaries.
+
+### Clean-exit display
+
+When `device/exit_display.py` is in scope, drive `exit_image_tiles()` and
+`blank_exit_tiles()` directly. Use representative landscape, portrait and square
+BMP/JPEG/PNG/WebP sources and assemble each result into a full-deck 5×3 preview.
+Check that every custom result contains 15 correctly sized RGB tiles, fills the
+complete grid with a coherent center crop and preserves recognizable colors
+across key boundaries. Verify every blank tile is fully black.
+
+Keep custom-image opening and fitting under `RENDER_LOCK`. Validation must reject
+missing, unreadable, unsupported or larger-than-50-MiB files. These checks are
+pure Pillow and must not open HID; runtime brightness, firmware reset and final
+device writes belong to the reviewer rather than render QA.
 
 ## Output
 

@@ -57,10 +57,11 @@ maintenance contract.
   page-navigation migration/reference integrity, portable-archive limits/path
   safety and audio deduplication, stateful clock identity/ticking/reset/completion
   lifecycle, screen-saver rendering/explicit activity/wake/brightness/thread
-  shutdown with no global legacy GTK activity hook,
-  grid-DnD gesture/payload validation, AI credential/context/proposal safety,
-  reusing feedback color constants, and English-only with no accents. It only
-  reports; it does not edit code.
+  shutdown with no global legacy GTK activity hook, clean-exit display
+  mode/render/fallback/HID ordering and portable custom images, grid-DnD
+  gesture/payload validation, AI credential/context/proposal safety, reusing
+  feedback color constants, and English-only with no accents. It only reports;
+  it does not edit code.
 
 ## `obs-action-author` — action scaffolder
 
@@ -79,8 +80,8 @@ maintenance contract.
 ## `render-qa` — offscreen render verifier
 
 - **Automatic:** after touching `device/renderer.py`, `device/screensaver.py`,
-  `device/startup_animation.py`, `core/icons.py`, the icon assets, or active-state
-  logic.
+  `device/startup_animation.py`, `device/exit_display.py`, `core/icons.py`, the
+  icon assets, or active-state logic.
 - **Manual:** *"verify how the keys look"*, *"check there are no blank glyphs"*.
 - **What it does:** composes key PNGs **without launching the GUI** (with an
   isolated `LSD_CONFIG_DIR`) and objectively checks that glyphs are not blank, are
@@ -91,9 +92,11 @@ maintenance contract.
   labels to ensure they replace the icon cleanly and remain legible.
   It also verifies all six screen-saver styles as animated full-deck frames,
   including per-key size/mode, intensity bounds and the LinuxStreamDeck-on-black
-  layout. For the physical startup sequence, it can inspect the complete
-  offscreen 5×3 frame grid, title mapping, brightness bounds and fade to black.
-  It eyeballs the images itself, and reports without fixing unless asked.
+  layout. It checks custom exit images as coherent center-cropped full-deck
+  grids and verifies the **Off** tiles are fully black. For the physical startup
+  sequence, it can inspect the complete offscreen 5×3 frame grid, title mapping,
+  brightness bounds and fade to black. It eyeballs the images itself, and reports
+  without fixing unless asked.
 
 ## `documenter` — documentation keeper
 

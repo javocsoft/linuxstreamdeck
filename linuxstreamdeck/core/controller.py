@@ -248,6 +248,11 @@ class DeckController:
             screen.idle_minutes,
             screen.intensity,
         )
+        exit_display = self.config.exit_display
+        self.deck.configure_exit_display(
+            exit_display.mode,
+            exit_display.image_path,
+        )
         cfg = self.config.obs
         self.obs.configure(cfg.host, cfg.port, cfg.password)
         self.obs.reconnect_now()

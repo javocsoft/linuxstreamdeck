@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
+from linuxstreamdeck.core.config import EXIT_DISPLAY_BLANK
 from linuxstreamdeck.core.events import EventBus
 from linuxstreamdeck.device.manager import DeckManager
 from linuxstreamdeck.device.startup_animation import (
@@ -196,6 +197,41 @@ class StartupAnimationPlaybackTests(unittest.TestCase):
         self.assertEqual(events, ["animation", "connected"])
         self.assertIs(self.manager.deck, deck)
         self.assertIsNotNone(deck.callback)
+
+    def test_shutdown_during_animation_still_applies_the_exit_display(
+        self,
+    ) -> None:
+        deck = FakePhysicalDeck()
+        self.manager.configure_exit_display(EXIT_DISPLAY_BLANK, "")
+
+        def cancel_animation(*_args) -> bool:
+            self.manager._stop.set()
+            return False
+
+        with (
+            patch(
+                "StreamDeck.DeviceManager.DeviceManager"
+            ) as device_manager,
+            patch.object(
+                self.manager,
+                "_play_startup_animation",
+                side_effect=cancel_animation,
+            ),
+            patch(
+                "StreamDeck.ImageHelpers.PILHelper.to_native_key_format",
+                side_effect=lambda _deck, image: image.getpixel((0, 0)),
+            ),
+        ):
+            device_manager.return_value.enumerate.return_value = [deck]
+            self.manager._try_open()
+
+        self.assertTrue(deck.closed)
+        self.assertEqual(len(deck.images), 15)
+        self.assertTrue(
+            all(image == (0, 0, 0) for _index, image in deck.images)
+        )
+        self.assertEqual(deck.brightness[-1], 0)
+        self.assertIsNone(self.manager.deck)
 
 
 if __name__ == "__main__":

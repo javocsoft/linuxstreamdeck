@@ -39,7 +39,8 @@ of truth; everything here is Claude-specific and additive.
 - Keep physical startup exclusive: render it offscreen under `RENDER_LOCK`, never
   exceed configured brightness, and do not assign the deck, register presses or
   publish `deck.connected` until it finishes or is safely skipped. Shutdown must
-  cancel it and every exit must restore brightness. See AGENTS.md §3 and §5.
+  cancel it; cancellation during provisional startup must still apply the
+  configured clean-exit display before closing HID. See AGENTS.md §3 and §5.
 - Preserve page-navigation compatibility: keep legacy `nav.page` migration while
   exposing only the three explicit IDs, keep page names unique per profile and
   rewrite every `nav.page.go` target on rename. See AGENTS.md §3 and §5.
@@ -58,6 +59,11 @@ of truth; everything here is Claude-specific and additive.
   must unsubscribe on close. Track idle activity only at physical-key and
   explicit virtual-deck entry points; never add a broad/global
   `Gtk.EventControllerLegacy` activity hook. See AGENTS.md §3 and §5.
+- Preserve the physical clean-exit display contract: firmware reset for
+  **Device default**, black keys plus brightness 0 for **Off**, and one validated
+  full-grid image at normal brightness for **Custom**. Apply it after device
+  workers join and before HID closes, fall back to the device default on failure,
+  and never claim forced termination can apply it. See AGENTS.md §3 and §5.
 
 ### Standard verification loop
 
@@ -70,9 +76,10 @@ LSD_CONFIG_DIR="$TEST_CONFIG_DIR" .venv/bin/python -m unittest discover -s tests
 ```
 
 For rendering changes, compose the relevant key PNG(s) offscreen and read the
-image back, using `screensaver_frame()` for screen-saver changes and a temp
-`LSD_CONFIG_DIR` if the path touches config. For a live GUI check, hand it to the
-user with `./run.sh` (they must close any old window first — single instance).
+image back, using `screensaver_frame()` for screen-saver changes,
+`exit_image_tiles()` for custom exit displays and a temp `LSD_CONFIG_DIR` if the
+path touches config. For a live GUI check, hand it to the user with `./run.sh`
+(they must close any old window first — single instance).
 
 ### Working style
 

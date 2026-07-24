@@ -35,17 +35,18 @@ Never trust a documentation claim without checking its source. Verify at least:
 - **Action catalogue:** `linuxstreamdeck/obs/actions.py` and
   `linuxstreamdeck/basic_actions.py` against the user-facing action tables.
 - **Key types and config:** `linuxstreamdeck/core/config.py`, config paths,
-  `LSD_CONFIG_DIR`, backups, import/export versions and limits, portable audio,
-  timer-sound deduplication, legacy page-action migration, named page-target
-  maintenance, and profile/page/key models.
+  `LSD_CONFIG_DIR`, backups, import/export versions and limits, portable audio
+  and exit images, timer-sound deduplication, legacy page-action migration,
+  named page-target maintenance, and profile/page/key models.
 - **Stateful clocks:** `linuxstreamdeck/core/clocks.py`, key identity propagation,
   immediate execution, second-change rendering, view-independent runtime state,
   timer completion audio and reset/clear/move/shutdown lifecycle.
-- **Animated screen saver:** `linuxstreamdeck/device/screensaver.py`,
-  `device/manager.py`, `ui/screensaver_settings.py` and `ui/window.py`, including
-  installed styles, persisted/imported settings, virtual/physical preview,
-  explicit physical/virtual activity entry points without a global legacy GTK
-  hook, consumed physical wake presses, brightness/key restoration and
+- **Stream Deck display:** `linuxstreamdeck/device/screensaver.py`,
+  `device/exit_display.py`, `device/manager.py`, `ui/screensaver_settings.py` and
+  `ui/window.py`, including installed saver styles, persisted/imported settings,
+  virtual/physical preview, explicit physical/virtual activity entry points
+  without a global legacy GTK hook, consumed physical wake presses, clean-exit
+  display modes/custom image portability, brightness/key restoration and
   thread/HID shutdown order.
 - **AI-assisted creation:** `linuxstreamdeck/ai/`,
   `linuxstreamdeck/ui/ai_assistant.py` and provider key storage, including
@@ -55,12 +56,13 @@ Never trust a documentation claim without checking its source. Verify at least:
   OBS requests, separate action/render workers and ordered activity shutdown,
   same-key restart cancellation and predecessor ordering, exclusive/cancellable
   physical startup, unambiguous/migrated page navigation, bounded/path-safe
-  portable audio, key-scoped clock lifecycle, screen-saver rendering/wake/thread
-  lifecycle, grid-level validated DnD, isolated config experiments and the
-  single-instance GUI rule.
+  portable audio/images, key-scoped clock lifecycle, screen-saver
+  rendering/wake/thread lifecycle, clean-exit display fallback/HID ordering,
+  grid-level validated DnD, isolated config experiments and the single-instance
+  GUI rule.
 - **Device facts:** supported device id, key count, grid columns, render size,
-  startup/screen-saver frame layouts, brightness bounds, connection publication
-  order and device-worker shutdown ordering.
+  startup/screen-saver/exit-display frame layouts, brightness bounds, connection
+  publication order and device-worker shutdown ordering.
 - **Custom agents:** `agent-definitions/manifest.json` and
   `agent-definitions/prompts/*.md` against `CUSTOMAGENTS.md`, `AGENTS.md`,
   `CLAUDE.md` and every generated Claude/Codex adapter.

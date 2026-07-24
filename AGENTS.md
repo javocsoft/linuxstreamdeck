@@ -88,8 +88,8 @@ and wraps a single-instance `Adw.Application`. Components communicate through a
 thread-safe **pub/sub `EventBus`**; UI never talks to the device or OBS directly.
 `LinuxStreamDeckApp` also owns shutdown: it stops controller workers before the
 HID manager and OBS client. `DeckManager.stop()` joins the screen-saver thread,
-then the monitor thread, before closing HID, so no background work outlives
-application teardown.
+then the monitor thread, applies the configured clean-exit display and finally
+closes HID, so no background work outlives application teardown.
 
 ```
 linuxstreamdeck/
@@ -104,7 +104,7 @@ linuxstreamdeck/
 │   ├── events.py      EventBus (pub/sub). Emitters may run on any thread; a
 │   │                  `dispatcher` (GLib.idle_add) marshals callbacks to the UI thread.
 │   ├── config.py      Data model + atomic user-only JSON persistence: Config →
-│   │                  Profile → Page → KeyConfig (+ OBS/AI/screen-saver settings).
+│   │                  Profile → Page → KeyConfig (+ OBS/AI/deck-display settings).
 │   │                  Legacy action/profile migration, backup and `.lsdconfig` I/O.
 │   ├── actions.py     Action framework: `Action` base, declarative `Param`,
 │   │                  `ActionContext`, global `REGISTRY`, `@register`, `by_category`.
@@ -116,7 +116,8 @@ linuxstreamdeck/
 │   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
 │   └── secrets.py     Async Secret Service storage for OBS and per-provider API keys.
 ├── device/
-│   ├── manager.py     DeckManager: HID hotplug, startup/screen-saver threads, key I/O.
+│   ├── manager.py     DeckManager: HID hotplug, startup/saver threads, exit display, I/O.
+│   ├── exit_display.py Validate/crop static full-deck images for clean shutdown.
 │   ├── screensaver.py Pure-Pillow coordinated full-deck animation renderer.
 │   ├── startup_animation.py 33-frame offscreen physical-deck wake/title sequence.
 │   └── renderer.py    `compose()` — builds each configured key PNG with Pillow
@@ -128,7 +129,7 @@ linuxstreamdeck/
 │                      audio, sources/filters, media, advanced + raw request).
 ├── ui/
 │   ├── window.py      MainWindow: key grid (virtual deck), header (profiles,
-│   │                  import/export, pages, screen saver, brightness, OBS, About),
+│   │                  import/export, pages, deck display, brightness, OBS, About),
 │   │                  explicit saver activity, DnD, copy/paste, unsaved guard, status bar.
 │   ├── editor.py      EditorPanel: key editor, canonical draft/baseline and key type.
 │   ├── ai_assistant.py OpenAI/Claude proposal dialog and explicit editor handoff.
@@ -137,7 +138,7 @@ linuxstreamdeck/
 │   ├── icon_picker.py Searchable grid to pick a library icon.
 │   ├── about.py       About dialog: application identity, credits, license and source link.
 │   ├── obs_settings.py OBS connection dialog (host/port/password).
-│   ├── screensaver_settings.py Screen saver selection, delay, intensity and preview.
+│   ├── screensaver_settings.py Screen saver and clean-exit display settings.
 │   └── profile_dialog.py New/edit profile dialog (name + description).
 └── assets/icons/      MDI font (TTF) + icons.json index (bundled, Apache-2.0).
 ```
@@ -214,9 +215,9 @@ does not modify `Config.brightness`.
 `DeckManager` owns a dedicated `deck-screensaver` thread and tracks monotonic
 idle time. Physical key handling and deliberate virtual-deck entry points call
 `record_activity()`; these include selecting or testing a key and opening the
-screen-saver controls. Do not infer activity from every window event or attach a
-broad `Gtk.EventControllerLegacy` hook. While the saver is active, normal
-controller/HID key renders are suppressed and frames are sent to both the
+Stream Deck display controls. Do not infer activity from every window event or
+attach a broad `Gtk.EventControllerLegacy` hook. While the saver is active,
+normal controller/HID key renders are suppressed and frames are sent to both the
 physical deck and the virtual grid. A physical wake press and its matching
 release are consumed; a later press executes normally. Waking clears preview
 state, restores normal brightness, emits inactive `deck.screensaver`, and the
@@ -226,7 +227,38 @@ Screen-saver settings are part of normal JSON serialization and `.lsdconfig`
 import/export. Import applies them immediately through
 `DeckManager.configure_screensaver()` and restarts idle tracking. Shutdown sets
 the shared deck stop/wakeup signals, joins the screen-saver thread before the
-monitor thread, and closes HID only after both have exited.
+monitor thread, and proceeds to the configured clean-exit display only after both
+have exited.
+
+### Physical display after clean exit
+
+`ExitDisplaySettings` persists `mode` and `image_path` at the top level of the
+configuration. The **Stream Deck display** dialog saves one of three modes:
+
+| ID / display name | Clean-exit behavior |
+| --- | --- |
+| `device_default` / **Device default** | Call the firmware reset so the device supplies its standby image. |
+| `blank` / **Off** | Write black to every key, then set brightness to 0. |
+| `custom` / **Custom** | Center-crop one image across the full key grid and leave it at normal configured brightness. |
+
+Custom images may be BMP, JPEG, PNG or WebP and are limited to 50 MiB.
+`device/exit_display.py::exit_image_tiles()` validates the local file, uses
+`ImageOps.fit()` under `RENDER_LOCK` to fill the complete 5-column grid, then
+returns one RGB tile per physical key. `blank_exit_tiles()` produces the black
+tiles used by **Off**.
+
+`DeckManager.stop()` stops and joins both device workers before
+`_close(..., apply_exit_display=True)` writes the selected state and closes HID.
+Shutdown during the provisional startup animation also applies the selected
+state before closing that device. A missing, invalid or unwritable custom image
+falls back to the firmware default. This behavior is guaranteed only for a clean
+application shutdown; forced termination, a system crash or power loss may
+prevent the final HID writes.
+
+The setting is part of normal JSON persistence. A custom image is bundled in
+`.lsdconfig` format v3 and restored below
+`CONFIG_DIR/imported-exit-images`; importing applies both its mode and restored
+path immediately through `DeckManager.configure_exit_display()`.
 
 ### Action framework
 
@@ -466,23 +498,25 @@ and the password is session-only. OpenAI and Claude API keys are also stored onl
 in Secret Service, under separate provider identities; AI preferences in config
 never contain either key.
 
-The profiles menu exports `.lsdconfig` ZIP format v2 with the full JSON
-configuration, including screen-saver settings, available custom key icons and
-supported files referenced by `sys.audio` or the `sound` parameter of
-`sys.timer`; identical audio content is deduplicated even across both actions.
-Audio is limited to 200 MiB per file and 500 MiB total. Built-in `mdi:` icons
-stay as references, and OBS passwords and provider API keys are never exported.
-Missing, unreadable, unsupported or oversized audio remains a local reference
-and produces an export warning.
+The profiles menu exports `.lsdconfig` ZIP format v3 with the full JSON
+configuration, including screen-saver and clean-exit display settings, available
+custom key icons, the selected custom exit image and supported files referenced
+by `sys.audio` or the `sound` parameter of `sys.timer`; identical audio content
+is deduplicated even across both actions. Audio is limited to 200 MiB per file
+and 500 MiB total, while the exit image is limited to 50 MiB. Built-in `mdi:`
+icons stay as references, and OBS passwords and provider API keys are never
+exported. Missing, unreadable, unsupported or oversized portable files remain
+local references and produce an export warning.
 
-Import accepts format v1 and v2, validates archive member paths and size limits,
-restores bundled icons below `CONFIG_DIR/imported-icons` and audio below
-`CONFIG_DIR/imported-audio`, replaces the complete configuration and writes the
-prior configuration to `config.json.bak`. It keeps the destination computer's
-keyring credentials and ignores password fields in old exports, so an OBS password
-must be entered once after moving to a new computer. The controller applies
-imported normal brightness and screen-saver settings immediately before
-reconnecting OBS.
+Import accepts format v1, v2 and v3, validates archive member paths and size
+limits, restores bundled icons below `CONFIG_DIR/imported-icons`, audio below
+`CONFIG_DIR/imported-audio` and the exit image below
+`CONFIG_DIR/imported-exit-images`, replaces the complete configuration and writes
+the prior configuration to `config.json.bak`. It keeps the destination
+computer's keyring credentials and ignores password fields in old exports, so an
+OBS password must be entered once after moving to a new computer. The controller
+applies imported normal brightness, screen-saver and clean-exit display settings
+immediately before reconnecting OBS.
 
 ---
 
@@ -523,9 +557,10 @@ hard-to-diagnose failures.
    its own thread, and the icon picker/preview render on the main thread;
    concurrent use produced blank (and blank-cached) glyphs. A shared reentrant
    `RENDER_LOCK` (defined in `core/icons.py`, imported by `device/renderer.py`,
-   `device/startup_animation.py` and `device/screensaver.py`) serializes drawing.
-   It is reentrant so `compose()` can call `library.render` without deadlocking.
-   The glyph cache is manual and **never caches failures** (safety net).
+   `device/startup_animation.py`, `device/screensaver.py` and
+   `device/exit_display.py`) serializes drawing. It is reentrant so `compose()`
+   can call `library.render` without deadlocking. The glyph cache is manual and
+   **never caches failures** (safety net).
 
 3. **OBS requests must be fully serialized.** `obsws_python.ReqClient` uses a
    single websocket that is **not** thread-safe. In `obs/client.py` the `_lock`
@@ -578,11 +613,13 @@ hard-to-diagnose failures.
    waits must observe their `ActionContext`; canceled queued replacements must
    exit without executing so rapid presses collapse to the latest invocation.
 
-10. **Portable audio must stay bounded and path-safe.** Keep `.lsdconfig` v1 import
-   compatibility while exporting v2. Bundle only supported `sys.audio` files and
-   `sys.timer` `sound` parameters, deduplicate content across both actions,
-   enforce per-file/total limits, validate archive paths before extraction and
-   restore only below `CONFIG_DIR/imported-audio`.
+10. **Portable assets must stay bounded and path-safe.** Keep `.lsdconfig` v1/v2
+   import compatibility while exporting v3. Bundle only supported `sys.audio`
+   files and `sys.timer` `sound` parameters, deduplicate audio content across
+   both actions and restore it only below `CONFIG_DIR/imported-audio`. Bundle the
+   supported BMP/JPEG/PNG/WebP custom exit image at most once, enforce its 50 MiB
+   limit and restore it only below `CONFIG_DIR/imported-exit-images`. Validate
+   every archive path and size before extraction.
 
 11. **Physical startup must remain exclusive and cancellable.** Generate frames
    offscreen under `RENDER_LOCK`, keep their brightness at or below the configured
@@ -590,7 +627,8 @@ hard-to-diagnose failures.
    provisional device before assigning `self.deck`, installing its callback or
    emitting `deck.connected`. Check the monitor stop event during writes and
    waits; only a completed or safely skipped animation may proceed to connection
-   publication and the configured-key refresh.
+   publication and the configured-key refresh. If shutdown cancels provisional
+   startup, apply the configured clean-exit display before closing that device.
 
 12. **Named page navigation must stay compatible and unambiguous.** Keep the
    legacy `nav.page` loader migration for single/multi/toggle actions, but never
@@ -628,7 +666,15 @@ hard-to-diagnose failures.
    normal brightness and configured keys. Preview must work while disabled and
    without hardware, and temporary dialog subscribers must unsubscribe on close.
    On shutdown, signal the saver wakeup, join its thread before the monitor
-   thread, and close HID only after both exit.
+   thread, and apply the clean-exit display before HID closes.
+
+16. **The clean-exit display must be the final HID state.** Keep
+   `device_default` as a firmware reset, `blank` as black tiles followed by
+   brightness 0, and `custom` as a validated full-grid center crop written at
+   normal configured brightness. Apply it only after device workers have joined
+   and immediately before closing HID; if custom preparation or writes fail,
+   fall back to the device default. Do not promise this state after forced
+   termination, a crash or power loss.
 
 ---
 
@@ -637,11 +683,12 @@ hard-to-diagnose failures.
 `Config.save()` **always** writes to `~/.config/linuxstreamdeck/config.json`
 unless `LSD_CONFIG_DIR` is set. Any script that exercises code calling `save()`
 (e.g. `set_page`, `set_profile`, `add_profile`, `add_page`, `rename_page`,
-`paste_key`, `clear_key`, brightness or screen-saver changes, saving a key) will
-**overwrite the user's real config** — this has happened and lost real keys and
-settings.
+`paste_key`, `clear_key`, brightness, screen-saver or exit-display changes,
+saving a key) will **overwrite the user's real config** — this has happened and
+lost real keys and settings.
 `Config.import_bundle()` also saves a replacement configuration and writes imported
-icons and audio below the config directory, so it must always be isolated too.
+icons, audio and exit images below the config directory, so it must always be
+isolated too.
 
 **Always redirect the config directory before importing the package:**
 

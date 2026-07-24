@@ -72,17 +72,44 @@ SCREENSAVER_CHOICES = (
 SCREENSAVER_IDS = frozenset(choice[0] for choice in SCREENSAVER_CHOICES)
 DEFAULT_SCREENSAVER = SCREENSAVER_CHOICES[0][0]
 
+EXIT_DISPLAY_DEFAULT = "device_default"
+EXIT_DISPLAY_BLANK = "blank"
+EXIT_DISPLAY_CUSTOM = "custom"
+EXIT_DISPLAY_CHOICES = (
+    (
+        EXIT_DISPLAY_DEFAULT,
+        "Device default",
+        "Show the Stream Deck standby image supplied by the device firmware.",
+    ),
+    (
+        EXIT_DISPLAY_BLANK,
+        "Off",
+        "Leave every key black with the display brightness set to zero.",
+    ),
+    (
+        EXIT_DISPLAY_CUSTOM,
+        "Custom",
+        "Crop one image across the complete Stream Deck key grid.",
+    ),
+)
+EXIT_DISPLAY_MODES = frozenset(choice[0] for choice in EXIT_DISPLAY_CHOICES)
+SUPPORTED_EXIT_IMAGE_EXTENSIONS = frozenset(
+    {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
+)
+
 EXPORT_FORMAT = "linuxstreamdeck-configuration"
-EXPORT_VERSION = 2
+EXPORT_VERSION = 3
 EXPORT_CONFIG_FILE = "config.json"
 EXPORT_MANIFEST_FILE = "manifest.json"
 EXPORT_ICON_PREFIX = "bundle:"
 EXPORT_AUDIO_PREFIX = "bundle-audio:"
+EXPORT_EXIT_IMAGE_PREFIX = "bundle-exit-image:"
 MAX_CONFIG_BYTES = 10 * 1024 * 1024
 MAX_ICON_BYTES = 50 * 1024 * 1024
 MAX_TOTAL_ICON_BYTES = 200 * 1024 * 1024
 MAX_AUDIO_BYTES = 200 * 1024 * 1024
 MAX_TOTAL_AUDIO_BYTES = 500 * 1024 * 1024
+MAX_EXIT_IMAGE_BYTES = 50 * 1024 * 1024
 
 _ACTION_AUDIO_PARAMETERS = {
     "sys.audio": "file",
@@ -115,6 +142,8 @@ class ExportResult:
     missing_icons: int
     bundled_audio: int = 0
     missing_audio: int = 0
+    bundled_exit_image: bool = False
+    missing_exit_image: bool = False
 
 
 @dataclass(frozen=True)
@@ -124,6 +153,7 @@ class ImportResult:
     keys: int
     restored_icons: int
     restored_audio: int = 0
+    restored_exit_image: bool = False
 
 
 @dataclass
@@ -298,12 +328,19 @@ class ScreenSaverSettings:
 
 
 @dataclass
+class ExitDisplaySettings:
+    mode: str = EXIT_DISPLAY_DEFAULT
+    image_path: str = ""
+
+
+@dataclass
 class Config:
     profiles: list[Profile] = field(default_factory=lambda: [Profile()])
     current_profile: int = 0
     obs: ObsSettings = field(default_factory=ObsSettings)
     ai: AISettings = field(default_factory=AISettings)
     screensaver: ScreenSaverSettings = field(default_factory=ScreenSaverSettings)
+    exit_display: ExitDisplaySettings = field(default_factory=ExitDisplaySettings)
     brightness: int = 80
     obs_password_needs_migration: bool = field(
         default=False, repr=False, compare=False
@@ -379,6 +416,9 @@ class Config:
         raw_screensaver = raw.get("screensaver", {})
         if not isinstance(raw_screensaver, dict):
             raise ValueError("The screen saver settings must be a JSON object")
+        raw_exit_display = raw.get("exit_display", {})
+        if not isinstance(raw_exit_display, dict):
+            raise ValueError("The exit display settings must be a JSON object")
         try:
             legacy_password = str(raw_obs.get("password", ""))
             obs = ObsSettings(
@@ -424,6 +464,15 @@ class Config:
                     min(100, int(raw_screensaver.get("intensity", 35))),
                 ),
             )
+            exit_mode = str(
+                raw_exit_display.get("mode", EXIT_DISPLAY_DEFAULT)
+            )
+            if exit_mode not in EXIT_DISPLAY_MODES:
+                exit_mode = EXIT_DISPLAY_DEFAULT
+            exit_display = ExitDisplaySettings(
+                mode=exit_mode,
+                image_path=str(raw_exit_display.get("image_path", "") or ""),
+            )
             brightness = max(10, min(100, int(raw.get("brightness", 80))))
         except (TypeError, ValueError) as error:
             raise ValueError("The configuration contains an invalid number") from error
@@ -433,6 +482,7 @@ class Config:
             obs=obs,
             ai=ai,
             screensaver=screensaver,
+            exit_display=exit_display,
             brightness=brightness,
             obs_password_needs_migration="password" in raw_obs,
         )
@@ -505,13 +555,15 @@ class Config:
     # ---------- portable import / export ----------
 
     def export_bundle(self, destination: Path) -> ExportResult:
-        """Write a portable archive with custom icons and action audio files."""
+        """Write a portable archive with custom icons, audio and exit image."""
         raw = self._serializable_dict()
         icon_files: dict[str, bytes] = {}
         missing_icons: set[str] = set()
         audio_files: dict[str, bytes] = {}
         missing_audio: set[str] = set()
         total_audio_bytes = 0
+        exit_image_file: tuple[str, bytes] | None = None
+        missing_exit_image = False
 
         for profile in raw["profiles"]:
             for page in profile["pages"]:
@@ -568,6 +620,31 @@ class Config:
                             f"{EXPORT_AUDIO_PREFIX}{archive_name}"
                         )
 
+        exit_ref = str(
+            raw.get("exit_display", {}).get("image_path", "") or ""
+        )
+        if exit_ref:
+            try:
+                source = Path(exit_ref).expanduser()
+                if (
+                    not source.is_file()
+                    or source.stat().st_size > MAX_EXIT_IMAGE_BYTES
+                    or source.suffix.lower()
+                    not in SUPPORTED_EXIT_IMAGE_EXTENSIONS
+                ):
+                    missing_exit_image = True
+                else:
+                    data = source.read_bytes()
+                    digest = hashlib.sha256(data).hexdigest()
+                    suffix = source.suffix.lower()
+                    archive_name = f"exit-image/{digest}{suffix}"
+                    exit_image_file = (archive_name, data)
+                    raw["exit_display"]["image_path"] = (
+                        f"{EXPORT_EXIT_IMAGE_PREFIX}{archive_name}"
+                    )
+            except OSError:
+                missing_exit_image = True
+
         manifest = {
             "format": EXPORT_FORMAT,
             "version": EXPORT_VERSION,
@@ -598,6 +675,8 @@ class Config:
                     archive.writestr(archive_name, data)
                 for archive_name, data in audio_files.items():
                     archive.writestr(archive_name, data)
+                if exit_image_file is not None:
+                    archive.writestr(*exit_image_file)
             temporary_path.replace(destination)
         finally:
             temporary_path.unlink(missing_ok=True)
@@ -606,6 +685,8 @@ class Config:
             missing_icons=len(missing_icons),
             bundled_audio=len(audio_files),
             missing_audio=len(missing_audio),
+            bundled_exit_image=exit_image_file is not None,
+            missing_exit_image=missing_exit_image,
         )
 
     def import_bundle(self, source: Path) -> ImportResult:
@@ -622,7 +703,7 @@ class Config:
             )
             if (
                 manifest.get("format") != EXPORT_FORMAT
-                or manifest.get("version") not in (1, EXPORT_VERSION)
+                or manifest.get("version") not in (1, 2, EXPORT_VERSION)
             ):
                 raise ValueError("This LinuxStreamDeck export version is not supported")
             raw = self._read_bundle_json(
@@ -637,6 +718,7 @@ class Config:
             audio_payloads: dict[Path, bytes] = {}
             restored_members: dict[str, Path] = {}
             restored_audio_members: dict[str, Path] = {}
+            exit_image_payload: tuple[Path, bytes] | None = None
             total_icon_bytes = 0
             total_audio_bytes = 0
 
@@ -691,10 +773,35 @@ class Config:
                     restored_audio_members[archive_name] = target
                     params[parameter] = str(target)
 
+            exit_ref = replacement.exit_display.image_path
+            if exit_ref.startswith(EXPORT_EXIT_IMAGE_PREFIX):
+                archive_name = exit_ref.removeprefix(
+                    EXPORT_EXIT_IMAGE_PREFIX
+                )
+                self._validate_exit_image_member(archive_name)
+                data = self._read_bundle_member(
+                    archive,
+                    archive_name,
+                    MAX_EXIT_IMAGE_BYTES,
+                )
+                suffix = PurePosixPath(archive_name).suffix.lower()
+                digest = hashlib.sha256(data).hexdigest()
+                target = (
+                    CONFIG_DIR
+                    / "imported-exit-images"
+                    / f"{digest}{suffix}"
+                )
+                exit_image_payload = (target, data)
+                replacement.exit_display.image_path = str(target)
+
         for target, data in icon_payloads.items():
             target.parent.mkdir(parents=True, exist_ok=True)
             self._write_imported_file(target, data)
         for target, data in audio_payloads.items():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            self._write_imported_file(target, data)
+        if exit_image_payload is not None:
+            target, data = exit_image_payload
             target.parent.mkdir(parents=True, exist_ok=True)
             self._write_imported_file(target, data)
 
@@ -704,6 +811,7 @@ class Config:
         self.obs = replacement.obs
         self.ai = replacement.ai
         self.screensaver = replacement.screensaver
+        self.exit_display = replacement.exit_display
         self.brightness = replacement.brightness
         self.obs_password_needs_migration = (
             replacement.obs_password_needs_migration
@@ -718,6 +826,7 @@ class Config:
             ),
             restored_icons=len(icon_payloads),
             restored_audio=len(audio_payloads),
+            restored_exit_image=exit_image_payload is not None,
         )
 
     def _key_configs(self):
@@ -813,6 +922,18 @@ class Config:
             or path.suffix.lower() not in SUPPORTED_AUDIO_EXTENSIONS
         ):
             raise ValueError("The export contains an invalid audio path")
+
+    @staticmethod
+    def _validate_exit_image_member(name: str) -> None:
+        path = PurePosixPath(name)
+        if (
+            path.is_absolute()
+            or len(path.parts) != 2
+            or path.parts[0] != "exit-image"
+            or any(part in ("", ".", "..") for part in path.parts)
+            or path.suffix.lower() not in SUPPORTED_EXIT_IMAGE_EXTENSIONS
+        ):
+            raise ValueError("The export contains an invalid exit image path")
 
     @staticmethod
     def _read_bundle_member(

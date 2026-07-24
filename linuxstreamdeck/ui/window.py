@@ -137,7 +137,7 @@ class MainWindow(Adw.ApplicationWindow):
         screensaver_btn = Gtk.Button.new_from_icon_name(
             "preferences-desktop-screensaver-symbolic"
         )
-        screensaver_btn.set_tooltip_text("Configure Stream Deck screen saver")
+        screensaver_btn.set_tooltip_text("Configure Stream Deck display")
         screensaver_btn.connect("clicked", self._on_screensaver_settings)
         header.pack_end(screensaver_btn)
 
@@ -451,7 +451,11 @@ class MainWindow(Adw.ApplicationWindow):
             log.exception("Could not export the configuration")
             self._show_configuration_error("Export failed", str(error))
             return
-        if exported.missing_icons or exported.missing_audio:
+        if (
+            exported.missing_icons
+            or exported.missing_audio
+            or exported.missing_exit_image
+        ):
             warnings = []
             if exported.missing_icons:
                 warnings.append(
@@ -462,6 +466,10 @@ class MainWindow(Adw.ApplicationWindow):
                 warnings.append(
                     f"{exported.missing_audio} audio file(s) could not be "
                     "found or included."
+                )
+            if exported.missing_exit_image:
+                warnings.append(
+                    "The custom exit image could not be found or included."
                 )
             self._show_configuration_error(
                 "Configuration exported with warnings",
@@ -537,6 +545,8 @@ class MainWindow(Adw.ApplicationWindow):
             restored.append(f"{imported.restored_icons} custom icon(s)")
         if imported.restored_audio:
             restored.append(f"{imported.restored_audio} audio file(s)")
+        if imported.restored_exit_image:
+            restored.append("the custom exit image")
         if restored:
             text += f"; restored {', '.join(restored)}"
         GLib.idle_add(lambda: (self._flash_status(text), False)[1])

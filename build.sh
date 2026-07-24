@@ -56,7 +56,8 @@ missing=()
 "$PY" -c "import gi; gi.require_version('Gst','1.0'); from gi.repository import Gst; Gst.init(None); assert all(Gst.ElementFactory.find(name) for name in ('playbin','wavparse','mpg123audiodec','flacdec','vorbisdec','opusdec'))" 2>/dev/null \
     || missing+=(gir1.2-gstreamer-1.0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good)
 command -v gnome-keyring-daemon >/dev/null 2>&1 || missing+=(gnome-keyring)
-ldconfig -p 2>/dev/null | grep -q "libhidapi" || missing+=(libhidapi-libusb0)
+ldconfig -p 2>/dev/null | grep "libhidapi" >/dev/null \
+    || missing+=(libhidapi-libusb0)
 
 if ((${#missing[@]})); then
     warn "Missing system packages: ${missing[*]}"

@@ -15,6 +15,8 @@ from . import APP_ID  # noqa: E402
 from .ai.service import AIService  # noqa: E402
 from .core.config import (  # noqa: E402
     DEFAULT_SCREENSAVER,
+    EXIT_DISPLAY_DEFAULT,
+    EXIT_DISPLAY_MODES,
     SCREENSAVER_IDS,
     Config,
 )
@@ -51,6 +53,7 @@ class LinuxStreamDeckApp:
         self.bus.dispatcher = GLib.idle_add
         self.obs = OBSClient(self.bus)
         screen = self.config.screensaver
+        exit_display = self.config.exit_display
         self.deck = DeckManager(
             self.bus,
             brightness=self.config.brightness,
@@ -58,6 +61,8 @@ class LinuxStreamDeckApp:
             screensaver_style=screen.style,
             screensaver_idle_minutes=screen.idle_minutes,
             screensaver_intensity=screen.intensity,
+            exit_display_mode=exit_display.mode,
+            exit_display_image=exit_display.image_path,
         )
         self.controller = DeckController(self.config, self.bus, self.obs, self.deck)
 
@@ -174,18 +179,27 @@ class LinuxStreamDeckApp:
             ),
         )
 
-    def update_screensaver_settings(
+    def update_deck_display_settings(
         self,
         enabled: bool,
         style: str,
         idle_minutes: int,
         intensity: int,
+        exit_display_mode: str,
+        exit_display_image: str,
     ) -> None:
         cfg = self.config.screensaver
         cfg.enabled = bool(enabled)
         cfg.style = style if style in SCREENSAVER_IDS else DEFAULT_SCREENSAVER
         cfg.idle_minutes = max(1, min(1440, int(idle_minutes)))
         cfg.intensity = max(5, min(100, int(intensity)))
+        exit_cfg = self.config.exit_display
+        exit_cfg.mode = (
+            exit_display_mode
+            if exit_display_mode in EXIT_DISPLAY_MODES
+            else EXIT_DISPLAY_DEFAULT
+        )
+        exit_cfg.image_path = str(exit_display_image or "")
         self.config.save()
         self.deck.configure_screensaver(
             cfg.enabled,
@@ -193,13 +207,13 @@ class LinuxStreamDeckApp:
             cfg.idle_minutes,
             cfg.intensity,
         )
+        self.deck.configure_exit_display(
+            exit_cfg.mode,
+            exit_cfg.image_path,
+        )
         self.bus.emit(
             "status",
-            text=(
-                "Screen saver enabled"
-                if cfg.enabled
-                else "Screen saver disabled"
-            ),
+            text="Stream Deck display settings saved",
         )
 
     def _on_obs_password_stored(

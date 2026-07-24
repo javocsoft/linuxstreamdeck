@@ -63,13 +63,17 @@ implemented actions, no guessing. It runs, and it's useful.
 - 🌌 **Animated full-deck screen saver** — choose from six coordinated effects,
   set the idle delay and independent light intensity, and preview them on both
   the virtual and physical decks.
+- 📴 **Display after exit** — leave the physical deck on its firmware standby
+  image, turn every key fully off, or keep one custom image across the full grid
+  after LinuxStreamDeck closes cleanly.
 - ✨ **Physical deck startup animation** — a newly connected 15-key deck wakes
   with a short full-deck sequence and spells `LinuxStreamDeck` across its keys
   before loading your configured page.
 - 🔌 **Auto-reconnect & hotplug** — connects to OBS on its own and picks up the deck when
   you plug it in.
 - 💾 **Portable configuration backups** — export or import profiles, pages, keys,
-  settings, custom key icons and referenced playback or timer audio in one file.
+  settings, custom key icons, the custom exit image and referenced playback or
+  timer audio in one file.
 - 🔐 **Secure OBS password storage** — the password stays in your desktop keyring,
   never in the configuration file or an export.
 - ✨ **AI-assisted key creation** — describe the key you want, get a locally
@@ -208,8 +212,8 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
    delete the current one. Page names must be unique within their profile.
 7. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or
    delete a profile. Each profile has its own pages and keys.
-8. **Screen saver** — use the screen saver button in the header to choose an
-   animation, idle delay and light intensity, or preview it immediately.
+8. **Stream Deck display** — use its button in the header to configure
+   the screen saver and what the physical deck shows after a clean exit.
 9. **About** — click the About button in the header for application details,
    licensing and the GitHub link.
 
@@ -242,8 +246,8 @@ the physical Stream Deck; the virtual deck always shows the configured keys.
 
 ### 🌌 Configure the animated screen saver
 
-Click the screen saver button in the header to enable an animation after the
-selected idle period. Choose **Neon Pipes**,
+Click the **Stream Deck display** button in the header to enable an animation
+after the selected idle period. Choose **Neon Pipes**,
 **Digital Rain**, **Aurora Flow**, **Orbital Core**, **Circuit Pulse** or
 **LinuxStreamDeck**, which breathes softly across a black full-deck background.
 The idle delay accepts 1 to 1440 minutes. **Light intensity** ranges from 5 to
@@ -257,11 +261,30 @@ dialog or press **Save** to return to the configured keys; only **Save** persist
 the enable switch, style, delay and intensity.
 
 Physical Stream Deck key activity and explicit virtual-deck interactions, such
-as selecting or testing a key or opening the screen-saver controls, restart the
-idle countdown. When the screen saver wakes, the normal brightness and
-configured key images return. The first physical key press only wakes the deck
-and is consumed together with its release, so it cannot accidentally run the
-assigned action; press the key again to run it.
+as selecting or testing a key or opening the Stream Deck display controls,
+restart the idle countdown. When the screen saver wakes, the normal brightness
+and configured key images return. The first physical key press only wakes the
+deck and is consumed together with its release, so it cannot accidentally run
+the assigned action; press the key again to run it.
+
+### 📴 Choose what the physical deck shows after exit
+
+The same **Stream Deck display** dialog controls what remains on the hardware
+after LinuxStreamDeck closes cleanly:
+
+- **Device default** resets the deck to the standby image supplied by its
+  firmware.
+- **Off** writes black to every key and sets the display brightness to zero.
+- **Custom** center-crops one BMP, JPEG, PNG or WebP image across the complete
+  key grid and leaves it visible at your normal configured brightness.
+
+A custom image may be up to 50 MiB. Press **Save** in the dialog to persist the
+selected state and image. If the custom file is unavailable when the app closes,
+LinuxStreamDeck falls back to **Device default**.
+
+This state is applied while LinuxStreamDeck still owns the USB device during an
+orderly shutdown. A forced termination, system crash or power loss cannot
+guarantee that it will be written to the deck.
 
 ### 🗂️ Navigate between pages from a key
 
@@ -359,24 +382,26 @@ and parameter, then press **Save** only if you want to keep it.
 Use the profiles menu (⋮) in the header to choose **Export configuration** or
 **Import configuration**.
 
-- **Export** creates a portable `.lsdconfig` ZIP archive. Format v2 contains the
+- **Export** creates a portable `.lsdconfig` ZIP archive. Format v3 contains the
   full JSON configuration, custom key icons, supported audio referenced by
-  **Play audio file** or a countdown timer's completion sound, screen saver
-  settings and non-secret OBS settings, but never the OBS password or provider
-  API keys.
+  **Play audio file** or a countdown timer's completion sound, screen saver and
+  after-exit display settings, the selected custom exit image, and non-secret
+  OBS settings, but never the OBS password or provider API keys.
   Identical audio files are stored once, even when both actions reference the
   same content. Each audio file is limited to 200 MiB and bundled audio to
-  500 MiB total. Built-in Material Design Icons remain lightweight `mdi:`
-  references because they ship with LinuxStreamDeck. Missing or oversized files,
-  and audio with an unsupported extension, keep their original local reference
-  and produce an export warning.
+  500 MiB total; the custom exit image is limited to 50 MiB. Built-in Material
+  Design Icons remain lightweight `mdi:` references because they ship with
+  LinuxStreamDeck. Missing or oversized files, and files with an unsupported
+  extension, keep their original local reference and produce an export warning.
 - **Import** replaces all current profiles, pages, keys and settings after you
   confirm the warning. The previous configuration is saved as
   `~/.config/linuxstreamdeck/config.json.bak`. Bundled custom icons and audio are
   restored under `~/.config/linuxstreamdeck/imported-icons/` and
-  `~/.config/linuxstreamdeck/imported-audio/` after validating their archive
-  paths. Brightness, screen saver and OBS settings are applied immediately, and
-  OBS reconnects with the imported settings. Current v2 and older v1 exports are
+  `~/.config/linuxstreamdeck/imported-audio/`; a bundled custom exit image is
+  restored under `~/.config/linuxstreamdeck/imported-exit-images/`. Archive paths
+  and sizes are validated before files are written. Brightness, screen saver,
+  after-exit display and OBS settings are applied immediately, and OBS reconnects
+  with the imported settings. Current v3 plus older v1 and v2 exports are
   accepted. The import keeps this computer's keyring credentials and ignores
   password fields in older exports. When moving to another computer, enter the
   OBS password and any provider API keys again.
@@ -389,9 +414,9 @@ packaging/         # build-deb.sh, .desktop, icon, AppStream metainfo, scripts �
 linuxstreamdeck/
 ├── ai/            # OpenAI/Claude requests, bounded context and proposal validation
 ├── core/          # events, config, actions, controller, clocks, audio, secrets, icons
-├── device/        # physical deck, startup/screen-saver animation and key rendering
+├── device/        # physical deck, startup/saver/exit displays and key rendering
 ├── obs/           # obs-websocket v5 client + full catalogue of OBS actions
-├── ui/            # GTK4/Libadwaita: window, editor, AI, OBS/screen-saver settings
+├── ui/            # GTK4/Libadwaita: window, editor, AI, OBS/deck-display settings
 └── assets/icons/  # icon library (Material Design Icons font + index)
 data/udev/         # udev rule for device access
 ```
