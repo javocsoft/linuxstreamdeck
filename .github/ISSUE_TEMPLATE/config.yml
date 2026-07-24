@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "\U0001F64F Questions and help (Q&A)"
+    url: https://github.com/javocsoft/linuxstreamdeck/discussions/categories/q-a
+    about: Need help with setup, OBS or configuration? Ask in Discussions instead of opening an issue.
+  - name: "\U0001F4A1 Ideas and general discussion"
+    url: https://github.com/javocsoft/linuxstreamdeck/discussions
+    about: Share ideas, show your setup or chat with the community.
+  - name: "\U0001F512 Report a security issue"
+    url: https://github.com/javocsoft/linuxstreamdeck/security/policy
+    about: Please report vulnerabilities privately following the Security Policy.

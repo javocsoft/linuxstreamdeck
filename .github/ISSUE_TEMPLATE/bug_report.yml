@@ -1,0 +1,101 @@
+name: "\U0001F41E Bug report"
+description: Report a problem or unexpected behaviour in LinuxStreamDeck.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report!
+        Please search the existing issues first to avoid duplicates.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected to happen instead.
+      placeholder: When I press the Record key, ...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps that trigger the bug.
+      placeholder: |
+        1. Open the app
+        2. Add a key with action ...
+        3. Press it
+        4. See the error
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: LinuxStreamDeck version
+      description: See the About dialog, or run `linuxstreamdeck --version`.
+      placeholder: "0.1.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install it?
+      options:
+        - .deb package
+        - From source (build.sh)
+        - Other (describe below)
+    validations:
+      required: true
+  - type: dropdown
+    id: deck-type
+    attributes:
+      label: Physical deck or virtual deck?
+      options:
+        - Physical Stream Deck
+        - Virtual on-screen deck
+        - Both
+    validations:
+      required: true
+  - type: input
+    id: deck-model
+    attributes:
+      label: Stream Deck model (if physical)
+      placeholder: Stream Deck Original V2 (0fd9:006d)
+    validations:
+      required: false
+  - type: input
+    id: distro
+    attributes:
+      label: Linux distribution and desktop environment
+      placeholder: "Pop!_OS 22.04 / GNOME 42 (Wayland)"
+    validations:
+      required: true
+  - type: input
+    id: obs-version
+    attributes:
+      label: OBS Studio version (if the bug involves OBS)
+      placeholder: "OBS 30.1, obs-websocket v5"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug logs
+      description: |
+        Run the app with debug logging and paste the relevant output.
+        This is very helpful for diagnosing the problem.
+      render: shell
+      placeholder: |
+        # launch with debug logging:
+        LSD_DEBUG=1 ./run.sh
+        # (or the installed command)
+        LSD_DEBUG=1 linuxstreamdeck
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or additional context
+      description: Drag and drop screenshots here, or add anything else that helps.
+    validations:
+      required: false

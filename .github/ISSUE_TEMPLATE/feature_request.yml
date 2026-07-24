@@ -1,0 +1,56 @@
+name: "\U0001F4A1 Feature request"
+description: Suggest a new feature, improvement or a new OBS/system action.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! For open-ended brainstorming you may prefer the
+        [Ideas discussions](https://github.com/javocsoft/linuxstreamdeck/discussions/categories/ideas).
+        Use this template when the request is concrete enough to track.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case or the workflow you want to improve.
+      placeholder: I want to ... but currently I have to ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you would like to see. For a new action, describe what it should do.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area does it touch?
+      options:
+        - New OBS action
+        - New system action
+        - Editor / key configuration
+        - Profiles and pages
+        - Virtual deck
+        - Screen saver / appearance
+        - Import / export
+        - AI-assisted key creation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you use today, or other approaches you thought about.
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Mockups, screenshots or examples of how you expect it to work.
+    validations:
+      required: false

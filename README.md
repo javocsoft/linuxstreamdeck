@@ -4,6 +4,7 @@
 
 ### Your Elgato Stream Deck, finally at home on Linux — with deep OBS Studio integration.
 
+[![Latest release](https://img.shields.io/github/v/release/javocsoft/linuxstreamdeck?label=release&color=success)](https://github.com/javocsoft/linuxstreamdeck/releases/latest)
 ![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform: Linux](https://img.shields.io/badge/platform-Linux-informational)
@@ -107,8 +108,9 @@ down or run a stopwatch). The **Navigation** category provides separate
 
 ### Option A — Install the `.deb` (recommended)
 
-On Debian/Ubuntu/Pop!_OS, grab `linux-stream-deck-<version>.deb` and let apt pull
-the dependencies:
+On Debian/Ubuntu/Pop!_OS, download the latest `linux-stream-deck-<version>.deb`
+from the [**Releases page**](https://github.com/javocsoft/linuxstreamdeck/releases/latest)
+and let apt pull the dependencies:
 
 ```bash
 sudo apt install ./linux-stream-deck-<version>.deb
