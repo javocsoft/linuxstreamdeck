@@ -1,9 +1,8 @@
-"""Bus de eventos pub/sub para desacoplar dispositivo, OBS y UI.
+"""Pub/sub event bus to decouple device, OBS and UI.
 
-Los emisores pueden estar en cualquier hilo (hilo de lectura del deck, hilo
-de eventos de obs-websocket...). Si se asigna un `dispatcher` (en la app GTK
-será GLib.idle_add), todas las llamadas a los suscriptores se ejecutan en el
-hilo principal.
+Emitters can run on any thread (the deck's read thread, the obs-websocket event
+thread...). If a `dispatcher` is set (in the GTK app it is GLib.idle_add), every
+call to the subscribers runs on the main thread.
 """
 
 from __future__ import annotations
@@ -14,27 +13,27 @@ from typing import Callable
 
 log = logging.getLogger(__name__)
 
-# Temas usados en la aplicación:
-#   deck.key          index:int, pressed:bool   — pulsación en el deck físico
+# Topics used across the application:
+#   deck.key          index:int, pressed:bool   — key press on the physical deck
 #   deck.connected    model:str, keys:int
 #   deck.disconnected
 #   obs.connected
 #   obs.disconnected
-#   obs.state         what:str                  — cualquier cambio de estado de OBS
+#   obs.state         what:str                  — any OBS state change
 #   page.changed      index:int, name:str
-#   ui.key_image      index:int, png:bytes      — imagen renderizada para la UI
-#   status            text:str                  — mensajes para la barra de estado
+#   ui.key_image      index:int, png:bytes      — rendered image for the UI
+#   status            text:str                  — messages for the status bar
 
 
 class EventBus:
     def __init__(self) -> None:
         self._subs: dict[str, list[Callable]] = {}
         self._lock = threading.Lock()
-        # callable(fn) que ejecuta fn() en el hilo principal; None = llamada directa
+        # callable(fn) that runs fn() on the main thread; None = direct call
         self.dispatcher: Callable[[Callable], object] | None = None
 
     def subscribe(self, topic: str, callback: Callable) -> None:
-        """callback(topic, data:dict). El tema '*' recibe todos los eventos."""
+        """callback(topic, data:dict). The '*' topic receives every event."""
         with self._lock:
             self._subs.setdefault(topic, []).append(callback)
 
@@ -53,7 +52,7 @@ class EventBus:
             try:
                 cb(topic, data)
             except Exception:
-                log.exception("Error en suscriptor de %s", topic)
-            return False  # compatible con GLib.idle_add (no repetir)
+                log.exception("Error in subscriber of %s", topic)
+            return False  # compatible with GLib.idle_add (don't repeat)
 
         return run

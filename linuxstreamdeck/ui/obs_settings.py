@@ -1,4 +1,4 @@
-"""Diálogo de conexión con OBS (obs-websocket v5)."""
+"""OBS connection dialog (obs-websocket v5)."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from gi.repository import Adw, Gtk  # noqa: E402
 class ObsSettingsDialog(Adw.Window):
     def __init__(self, parent, app) -> None:
         super().__init__(
-            transient_for=parent, modal=True, title="Conexión con OBS",
-            default_width=420, default_height=380,
+            transient_for=parent, modal=True, title="OBS connection",
+            default_width=440, default_height=480,
         )
         self.app = app
 
@@ -24,23 +24,23 @@ class ObsSettingsDialog(Adw.Window):
         group = Adw.PreferencesGroup(
             title="obs-websocket",
             description=(
-                "En OBS: Herramientas → Ajustes del servidor WebSocket.\n"
-                "Activa el servidor y copia aquí el puerto y la contraseña."
+                "In OBS: Tools → WebSocket Server Settings.\n"
+                "Enable the server and copy the port and password here."
             ),
         )
 
         cfg = app.config.obs
-        self.host = Adw.EntryRow(title="Servidor", text=cfg.host)
+        self.host = Adw.EntryRow(title="Server", text=cfg.host)
         self.port = Adw.SpinRow.new_with_range(1, 65535, 1)
-        self.port.set_title("Puerto")
+        self.port.set_title("Port")
         self.port.set_value(cfg.port)
-        self.password = Adw.PasswordEntryRow(title="Contraseña", text=cfg.password)
+        self.password = Adw.PasswordEntryRow(title="Password", text=cfg.password)
         for row in (self.host, self.port, self.password):
             group.add(row)
         page.add(group)
 
         actions = Adw.PreferencesGroup()
-        connect = Gtk.Button(label="Guardar y conectar", margin_top=6)
+        connect = Gtk.Button(label="Save and connect", margin_top=6)
         connect.add_css_class("suggested-action")
         connect.connect("clicked", self._connect)
         actions.add(connect)
@@ -64,11 +64,11 @@ class ObsSettingsDialog(Adw.Window):
         self.app.config.save()
         self.app.obs.configure(cfg.host, cfg.port, cfg.password)
         self.app.obs.reconnect_now()
-        self.status.set_label("Conectando…")
+        self.status.set_label("Connecting…")
 
     def _update_status(self) -> None:
         if not self.get_visible():
             return
         self.status.set_label(
-            "✓ Conectado" if self.app.obs.connected else "Sin conexión con OBS"
+            "✓ Connected" if self.app.obs.connected else "Not connected to OBS"
         )

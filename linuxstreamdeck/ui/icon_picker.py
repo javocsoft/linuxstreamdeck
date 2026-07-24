@@ -1,7 +1,7 @@
-"""Diálogo para elegir un icono de la biblioteca integrada.
+"""Dialog to choose an icon from the built-in library.
 
-Muestra una rejilla de iconos filtrable por categoría y por texto. Devuelve la
-referencia elegida (p.ej. "mdi:home") a través de un callback.
+Shows a grid of icons filterable by category and by text. Returns the chosen
+reference (e.g. "mdi:home") through a callback.
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ from ..core.icons import library  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-THUMB = 44           # tamaño del glifo en la miniatura
-RESULT_LIMIT = 400   # tope de iconos mostrados a la vez
+THUMB = 44           # glyph size in the thumbnail
+RESULT_LIMIT = 400   # max icons shown at once
 _THUMB_COLOR = "#e3e3e8"
 
 _CSS = b"""
@@ -41,7 +41,7 @@ def _texture(ref: str) -> Gdk.Texture | None:
 class IconPickerDialog(Adw.Window):
     def __init__(self, parent, on_selected) -> None:
         super().__init__(
-            transient_for=parent, modal=True, title="Biblioteca de iconos",
+            transient_for=parent, modal=True, title="Icon library",
             default_width=680, default_height=560,
         )
         self._on_selected = on_selected
@@ -57,7 +57,7 @@ class IconPickerDialog(Adw.Window):
         header = Adw.HeaderBar()
 
         self.category_dd = Gtk.DropDown.new_from_strings(
-            ["Todas las categorías"] + library.categories()
+            ["All categories"] + library.categories()
         )
         self.category_dd.connect("notify::selected", lambda *_: self._schedule())
         header.pack_start(self.category_dd)
@@ -66,7 +66,7 @@ class IconPickerDialog(Adw.Window):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
                       margin_top=10, margin_bottom=10, margin_start=10, margin_end=10)
 
-        self.search = Gtk.SearchEntry(placeholder_text="Buscar icono (p.ej. mic, camera, record)…")
+        self.search = Gtk.SearchEntry(placeholder_text="Search icon (e.g. mic, camera, record)…")
         self.search.connect("search-changed", lambda *_: self._schedule())
         box.append(self.search)
 
@@ -87,14 +87,14 @@ class IconPickerDialog(Adw.Window):
         self.set_content(view)
         self._populate()
 
-    # ---------- filtrado ----------
+    # ---------- filtering ----------
 
     def _current_category(self) -> str:
         i = self.category_dd.get_selected()
         return "" if i <= 0 else library.categories()[i - 1]
 
     def _schedule(self) -> None:
-        # agrupa pulsaciones rápidas para no repoblar en cada tecla
+        # coalesce fast keystrokes so it doesn't repopulate on every key
         if self._search_source:
             GLib.source_remove(self._search_source)
         self._search_source = GLib.timeout_add(180, self._populate)
@@ -109,11 +109,11 @@ class IconPickerDialog(Adw.Window):
             self.flow.append(self._cell(icon))
         if total > len(icons):
             self.count_label.set_label(
-                f"Mostrando {len(icons)} de {total} — afina la búsqueda para ver más"
+                f"Showing {len(icons)} of {total} — refine the search to see more"
             )
         else:
-            self.count_label.set_label(f"{total} iconos")
-        return False  # no repetir (timeout de un disparo)
+            self.count_label.set_label(f"{total} icons")
+        return False  # don't repeat (one-shot timeout)
 
     def _cell(self, icon) -> Gtk.Button:
         button = Gtk.Button()

@@ -1,4 +1,4 @@
-"""LinuxStreamDeck — software para Elgato Stream Deck en Linux."""
+"""LinuxStreamDeck — software for the Elgato Stream Deck on Linux."""
 
 APP_ID = "com.javocsoft.LinuxStreamDeck"
 APP_NAME = "LinuxStreamDeck"

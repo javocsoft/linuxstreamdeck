@@ -1,9 +1,9 @@
-"""Catálogo completo de acciones OBS (obs-websocket v5).
+"""Full catalogue of OBS actions (obs-websocket v5).
 
-Cubre y supera al plugin OBS del software oficial de Elgato: escenas, studio
-mode, grabación, streaming, cámara virtual, replay buffer, audio, fuentes,
-filtros, transiciones, media, capturas, hotkeys, colecciones/perfiles y una
-acción "petición cruda" que da acceso al 100% del protocolo.
+Covers (and exceeds) the OBS plugin of Elgato's official software: scenes, studio
+mode, recording, streaming, virtual camera, replay buffer, audio, sources,
+filters, transitions, media, screenshots, hotkeys, collections/profiles and a
+"raw request" action that gives access to 100% of the protocol.
 """
 
 from __future__ import annotations
@@ -17,27 +17,27 @@ from ..core.actions import Action, ActionContext, Param, apply_default_icons, re
 
 log = logging.getLogger(__name__)
 
-CAT_SCENES = "OBS · Escenas"
-CAT_OUTPUT = "OBS · Grabación y directo"
+CAT_SCENES = "OBS · Scenes"
+CAT_OUTPUT = "OBS · Recording & Streaming"
 CAT_AUDIO = "OBS · Audio"
-CAT_SOURCES = "OBS · Fuentes y filtros"
+CAT_SOURCES = "OBS · Sources & Filters"
 CAT_MEDIA = "OBS · Media"
-CAT_ADVANCED = "OBS · Avanzado"
+CAT_ADVANCED = "OBS · Advanced"
 
 COLOR_REC = "#a51d2d"
 COLOR_LIVE = "#26a269"
 COLOR_ACTIVE = "#1a5fb4"
 
 
-# ============================== Escenas ==============================
+# ============================== Scenes ==============================
 
 @register
 class SceneSwitch(Action):
     id = "obs.scene_switch"
-    name = "Cambiar escena"
+    name = "Switch scene"
     category = CAT_SCENES
-    description = "Cambia la escena de programa. La tecla se ilumina si es la escena activa."
-    params = [Param("scene", "Escena", choices_source="scenes")]
+    description = "Switch the program scene. The key lights up when it is the active scene."
+    params = [Param("scene", "Scene", choices_source="scenes")]
 
     def execute(self, ctx, p):
         ctx.obs.request("SetCurrentProgramScene", {"sceneName": p.get("scene", "")})
@@ -49,10 +49,10 @@ class SceneSwitch(Action):
 @register
 class ScenePreview(Action):
     id = "obs.scene_preview"
-    name = "Escena a previsualización"
+    name = "Set preview scene"
     category = CAT_SCENES
-    description = "Pone una escena en la previsualización del modo estudio."
-    params = [Param("scene", "Escena", choices_source="scenes")]
+    description = "Put a scene in the studio mode preview."
+    params = [Param("scene", "Scene", choices_source="scenes")]
 
     def execute(self, ctx, p):
         ctx.obs.request("SetCurrentPreviewScene", {"sceneName": p.get("scene", "")})
@@ -64,7 +64,7 @@ class ScenePreview(Action):
 @register
 class StudioModeToggle(Action):
     id = "obs.studio_mode"
-    name = "Modo estudio on/off"
+    name = "Studio mode on/off"
     category = CAT_SCENES
 
     def execute(self, ctx, p):
@@ -79,9 +79,9 @@ class StudioModeToggle(Action):
 @register
 class StudioTransition(Action):
     id = "obs.studio_transition"
-    name = "Transición (estudio)"
+    name = "Transition (studio)"
     category = CAT_SCENES
-    description = "Pasa la previsualización a programa."
+    description = "Send the preview to program."
 
     def execute(self, ctx, p):
         ctx.obs.request("TriggerStudioModeTransition")
@@ -90,11 +90,11 @@ class StudioTransition(Action):
 @register
 class TransitionSet(Action):
     id = "obs.transition_set"
-    name = "Elegir transición"
+    name = "Set transition"
     category = CAT_SCENES
     params = [
-        Param("transition", "Transición", choices_source="transitions"),
-        Param("duration_ms", "Duración (ms, 0 = no cambiar)", kind="int", default=0),
+        Param("transition", "Transition", choices_source="transitions"),
+        Param("duration_ms", "Duration (ms, 0 = keep)", kind="int", default=0),
     ]
 
     def execute(self, ctx, p):
@@ -114,9 +114,9 @@ class TransitionSet(Action):
 @register
 class SceneCollectionSet(Action):
     id = "obs.scene_collection"
-    name = "Colección de escenas"
+    name = "Scene collection"
     category = CAT_SCENES
-    params = [Param("collection", "Colección", choices_source="scene_collections")]
+    params = [Param("collection", "Collection", choices_source="scene_collections")]
 
     def execute(self, ctx, p):
         ctx.obs.request(
@@ -127,20 +127,20 @@ class SceneCollectionSet(Action):
 @register
 class ProfileSet(Action):
     id = "obs.profile"
-    name = "Perfil de OBS"
+    name = "OBS profile"
     category = CAT_SCENES
-    params = [Param("profile", "Perfil", choices_source="profiles")]
+    params = [Param("profile", "Profile", choices_source="profiles")]
 
     def execute(self, ctx, p):
         ctx.obs.request("SetCurrentProfile", {"profileName": p.get("profile", "")})
 
 
-# ======================= Grabación y directo =========================
+# ======================= Recording & Streaming =========================
 
 @register
 class RecordToggle(Action):
     id = "obs.record"
-    name = "Grabar on/off"
+    name = "Record on/off"
     category = CAT_OUTPUT
 
     def execute(self, ctx, p):
@@ -157,7 +157,7 @@ class RecordToggle(Action):
 @register
 class RecordPauseToggle(Action):
     id = "obs.record_pause"
-    name = "Pausar grabación"
+    name = "Pause recording"
     category = CAT_OUTPUT
 
     def execute(self, ctx, p):
@@ -170,7 +170,7 @@ class RecordPauseToggle(Action):
 @register
 class StreamToggle(Action):
     id = "obs.stream"
-    name = "Directo on/off"
+    name = "Stream on/off"
     category = CAT_OUTPUT
 
     def execute(self, ctx, p):
@@ -185,7 +185,7 @@ class StreamToggle(Action):
 @register
 class VirtualCamToggle(Action):
     id = "obs.virtualcam"
-    name = "Cámara virtual on/off"
+    name = "Virtual camera on/off"
     category = CAT_OUTPUT
 
     def execute(self, ctx, p):
@@ -211,7 +211,7 @@ class ReplayBufferToggle(Action):
 @register
 class ReplaySave(Action):
     id = "obs.replay_save"
-    name = "Guardar replay"
+    name = "Save replay"
     category = CAT_OUTPUT
 
     def execute(self, ctx, p):
@@ -221,12 +221,12 @@ class ReplaySave(Action):
 @register
 class Screenshot(Action):
     id = "obs.screenshot"
-    name = "Captura de fuente"
+    name = "Source screenshot"
     category = CAT_OUTPUT
-    description = "Guarda una captura PNG de una fuente o escena."
+    description = "Save a PNG screenshot of a source or scene."
     params = [
-        Param("source", "Fuente o escena", choices_source="sources_in_scene"),
-        Param("directory", "Carpeta destino", default=str(Path.home() / "Imágenes")),
+        Param("source", "Source or scene", choices_source="sources_in_scene"),
+        Param("directory", "Destination folder", default=str(Path.home() / "Pictures")),
     ]
 
     def execute(self, ctx, p):
@@ -249,23 +249,23 @@ class Screenshot(Action):
 @register
 class MuteToggle(Action):
     id = "obs.mute"
-    name = "Silenciar entrada"
+    name = "Mute input"
     category = CAT_AUDIO
-    description = "La tecla se ilumina cuando la entrada está silenciada."
+    description = "The key lights up when the input is muted."
     params = [
-        Param("input", "Entrada de audio", choices_source="inputs"),
-        Param("mode", "Modo", kind="choice", default="alternar",
-              choices=["alternar", "silenciar", "activar"]),
+        Param("input", "Audio input", choices_source="inputs"),
+        Param("mode", "Mode", kind="choice", default="toggle",
+              choices=["toggle", "mute", "unmute"]),
     ]
 
     def execute(self, ctx, p):
         name = p.get("input", "")
-        mode = p.get("mode", "alternar")
-        if mode == "alternar":
+        mode = p.get("mode", "toggle")
+        if mode == "toggle":
             ctx.obs.request("ToggleInputMute", {"inputName": name})
         else:
             ctx.obs.request(
-                "SetInputMute", {"inputName": name, "inputMuted": mode == "silenciar"}
+                "SetInputMute", {"inputName": name, "inputMuted": mode == "mute"}
             )
 
     def feedback(self, ctx, p):
@@ -276,11 +276,11 @@ class MuteToggle(Action):
 @register
 class VolumeAdjust(Action):
     id = "obs.volume_adjust"
-    name = "Subir/bajar volumen"
+    name = "Raise/lower volume"
     category = CAT_AUDIO
     params = [
-        Param("input", "Entrada de audio", choices_source="inputs"),
-        Param("delta_db", "Cambio (dB, negativo baja)", kind="float", default=3.0),
+        Param("input", "Audio input", choices_source="inputs"),
+        Param("delta_db", "Change (dB, negative lowers)", kind="float", default=3.0),
     ]
 
     def execute(self, ctx, p):
@@ -293,11 +293,11 @@ class VolumeAdjust(Action):
 @register
 class VolumeSet(Action):
     id = "obs.volume_set"
-    name = "Fijar volumen"
+    name = "Set volume"
     category = CAT_AUDIO
     params = [
-        Param("input", "Entrada de audio", choices_source="inputs"),
-        Param("db", "Volumen (dB)", kind="float", default=0.0),
+        Param("input", "Audio input", choices_source="inputs"),
+        Param("db", "Volume (dB)", kind="float", default=0.0),
     ]
 
     def execute(self, ctx, p):
@@ -307,18 +307,18 @@ class VolumeSet(Action):
         )
 
 
-# ======================= Fuentes y filtros ===========================
+# ======================= Sources & Filters ===========================
 
 @register
 class SourceVisibility(Action):
     id = "obs.source_visibility"
-    name = "Mostrar/ocultar fuente"
+    name = "Show/hide source"
     category = CAT_SOURCES
     params = [
-        Param("scene", "Escena", choices_source="scenes"),
-        Param("source", "Fuente", choices_source="sources_in_scene"),
-        Param("mode", "Modo", kind="choice", default="alternar",
-              choices=["alternar", "mostrar", "ocultar"]),
+        Param("scene", "Scene", choices_source="scenes"),
+        Param("source", "Source", choices_source="sources_in_scene"),
+        Param("mode", "Mode", kind="choice", default="toggle",
+              choices=["toggle", "show", "hide"]),
     ]
 
     def _item_id(self, ctx, p) -> tuple[str, int]:
@@ -330,14 +330,14 @@ class SourceVisibility(Action):
 
     def execute(self, ctx, p):
         scene, item_id = self._item_id(ctx, p)
-        mode = p.get("mode", "alternar")
-        if mode == "alternar":
+        mode = p.get("mode", "toggle")
+        if mode == "toggle":
             d = ctx.obs.request(
                 "GetSceneItemEnabled", {"sceneName": scene, "sceneItemId": item_id}
             )
             enabled = not d.get("sceneItemEnabled", True)
         else:
-            enabled = mode == "mostrar"
+            enabled = mode == "show"
         ctx.obs.request(
             "SetSceneItemEnabled",
             {"sceneName": scene, "sceneItemId": item_id, "sceneItemEnabled": enabled},
@@ -359,25 +359,25 @@ class SourceVisibility(Action):
 @register
 class FilterToggle(Action):
     id = "obs.filter"
-    name = "Activar/desactivar filtro"
+    name = "Enable/disable filter"
     category = CAT_SOURCES
     params = [
-        Param("source", "Fuente", choices_source="sources_in_scene"),
-        Param("filter", "Filtro", choices_source="filters_of_source"),
-        Param("mode", "Modo", kind="choice", default="alternar",
-              choices=["alternar", "activar", "desactivar"]),
+        Param("source", "Source", choices_source="sources_in_scene"),
+        Param("filter", "Filter", choices_source="filters_of_source"),
+        Param("mode", "Mode", kind="choice", default="toggle",
+              choices=["toggle", "enable", "disable"]),
     ]
 
     def execute(self, ctx, p):
         source, filt = p.get("source", ""), p.get("filter", "")
-        mode = p.get("mode", "alternar")
-        if mode == "alternar":
+        mode = p.get("mode", "toggle")
+        if mode == "toggle":
             d = ctx.obs.request(
                 "GetSourceFilter", {"sourceName": source, "filterName": filt}
             )
             enabled = not d.get("filterEnabled", True)
         else:
-            enabled = mode == "activar"
+            enabled = mode == "enable"
         ctx.obs.request(
             "SetSourceFilterEnabled",
             {"sourceName": source, "filterName": filt, "filterEnabled": enabled},
@@ -401,26 +401,26 @@ class FilterToggle(Action):
 @register
 class MediaControl(Action):
     id = "obs.media"
-    name = "Control de media"
+    name = "Media control"
     category = CAT_MEDIA
-    description = "Controla fuentes de vídeo/audio (Fuente multimedia, VLC)."
+    description = "Control video/audio sources (Media Source, VLC)."
     params = [
-        Param("input", "Fuente de media", choices_source="media_inputs"),
-        Param("op", "Operación", kind="choice", default="reproducir/pausar",
-              choices=["reproducir/pausar", "reiniciar", "detener", "siguiente", "anterior"]),
+        Param("input", "Media source", choices_source="media_inputs"),
+        Param("op", "Operation", kind="choice", default="play/pause",
+              choices=["play/pause", "restart", "stop", "next", "previous"]),
     ]
 
     _OPS = {
-        "reiniciar": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART",
-        "detener": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_STOP",
-        "siguiente": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_NEXT",
-        "anterior": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PREVIOUS",
+        "restart": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART",
+        "stop": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_STOP",
+        "next": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_NEXT",
+        "previous": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PREVIOUS",
     }
 
     def execute(self, ctx, p):
         name = p.get("input", "")
-        op = p.get("op", "reproducir/pausar")
-        if op == "reproducir/pausar":
+        op = p.get("op", "play/pause")
+        if op == "play/pause":
             d = ctx.obs.request("GetMediaInputStatus", {"inputName": name})
             playing = d.get("mediaState") == "OBS_MEDIA_STATE_PLAYING"
             media_action = (
@@ -435,14 +435,14 @@ class MediaControl(Action):
         )
 
 
-# ============================= Avanzado ==============================
+# ============================= Advanced ==============================
 
 @register
 class HotkeyTrigger(Action):
     id = "obs.hotkey"
-    name = "Hotkey de OBS"
+    name = "OBS hotkey"
     category = CAT_ADVANCED
-    description = "Dispara cualquier hotkey interno de OBS por nombre."
+    description = "Trigger any internal OBS hotkey by name."
     params = [Param("hotkey", "Hotkey", choices_source="hotkeys")]
 
     def execute(self, ctx, p):
@@ -452,24 +452,23 @@ class HotkeyTrigger(Action):
 @register
 class RawRequest(Action):
     id = "obs.raw"
-    name = "Petición cruda (avanzado)"
+    name = "Raw request (advanced)"
     category = CAT_ADVANCED
     description = (
-        "Envía cualquier petición del protocolo obs-websocket v5. "
-        "Cobertura del 100% del API."
+        "Send any obs-websocket v5 protocol request. 100% API coverage."
     )
     params = [
-        Param("request_type", "Tipo de petición", default="GetVersion"),
-        Param("payload", "Payload JSON", default="{}"),
+        Param("request_type", "Request type", default="GetVersion"),
+        Param("payload", "JSON payload", default="{}"),
     ]
 
     def execute(self, ctx, p):
         payload = json.loads(p.get("payload") or "{}")
         result = ctx.obs.request(p.get("request_type", ""), payload or None)
-        log.info("Respuesta de %s: %s", p.get("request_type"), result)
+        log.info("Response from %s: %s", p.get("request_type"), result)
 
 
-# Iconos por defecto (biblioteca integrada). Se usan si la tecla no tiene icono propio.
+# Default icons (built-in library). Used when a key has no icon of its own.
 apply_default_icons({
     "obs.scene_switch": "mdi:image-multiple",
     "obs.scene_preview": "mdi:eye-outline",

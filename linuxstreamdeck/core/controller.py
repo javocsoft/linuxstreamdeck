@@ -1,9 +1,9 @@
-"""Controlador central: une configuración, dispositivo, acciones y UI.
+"""Central controller: ties together configuration, device, actions and UI.
 
-- Recibe pulsaciones (físicas por `deck.key` o virtuales desde la UI) y
-  ejecuta la acción configurada en un hilo de trabajo.
-- Re-renderiza la página activa cuando cambia el estado de OBS, la página o
-  la configuración, enviando cada imagen al deck físico y a la UI.
+- Receives key presses (physical via `deck.key` or virtual from the UI) and
+  runs the configured action on a worker thread.
+- Re-renders the active page when the OBS state, the page or the configuration
+  changes, sending each image to the physical deck and to the UI.
 """
 
 from __future__ import annotations
@@ -39,14 +39,18 @@ class DeckController:
         self.ctx = ActionContext(obs=obs, controller=self, bus=bus)
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="action")
         self._render_pending = threading.Event()
-        # estado ON/OFF de las teclas conmutables, por (página, tecla)
-        self._toggle: dict[tuple[int, int], bool] = {}
+        # ON/OFF state of toggle keys, keyed by (profile, page, key)
+        self._toggle: dict[tuple[int, int, int], bool] = {}
 
         bus.subscribe("deck.key", self._on_deck_key)
         bus.subscribe("deck.connected", lambda t, d: self.refresh())
         bus.subscribe("obs.state", lambda t, d: self.refresh())
 
-    # ---------- páginas ----------
+    # ---------- pages ----------
+
+    @property
+    def current_profile(self) -> int:
+        return self.config.current_profile
 
     @property
     def current_page(self) -> int:
@@ -55,6 +59,56 @@ class DeckController:
     @property
     def page(self):
         return self.config.pages[self.config.current_page]
+
+    def _tkey(self, index: int) -> tuple[int, int, int]:
+        """Key of a toggle's ON/OFF state: (profile, page, key)."""
+        return (self.current_profile, self.current_page, index)
+
+    # ---------- profiles ----------
+
+    def set_profile(self, index: int) -> None:
+        """Switch profile (loads its set of pages/keys)."""
+        if not (0 <= index < len(self.config.profiles)) or index == self.current_profile:
+            return
+        self.config.current_profile = index
+        self.config.save()
+        prof = self.config.profile
+        self.bus.emit("profile.changed", index=index, name=prof.name,
+                      description=prof.description)
+        # the current page is defined by the profile itself
+        self.bus.emit("page.changed", index=self.current_page, name=self.page.name)
+        self.refresh()
+
+    def add_profile(self, name: str, description: str = "") -> None:
+        from .config import Profile
+
+        self.config.profiles.append(Profile(name=name or "Profile", description=description))
+        self.config.save()
+        self.set_profile(len(self.config.profiles) - 1)
+
+    def update_profile(self, name: str, description: str) -> None:
+        prof = self.config.profile
+        prof.name = name or prof.name
+        prof.description = description
+        self.config.save()
+        self.bus.emit("profile.changed", index=self.current_profile,
+                      name=prof.name, description=prof.description)
+
+    def delete_profile(self, index: int) -> None:
+        if len(self.config.profiles) <= 1:
+            self.bus.emit("status", text="You can't delete the only profile")
+            return
+        del self.config.profiles[index]
+        # no need to discard the deleted profile's ON/OFF states individually:
+        # clear them all and re-render whichever profile becomes active.
+        self._toggle.clear()
+        self.config.current_profile = min(self.current_profile, len(self.config.profiles) - 1)
+        self.config.save()
+        prof = self.config.profile
+        self.bus.emit("profile.changed", index=self.current_profile,
+                      name=prof.name, description=prof.description)
+        self.bus.emit("page.changed", index=self.current_page, name=self.page.name)
+        self.refresh()
 
     def set_page(self, index: int) -> None:
         if 0 <= index < len(self.config.pages):
@@ -76,20 +130,41 @@ class DeckController:
         self.config.save()
         self.set_page(len(self.config.pages) - 1)
 
-    # ---------- edición de teclas (mover / copiar / pegar / limpiar) ----------
+    def rename_page(self, name: str) -> None:
+        if not name:
+            return
+        self.page.name = name
+        self.config.save()
+        self.bus.emit("page.changed", index=self.current_page, name=self.page.name)
+
+    def delete_page(self, index: int) -> None:
+        pages = self.config.pages
+        if len(pages) <= 1:
+            self.bus.emit("status", text="You can't delete the only page")
+            return
+        del pages[index]
+        # the ON/OFF states of toggle keys reference the page index, which shifts
+        # after deletion; they are transient, so clear them and re-render.
+        self._toggle.clear()
+        self.config.current_page = min(self.current_page, len(pages) - 1)
+        self.config.save()
+        self.bus.emit("page.changed", index=self.current_page, name=self.page.name)
+        self.refresh()
+
+    # ---------- key editing (move / copy / paste / clear) ----------
 
     def swap_keys(self, a: int, b: int) -> None:
-        """Intercambia dos teclas (para drag & drop). También su estado ON/OFF."""
+        """Swap two keys (for drag & drop). Their ON/OFF state too."""
         if a == b:
             return
         page = self.page
         page.keys[str(a)], page.keys[str(b)] = page.key(b), page.key(a)
-        # limpiar entradas None que set_key normalmente elimina
+        # drop the None entries that set_key normally removes
         for i in (a, b):
             if page.keys.get(str(i)) is None:
                 page.keys.pop(str(i), None)
-        # el estado de conmutación viaja con la tecla
-        pa, pb = (self.current_page, a), (self.current_page, b)
+        # the toggle state travels with the key
+        pa, pb = self._tkey(a), self._tkey(b)
         sa, sb = self._toggle.pop(pa, None), self._toggle.pop(pb, None)
         if sb is not None:
             self._toggle[pa] = sb
@@ -99,30 +174,30 @@ class DeckController:
         self.refresh()
 
     def paste_key(self, index: int, kc: KeyConfig) -> None:
-        """Coloca una copia independiente de kc en la posición index."""
+        """Place an independent copy of kc at position index."""
         self.page.set_key(index, kc.clone())
-        self._toggle.pop((self.current_page, index), None)  # estado nuevo (OFF)
+        self._toggle.pop(self._tkey(index), None)  # fresh state (OFF)
         self.config.save()
         self.refresh()
 
     def clear_key(self, index: int) -> None:
         self.page.set_key(index, None)
-        self._toggle.pop((self.current_page, index), None)
+        self._toggle.pop(self._tkey(index), None)
         self.config.save()
         self.refresh()
 
-    # ---------- pulsaciones ----------
+    # ---------- presses ----------
 
     def _on_deck_key(self, topic: str, data: dict) -> None:
         if data.get("pressed"):
             self.press(data["index"])
 
     def toggle_state(self, index: int) -> bool:
-        """Estado ON/OFF de una tecla conmutable en la página actual."""
-        return self._toggle.get((self.current_page, index), False)
+        """ON/OFF state of a toggle key on the current page/profile."""
+        return self._toggle.get(self._tkey(index), False)
 
     def press(self, index: int) -> None:
-        """Ejecuta la tecla (pulsación física o virtual) según su tipo."""
+        """Run the key (physical or virtual press) according to its type."""
         kc = self.page.key(index)
         if kc is None or kc.is_empty():
             return
@@ -131,11 +206,11 @@ class DeckController:
         elif kc.kind == KIND_MULTI:
             steps = list(kc.steps)
         elif kc.kind == KIND_TOGGLE:
-            key = (self.current_page, index)
+            key = self._tkey(index)
             new_state = not self._toggle.get(key, False)
             self._toggle[key] = new_state
             steps = list(kc.steps_on if new_state else kc.steps_off)
-            self.refresh()  # refleja el nuevo estado en la tecla
+            self.refresh()  # reflect the new state on the key
         else:
             return
         self._executor.submit(self._run_steps, steps, index)
@@ -145,21 +220,21 @@ class DeckController:
             action = action_registry.get(step.action)
             if action is None:
                 if step.action:
-                    log.warning("Acción desconocida en tecla %d: %s", index, step.action)
+                    log.warning("Unknown action on key %d: %s", index, step.action)
                 continue
             try:
                 action.execute(self.ctx, dict(step.params))
-                log.debug("Ejecutada %s (tecla %d)", action.id, index)
+                log.debug("Ran %s (key %d)", action.id, index)
             except Exception as e:
-                log.exception("Error ejecutando %s", action.id)
-                self.bus.emit("status", text=f"Error en «{action.name}»: {e}")
+                log.exception("Error running %s", action.id)
+                self.bus.emit("status", text=f"Error in «{action.name}»: {e}")
             if step.delay_ms > 0:
                 time.sleep(step.delay_ms / 1000)
 
-    # ---------- renderizado ----------
+    # ---------- rendering ----------
 
     def refresh(self) -> None:
-        """Re-renderiza la página activa (agrupa ráfagas de eventos)."""
+        """Re-render the active page (coalesces bursts of events)."""
         if self._render_pending.is_set():
             return
         self._render_pending.set()
@@ -174,7 +249,7 @@ class DeckController:
             self.deck.set_key_image(index, image)
             self.bus.emit("ui.key_image", index=index, png=renderer.to_png_bytes(image))
 
-    # ---------- specs de tecla (feedback + parámetros de composición) ----------
+    # ---------- key specs (feedback + compose parameters) ----------
 
     def _key_spec(self, index: int, kc: KeyConfig | None, size) -> dict:
         if kc is None or kc.is_empty():
@@ -202,11 +277,11 @@ class DeckController:
             try:
                 fb = action.feedback(self.ctx, kc.params)
             except Exception:
-                log.debug("feedback de %s falló", kc.action, exc_info=True)
+                log.debug("feedback of %s failed", kc.action, exc_info=True)
         fb = fb or {}
-        # icono propio de la tecla, o el icono por defecto de la acción. Solo se
-        # muestra la etiqueta que el usuario haya puesto (sin ella el icono queda
-        # centrado; no se mete el nombre de la acción, que lo desplazaba arriba).
+        # the key's own icon, or the action's default icon. Only the label the
+        # user set explicitly is shown (without it the icon stays centered; the
+        # action name is not used, which used to push the icon upwards).
         icon = kc.icon or (action.default_icon if action else "")
         return {
             "size": size,

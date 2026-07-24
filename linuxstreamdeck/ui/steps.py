@@ -1,11 +1,11 @@
-"""Componentes reutilizables del editor de teclas:
+"""Reusable components of the key editor:
 
-- StepEditor   : selecciona categoría + acción + parámetros de UN paso.
-- StepList     : lista ordenable de StepEditor (para acciones múltiples).
-- AppearanceBox: etiqueta + icono + color de fondo de un estado de la tecla.
+- StepEditor   : selects category + action + parameters of ONE step.
+- StepList     : reorderable list of StepEditor (for multiple actions).
+- AppearanceBox: label + icon + background color of one key state.
 
-StepEditor concentra la lógica de rellenar los desplegables en vivo desde OBS,
-que antes vivía en EditorPanel, para poder reutilizarla en cada paso.
+StepEditor concentrates the logic of filling the dropdowns live from OBS, which
+used to live in EditorPanel, so it can be reused for each step.
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ from ..core.config import DEFAULT_KEY_BG, ActionStep  # noqa: E402
 log = logging.getLogger(__name__)
 
 CATEGORY_ORDER = [
-    "OBS · Escenas", "OBS · Grabación y directo", "OBS · Audio",
-    "OBS · Fuentes y filtros", "OBS · Media", "OBS · Avanzado",
-    "Sistema", "Navegación",
+    "OBS · Scenes", "OBS · Recording & Streaming", "OBS · Audio",
+    "OBS · Sources & Filters", "OBS · Media", "OBS · Advanced",
+    "System", "Navigation",
 ]
 
 
@@ -50,16 +50,16 @@ def _clear(box: Gtk.Box) -> None:
         box.remove(child)
 
 
-# =========================== editor de un paso ===========================
+# =========================== single-step editor ===========================
 
 class StepEditor(Gtk.Box):
     def __init__(self, app, on_change=None) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.app = app
-        self._on_change = on_change          # se llama cuando cambia la acción elegida
+        self._on_change = on_change          # called when the chosen action changes
         self._param_widgets: dict[str, tuple[Param, Gtk.Widget]] = {}
-        # id del handler notify::selected de cada desplegable dependiente, para
-        # poder bloquearlo mientras lo repueblo (evita bucles de señales)
+        # id of the notify::selected handler of each dependent dropdown, so it
+        # can be blocked while repopulating (avoids signal loops)
         self._dep_handlers: dict[str, int] = {}
         self._building = False
 
@@ -69,9 +69,9 @@ class StepEditor(Gtk.Box):
         ]
 
         self.cat_dd = Gtk.DropDown.new_from_strings(self._cat_names)
-        self.append(_row("Categoría", self.cat_dd))
+        self.append(_row("Category", self.cat_dd))
         self.action_dd = Gtk.DropDown.new_from_strings([])
-        self.append(_row("Acción", self.action_dd))
+        self.append(_row("Action", self.action_dd))
         self.desc = Gtk.Label(wrap=True, xalign=0)
         self.desc.add_css_class("dim-label")
         self.append(self.desc)
@@ -80,12 +80,12 @@ class StepEditor(Gtk.Box):
         self.delay_spin = Gtk.SpinButton(
             adjustment=Gtk.Adjustment(value=0, lower=0, upper=600000, step_increment=100)
         )
-        self.append(_row("Espera después (ms)", self.delay_spin))
+        self.append(_row("Delay after (ms)", self.delay_spin))
 
         self.cat_dd.connect("notify::selected", self._on_category_changed)
         self.action_dd.connect("notify::selected", self._on_action_changed)
 
-    # ---------- carga / lectura ----------
+    # ---------- load / read ----------
 
     def load(self, step: ActionStep) -> None:
         self._building = True
@@ -112,9 +112,9 @@ class StepEditor(Gtk.Box):
 
     def action_name(self) -> str:
         a = self._current_action()
-        return a.name if a else "Sin acción"
+        return a.name if a else "No action"
 
-    # ---------- selección ----------
+    # ---------- selection ----------
 
     def _on_category_changed(self, *_a) -> None:
         if not self._building:
@@ -146,7 +146,7 @@ class StepEditor(Gtk.Box):
         if self._on_change:
             self._on_change()
 
-    # ---------- parámetros dinámicos ----------
+    # ---------- dynamic parameters ----------
 
     def _build_params(self, values: dict) -> None:
         _clear(self.params_box)
@@ -190,15 +190,15 @@ class StepEditor(Gtk.Box):
                 return dd
         return Gtk.Entry(text=str(value if value is not None else param.default or ""))
 
-    # Al cambiar la ESCENA se repuebla la lista de fuentes (y, en cascada, la de
-    # filtros). Al cambiar la FUENTE solo se repuebla la lista de filtros. Nunca
-    # se repuebla el propio desplegable que disparó el cambio, y su handler se
-    # bloquea durante la repoblación: así es imposible un bucle de señales.
+    # When the SCENE changes, the source list is repopulated (and, in cascade,
+    # the filter list). When the SOURCE changes, only the filter list is
+    # repopulated. The dropdown that triggered the change is never repopulated,
+    # and its handler is blocked during repopulation: a signal loop is impossible.
 
     def _on_scene_changed(self, *_a) -> None:
         if self._building:
             return
-        log.debug("[editor] escena cambiada → repoblando fuentes/filtros")
+        log.debug("[editor] scene changed → repopulating sources/filters")
         self._repopulate("sources_in_scene")
         self._repopulate("filters_of_source")
         if self._on_change:
@@ -207,7 +207,7 @@ class StepEditor(Gtk.Box):
     def _on_source_changed(self, *_a) -> None:
         if self._building:
             return
-        log.debug("[editor] fuente cambiada → repoblando filtros")
+        log.debug("[editor] source changed → repopulating filters")
         self._repopulate("filters_of_source")
         if self._on_change:
             self._on_change()
@@ -220,7 +220,7 @@ class StepEditor(Gtk.Box):
             current = self._widget_value(param, widget)
             hid = self._dep_handlers.get(name)
             if hid is not None:
-                widget.handler_block(hid)          # evita reentrada por notify::selected
+                widget.handler_block(hid)          # avoids reentry via notify::selected
             widget.set_model(Gtk.StringList.new(options))
             if current in options:
                 widget.set_selected(options.index(current))
@@ -236,7 +236,7 @@ class StepEditor(Gtk.Box):
             if source == "pages":
                 return [p.name for p in self.app.config.pages]
             if not obs.connected:
-                log.debug("[editor] _fetch_choices(%s): OBS desconectado", source)
+                log.debug("[editor] _fetch_choices(%s): OBS disconnected", source)
                 return []
             table = {
                 "scenes": obs.get_scenes,
@@ -257,20 +257,20 @@ class StepEditor(Gtk.Box):
             else:
                 result = []
             log.debug(
-                "[editor] _fetch_choices(%s) → %d opciones en %.0f ms [hilo %s]",
+                "[editor] _fetch_choices(%s) → %d options in %.0f ms [thread %s]",
                 source, len(result), (_time.time() - t0) * 1000,
                 threading.current_thread().name,
             )
             return result
         except Exception:
-            log.debug("No se pudieron obtener opciones de %s", source, exc_info=True)
+            log.debug("Could not fetch options for %s", source, exc_info=True)
             return []
 
     def _sibling_value(self, name: str) -> str:
         pair = self._param_widgets.get(name)
         return str(self._widget_value(*pair)) if pair else ""
 
-    # ---------- utilidades ----------
+    # ---------- utilities ----------
 
     @staticmethod
     def _widget_value(param: Param, widget: Gtk.Widget):
@@ -291,10 +291,10 @@ class StepEditor(Gtk.Box):
         return dd
 
 
-# ============================ lista de pasos =============================
+# ============================ step list =============================
 
 class StepList(Gtk.Box):
-    """Lista ordenable de StepEditor con añadir / subir / bajar / eliminar."""
+    """Reorderable list of StepEditor with add / up / down / remove."""
 
     def __init__(self, app) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -303,7 +303,7 @@ class StepList(Gtk.Box):
 
         self._list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.append(self._list_box)
-        add = Gtk.Button(label="Añadir acción", halign=Gtk.Align.START)
+        add = Gtk.Button(label="Add action", halign=Gtk.Align.START)
         add.set_icon_name("list-add-symbolic")
         add.connect("clicked", lambda _b: self._add(ActionStep(), expand=True))
         self.append(add)
@@ -337,15 +337,15 @@ class StepList(Gtk.Box):
 
         toolbar = Gtk.Box(spacing=4, margin_bottom=6)
         up = Gtk.Button.new_from_icon_name("go-up-symbolic")
-        up.set_tooltip_text("Subir")
+        up.set_tooltip_text("Move up")
         up.set_sensitive(i > 0)
         up.connect("clicked", lambda _b: self._move(i, -1))
         down = Gtk.Button.new_from_icon_name("go-down-symbolic")
-        down.set_tooltip_text("Bajar")
+        down.set_tooltip_text("Move down")
         down.set_sensitive(i < len(self._editors) - 1)
         down.connect("clicked", lambda _b: self._move(i, +1))
         delete = Gtk.Button.new_from_icon_name("user-trash-symbolic")
-        delete.set_tooltip_text("Eliminar")
+        delete.set_tooltip_text("Remove")
         delete.add_css_class("destructive-action")
         delete.connect("clicked", lambda _b: self._delete(i))
         for b in (up, down, delete):
@@ -376,44 +376,44 @@ class StepList(Gtk.Box):
                 exp.set_label(f"{i + 1}. {editor.action_name()}")
 
 
-# ============================= apariencia ==============================
+# ============================= appearance ==============================
 
 class AppearanceBox(Gtk.Box):
     PREVIEW = 40
 
-    def __init__(self, title: str = "Apariencia") -> None:
+    def __init__(self, title: str = "Appearance") -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self._icon_ref = ""      # "mdi:nombre" o ruta de archivo, o ""
+        self._icon_ref = ""      # "mdi:name" or a file path, or ""
 
         heading = Gtk.Label(label=title, xalign=0)
         heading.add_css_class("heading")
         self.append(heading)
 
-        self.label_entry = Gtk.Entry(placeholder_text="Etiqueta de la tecla")
-        self.append(_row("Etiqueta", self.label_entry))
+        self.label_entry = Gtk.Entry(placeholder_text="Key label")
+        self.append(_row("Label", self.label_entry))
 
-        # vista previa + botones biblioteca / archivo / quitar
+        # preview + library / file / remove buttons
         icon_box = Gtk.Box(spacing=6)
         self.preview = Gtk.Image()
         self.preview.set_pixel_size(self.PREVIEW)
         self.preview.set_size_request(self.PREVIEW, self.PREVIEW)
         self.preview.add_css_class("card")
         icon_box.append(self.preview)
-        lib_btn = Gtk.Button(label="Biblioteca…", hexpand=True)
-        lib_btn.set_tooltip_text("Elegir de la biblioteca de iconos integrada")
+        lib_btn = Gtk.Button(label="Library…", hexpand=True)
+        lib_btn.set_tooltip_text("Choose from the built-in icon library")
         lib_btn.connect("clicked", self._pick_from_library)
         file_btn = Gtk.Button.new_from_icon_name("document-open-symbolic")
-        file_btn.set_tooltip_text("Usar una imagen propia")
+        file_btn.set_tooltip_text("Use your own image")
         file_btn.connect("clicked", self._pick_file)
         clear_btn = Gtk.Button.new_from_icon_name("edit-clear-symbolic")
-        clear_btn.set_tooltip_text("Quitar icono")
+        clear_btn.set_tooltip_text("Remove icon")
         clear_btn.connect("clicked", lambda _b: self._set_icon(""))
         for b in (lib_btn, file_btn, clear_btn):
             icon_box.append(b)
-        self.append(_row("Icono", icon_box))
+        self.append(_row("Icon", icon_box))
 
         self.color_btn = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog())
-        self.append(_row("Color de fondo", self.color_btn))
+        self.append(_row("Background color", self.color_btn))
 
     def load(self, label: str, icon: str, color: str) -> None:
         self.label_entry.set_text(label)
@@ -431,7 +431,7 @@ class AppearanceBox(Gtk.Box):
     def color(self) -> str:
         return rgba_to_hex(self.color_btn.get_rgba())
 
-    # ---------- selección de icono ----------
+    # ---------- icon selection ----------
 
     def _set_icon(self, ref: str) -> None:
         self._icon_ref = ref
@@ -457,9 +457,9 @@ class AppearanceBox(Gtk.Box):
         IconPickerDialog(self.get_root(), self._set_icon).present()
 
     def _pick_file(self, _btn) -> None:
-        dialog = Gtk.FileDialog(title="Elegir imagen")
+        dialog = Gtk.FileDialog(title="Choose image")
         f = Gtk.FileFilter()
-        f.set_name("Imágenes")
+        f.set_name("Images")
         for mime in ("image/png", "image/jpeg", "image/webp", "image/bmp"):
             f.add_mime_type(mime)
         dialog.set_default_filter(f)

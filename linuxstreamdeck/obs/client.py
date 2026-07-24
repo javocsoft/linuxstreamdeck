@@ -1,9 +1,8 @@
-"""Cliente OBS: peticiones síncronas + eventos en tiempo real + reconexión.
+"""OBS client: synchronous requests + real-time events + reconnection.
 
-Usa obs-websocket v5 (integrado en OBS 28+) a través de obsws-python.
-Mantiene una caché de estado (`OBSState`) alimentada por eventos para que el
-feedback de las teclas sea instantáneo, y emite `obs.state` en el bus ante
-cualquier cambio para que el controlador re-renderice.
+Uses obs-websocket v5 (built into OBS 28+) through obsws-python. Keeps a state
+cache (`OBSState`) fed by events so key feedback is instant, and emits
+`obs.state` on the bus on any change so the controller re-renders.
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ RECONNECT_SECONDS = 3
 
 
 class OBSState:
-    """Caché del estado de OBS relevante para el feedback de teclas."""
+    """Cache of the OBS state relevant to key feedback."""
 
     def __init__(self) -> None:
         self.reset()
@@ -37,7 +36,7 @@ class OBSState:
         self.replay_active: bool = False
         self.studio_mode: bool = False
         self.current_transition: str = ""
-        self.muted: dict[str, bool] = {}   # inputName -> muteado
+        self.muted: dict[str, bool] = {}   # inputName -> muted
 
 
 class OBSClient:
@@ -50,17 +49,17 @@ class OBSClient:
         self.password = ""
         self._req: obsws.ReqClient | None = None
         self._events: obsws.EventClient | None = None
-        self._lock = threading.Lock()          # protege _req (peticiones concurrentes)
+        self._lock = threading.Lock()          # protects _req (concurrent requests)
         self._stop = threading.Event()
         self._monitor: threading.Thread | None = None
 
-    # ---------- ciclo de vida ----------
+    # ---------- lifecycle ----------
 
     def configure(self, host: str, port: int, password: str) -> None:
         self.host, self.port, self.password = host, port, password
 
     def start(self) -> None:
-        """Arranca el hilo monitor que conecta y reconecta automáticamente."""
+        """Start the monitor thread that connects and reconnects automatically."""
         if self._monitor and self._monitor.is_alive():
             return
         self._stop.clear()
@@ -72,7 +71,7 @@ class OBSClient:
         self._teardown(emit=False)
 
     def reconnect_now(self) -> None:
-        """Fuerza reconexión inmediata (p.ej. al cambiar los ajustes)."""
+        """Force an immediate reconnection (e.g. when settings change)."""
         self._teardown(emit=True)
 
     def _monitor_loop(self) -> None:
@@ -80,10 +79,10 @@ class OBSClient:
             if not self.connected:
                 self._try_connect()
             else:
-                # el hilo de eventos muere cuando OBS cierra la conexión
+                # the event thread dies when OBS closes the connection
                 ev = self._events
                 if ev is None or not ev.worker.is_alive():
-                    log.info("Conexión con OBS perdida")
+                    log.info("OBS connection lost")
                     self._teardown(emit=True)
             self._stop.wait(RECONNECT_SECONDS)
 
@@ -96,13 +95,13 @@ class OBSClient:
             events = obsws.EventClient(**kwargs)
             events.callback.register(self._event_handlers())
         except Exception as e:
-            log.debug("OBS no disponible (%s): %s", type(e).__name__, e)
+            log.debug("OBS unavailable (%s): %s", type(e).__name__, e)
             return
         with self._lock:
             self._req, self._events = req, events
         self.connected = True
         self._prime_state()
-        log.info("Conectado a OBS en %s:%s", self.host, self.port)
+        log.info("Connected to OBS at %s:%s", self.host, self.port)
         self.bus.emit("obs.connected")
         self.bus.emit("obs.state", what="connected")
 
@@ -123,15 +122,15 @@ class OBSClient:
             self.bus.emit("obs.disconnected")
             self.bus.emit("obs.state", what="disconnected")
 
-    # ---------- peticiones ----------
+    # ---------- requests ----------
 
     def request(self, name: str, data: dict | None = None) -> dict:
-        """Petición cruda obs-websocket v5. Devuelve responseData (camelCase).
+        """Raw obs-websocket v5 request. Returns responseData (camelCase).
 
-        El lock se mantiene durante TODO el envío: el ReqClient de obsws usa un
-        único websocket que no es seguro entre hilos. Sin esto, una petición del
-        hilo principal (rellenar desplegables) y otra del hilo de render
-        (feedback de una tecla) se solapan y corrompen el protocolo → cuelgue.
+        The lock is held for the WHOLE send: obsws' ReqClient uses a single
+        websocket that is not thread-safe. Without this, a request from the main
+        thread (filling dropdowns) and one from the render thread (a key's
+        feedback) overlap and corrupt the protocol → hang.
         """
         thread = threading.current_thread().name
         waiting = time.time()
@@ -139,19 +138,19 @@ class OBSClient:
             acquired = time.time()
             req = self._req
             if req is None:
-                raise ConnectionError("OBS no está conectado")
+                raise ConnectionError("OBS is not connected")
             result = req.send(name, data, raw=True) or {}
             done = time.time()
         blocked = (acquired - waiting) * 1000
         elapsed = (done - acquired) * 1000
         if blocked > 50 or elapsed > 200:
             log.warning(
-                "[obs] %s [hilo %s] esperó lock %.0f ms, envío %.0f ms",
+                "[obs] %s [thread %s] waited lock %.0f ms, send %.0f ms",
                 name, thread, blocked, elapsed,
             )
         else:
             log.debug(
-                "[obs] %s [hilo %s] lock %.0f ms, envío %.0f ms",
+                "[obs] %s [thread %s] lock %.0f ms, send %.0f ms",
                 name, thread, blocked, elapsed,
             )
         return result
@@ -160,10 +159,10 @@ class OBSClient:
         try:
             return self.request(name, data)
         except Exception as e:
-            log.debug("Petición %s falló: %s", name, e)
+            log.debug("Request %s failed: %s", name, e)
             return None
 
-    # ---------- listas para el editor ----------
+    # ---------- lists for the editor ----------
 
     def get_scenes(self) -> list[str]:
         d = self.try_request("GetSceneList") or {}
@@ -208,7 +207,7 @@ class OBSClient:
         d = self.try_request("GetHotkeyList") or {}
         return d.get("hotkeys", [])
 
-    # ---------- estado inicial ----------
+    # ---------- initial state ----------
 
     def _prime_state(self) -> None:
         s = self.state
@@ -229,14 +228,14 @@ class OBSClient:
             s.preview_scene = d.get("currentPreviewSceneName") or d.get("sceneName", "")
         if d := self.try_request("GetSceneTransitionList"):
             s.current_transition = d.get("currentSceneTransitionName", "")
-        # estado de mute de todas las entradas (las que no lo soporten fallan y se omiten)
+        # mute state of every input (those that don't support it fail and are skipped)
         if d := self.try_request("GetInputList"):
             for i in d.get("inputs", []):
                 name = i["inputName"]
                 if m := self.try_request("GetInputMute", {"inputName": name}):
                     s.muted[name] = m.get("inputMuted", False)
 
-    # ---------- eventos ----------
+    # ---------- events ----------
 
     def _event_handlers(self) -> list:
         s = self.state
@@ -303,7 +302,7 @@ class OBSClient:
             changed("inputs_list")
 
         def on_exit_started(d):
-            log.info("OBS se está cerrando")
+            log.info("OBS is shutting down")
 
         return [
             on_current_program_scene_changed,

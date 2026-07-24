@@ -1,4 +1,4 @@
-"""Composición de la aplicación: config + bus + OBS + deck + controlador + UI."""
+"""Application composition: config + bus + OBS + deck + controller + UI."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from .core.events import EventBus  # noqa: E402
 from .device.manager import DeckManager  # noqa: E402
 from .obs.client import OBSClient  # noqa: E402
 
-# registrar catálogos de acciones (los decoradores @register se ejecutan al importar)
+# register the action catalogs (the @register decorators run on import)
 from . import basic_actions  # noqa: E402,F401
 from .obs import actions as _obs_actions  # noqa: E402,F401
 
@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 
 
 class LinuxStreamDeckApp:
-    """Contenedor de los componentes; envuelve la Adw.Application de GTK."""
+    """Container for the components; wraps GTK's Adw.Application."""
 
     def __init__(self) -> None:
         self.gtk_app = Adw.Application(application_id=APP_ID)
@@ -56,7 +56,7 @@ class LinuxStreamDeckApp:
         self.window.present()
 
     def _on_shutdown(self, _app) -> None:
-        log.info("Cerrando…")
+        log.info("Shutting down…")
         self.controller.shutdown()
         self.deck.stop()
         self.obs.stop()

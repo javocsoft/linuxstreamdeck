@@ -1,12 +1,12 @@
-"""Panel editor de teclas.
+"""Key editor panel.
 
-Permite elegir el tipo de tecla:
-  - Acción simple            → una acción (con feedback de estado)
-  - Acciones múltiples       → lista ordenada de acciones ejecutadas en secuencia
-  - Conmutable (ON/OFF)      → dos listas de acciones, una por estado
+Lets you choose the key type:
+  - Single action     → one action (with state feedback)
+  - Multiple actions  → ordered list of actions run in sequence
+  - Toggle (ON/OFF)   → two action lists, one per state
 
-La lógica de un paso (categoría/acción/parámetros) y la apariencia viven en
-`steps.py`; aquí solo se componen según el tipo elegido.
+The logic of a single step (category/action/parameters) and the appearance live
+in `steps.py`; here they are only composed according to the chosen type.
 """
 
 from __future__ import annotations
@@ -30,9 +30,9 @@ from .steps import AppearanceBox, StepEditor, StepList  # noqa: E402
 log = logging.getLogger(__name__)
 
 KINDS = [
-    (KIND_SINGLE, "Acción simple"),
-    (KIND_MULTI, "Acciones múltiples"),
-    (KIND_TOGGLE, "Conmutable (ON/OFF)"),
+    (KIND_SINGLE, "Single action"),
+    (KIND_MULTI, "Multiple actions"),
+    (KIND_TOGGLE, "Toggle (ON/OFF)"),
 ]
 KIND_IDS = [k for k, _ in KINDS]
 
@@ -52,12 +52,12 @@ class EditorPanel(Gtk.Box):
         self.append(self.title)
 
         self.kind_dd = Gtk.DropDown.new_from_strings([name for _, name in KINDS])
-        self.kind_row = self._labelled("Tipo de tecla", self.kind_dd)
+        self.kind_row = self._labelled("Key type", self.kind_dd)
         self.append(self.kind_row)
         self.kind_dd.connect("notify::selected", self._on_kind_changed)
 
-        # cuerpo con scroll: crece para ocupar el espacio disponible y desplaza
-        # su contenido cuando se añaden pasos, sin agrandar la ventana
+        # scrollable body: grows to fill the available space and scrolls its
+        # content when steps are added, without enlarging the window
         self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.scroller = Gtk.ScrolledWindow(child=self.body)
         self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -65,11 +65,11 @@ class EditorPanel(Gtk.Box):
         self.scroller.set_min_content_height(180)
         self.append(self.scroller)
 
-        # botones fijos al pie (siempre visibles aunque el cuerpo desborde)
+        # buttons pinned at the bottom (always visible even if the body overflows)
         self.buttons = self._build_buttons()
         self.append(self.buttons)
 
-        # sub-widgets según el tipo (se rellenan en _build_body)
+        # sub-widgets by type (filled in _build_body)
         self.single_editor: StepEditor | None = None
         self.multi_list: StepList | None = None
         self.on_list: StepList | None = None
@@ -79,15 +79,15 @@ class EditorPanel(Gtk.Box):
 
         self.clear()
 
-    # ---------- API pública ----------
+    # ---------- public API ----------
 
     def clear(self) -> None:
-        self.title.set_label("Ninguna tecla seleccionada")
+        self.title.set_label("No key selected")
         self.kind_row.set_visible(False)
         self.buttons.set_visible(False)
         self._clear(self.body)
         info = Gtk.Label(
-            label="Selecciona una tecla de la rejilla para configurarla.",
+            label="Select a key from the grid to configure it.",
             wrap=True, xalign=0,
         )
         info.add_css_class("dim-label")
@@ -97,7 +97,7 @@ class EditorPanel(Gtk.Box):
     def load(self, index: int) -> None:
         self.index = index
         kc = self.app.controller.page.key(index) or KeyConfig()
-        self.title.set_label(f"Tecla {index + 1}")
+        self.title.set_label(f"Key {index + 1}")
         self.kind_row.set_visible(True)
         self.buttons.set_visible(True)
         self._building = True
@@ -105,12 +105,12 @@ class EditorPanel(Gtk.Box):
         self._building = False
         self._build_body(kc)
 
-    # ---------- construcción del cuerpo ----------
+    # ---------- body construction ----------
 
     def _on_kind_changed(self, *_a) -> None:
         if self._building or self.index is None:
             return
-        # cambiar de tipo arranca con una configuración vacía de ese tipo
+        # changing type starts with an empty configuration of that type
         self._build_body(KeyConfig(kind=self._current_kind()))
 
     def _current_kind(self) -> str:
@@ -128,53 +128,53 @@ class EditorPanel(Gtk.Box):
             self.single_editor.load(ActionStep(action=kc.action, params=kc.params))
             self.body.append(self.single_editor)
             self.body.append(Gtk.Separator())
-            self.app_main = AppearanceBox("Apariencia")
+            self.app_main = AppearanceBox("Appearance")
             self.app_main.load(kc.label, kc.icon, kc.bg_color)
             self.body.append(self.app_main)
 
         elif kind == KIND_MULTI:
             self.body.append(self._hint(
-                "Se ejecutan en orden al pulsar. Usa «Espera después» para pausas."
+                "They run in order when pressed. Use «Delay after» for pauses."
             ))
             self.multi_list = StepList(self.app)
             self.multi_list.load(kc.steps or [ActionStep()])
             self.body.append(self.multi_list)
             self.body.append(Gtk.Separator())
-            self.app_main = AppearanceBox("Apariencia")
+            self.app_main = AppearanceBox("Appearance")
             self.app_main.load(kc.label, kc.icon, kc.bg_color)
             self.body.append(self.app_main)
 
         else:  # KIND_TOGGLE
             self.body.append(self._hint(
-                "Cada pulsación alterna el estado y ejecuta su lista de acciones."
+                "Each press toggles the state and runs its action list."
             ))
             self.on_list = StepList(self.app)
             self.on_list.load(kc.steps_on or [ActionStep()])
-            self.app_main = AppearanceBox("Apariencia estado ON")
+            self.app_main = AppearanceBox("ON state appearance")
             self.app_main.load(kc.label, kc.icon, kc.bg_color)
-            self.body.append(self._frame("▶ Estado ON", [self.on_list, self.app_main]))
+            self.body.append(self._frame("▶ ON state", [self.on_list, self.app_main]))
 
             self.off_list = StepList(self.app)
             self.off_list.load(kc.steps_off or [ActionStep()])
-            self.app_off = AppearanceBox("Apariencia estado OFF")
+            self.app_off = AppearanceBox("OFF state appearance")
             self.app_off.load(kc.label_off, kc.icon_off, kc.bg_color_off)
-            self.body.append(self._frame("■ Estado OFF", [self.off_list, self.app_off]))
+            self.body.append(self._frame("■ OFF state", [self.off_list, self.app_off]))
 
     def _build_buttons(self) -> Gtk.Box:
         btns = Gtk.Box(spacing=6, margin_top=10)
-        save = Gtk.Button(label="Guardar", hexpand=True)
+        save = Gtk.Button(label="Save", hexpand=True)
         save.add_css_class("suggested-action")
         save.connect("clicked", self._save)
-        test = Gtk.Button(label="Probar")
+        test = Gtk.Button(label="Test")
         test.connect("clicked", lambda _b: self.app.controller.press(self.index))
-        wipe = Gtk.Button(label="Limpiar")
+        wipe = Gtk.Button(label="Clear")
         wipe.add_css_class("destructive-action")
         wipe.connect("clicked", self._wipe)
         for b in (save, test, wipe):
             btns.append(b)
         return btns
 
-    # ---------- guardar / limpiar ----------
+    # ---------- save / clear ----------
 
     def _save(self, _btn) -> None:
         if self.index is None:
@@ -202,7 +202,7 @@ class EditorPanel(Gtk.Box):
         self.app.config.save()
         self.app.controller.refresh()
         name = dict(KINDS)[kind]
-        self.app.bus.emit("status", text=f"Tecla {self.index + 1} guardada ({name})")
+        self.app.bus.emit("status", text=f"Key {self.index + 1} saved ({name})")
 
     def _wipe(self, _btn) -> None:
         if self.index is None:
@@ -212,7 +212,7 @@ class EditorPanel(Gtk.Box):
         self.app.controller.refresh()
         self.load(self.index)
 
-    # ---------- helpers de layout ----------
+    # ---------- layout helpers ----------
 
     @staticmethod
     def _labelled(label: str, widget: Gtk.Widget) -> Gtk.Box:

@@ -1,4 +1,4 @@
-# Permisos de acceso al Elgato Stream Deck para usuarios de la sesión local.
-# Instalar en /etc/udev/rules.d/ y recargar udev (ver install-udev.sh).
+# Access permissions for the Elgato Stream Deck for local-session users.
+# Install in /etc/udev/rules.d/ and reload udev (see install-udev.sh).
 SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
 KERNEL=="hidraw*", SUBSYSTEMS=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess"

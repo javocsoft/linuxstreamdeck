@@ -1,4 +1,4 @@
-"""Acciones de sistema y de navegación entre páginas del deck."""
+"""System actions and navigation between deck pages."""
 
 from __future__ import annotations
 
@@ -10,17 +10,17 @@ from .core.actions import Action, Param, apply_default_icons, register
 
 log = logging.getLogger(__name__)
 
-CAT_SYSTEM = "Sistema"
-CAT_NAV = "Navegación"
+CAT_SYSTEM = "System"
+CAT_NAV = "Navigation"
 
 
 @register
 class RunCommand(Action):
     id = "sys.command"
-    name = "Ejecutar comando"
+    name = "Run command"
     category = CAT_SYSTEM
-    description = "Ejecuta un comando de shell en segundo plano."
-    params = [Param("command", "Comando")]
+    description = "Run a shell command in the background."
+    params = [Param("command", "Command")]
 
     def execute(self, ctx, p):
         cmd = p.get("command", "").strip()
@@ -31,7 +31,7 @@ class RunCommand(Action):
 @register
 class OpenUrl(Action):
     id = "sys.url"
-    name = "Abrir URL"
+    name = "Open URL"
     category = CAT_SYSTEM
     params = [Param("url", "URL", default="https://")]
 
@@ -44,21 +44,21 @@ class OpenUrl(Action):
 @register
 class PageGo(Action):
     id = "nav.page"
-    name = "Ir a página"
+    name = "Go to page"
     category = CAT_NAV
-    description = "Cambia la página activa del deck."
+    description = "Switch the active deck page."
     params = [
-        Param("mode", "Modo", kind="choice", default="ir a",
-              choices=["ir a", "siguiente", "anterior"]),
-        Param("page", "Página (para 'ir a')", choices_source="pages"),
+        Param("mode", "Mode", kind="choice", default="go to",
+              choices=["go to", "next", "previous"]),
+        Param("page", "Page (for 'go to')", choices_source="pages"),
     ]
 
     def execute(self, ctx, p):
         c = ctx.controller
-        mode = p.get("mode", "ir a")
-        if mode == "siguiente":
+        mode = p.get("mode", "go to")
+        if mode == "next":
             c.set_page((c.current_page + 1) % len(c.config.pages))
-        elif mode == "anterior":
+        elif mode == "previous":
             c.set_page((c.current_page - 1) % len(c.config.pages))
         else:
             c.set_page_by_name(p.get("page", ""))

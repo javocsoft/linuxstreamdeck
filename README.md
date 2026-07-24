@@ -1,109 +1,119 @@
 # LinuxStreamDeck
 
-Software para **Elgato Stream Deck** en Linux con integración **OBS Studio completa**
-(obs-websocket v5) y feedback de estado en tiempo real en las teclas.
+Software for the **Elgato Stream Deck** on Linux with **full OBS Studio integration**
+(obs-websocket v5) and real-time state feedback on the keys.
 
-## Características
+## Features
 
-- **Deck virtual en la UI**: la rejilla de la ventana refleja el deck físico y permite
-  configurar y probar acciones sin tener el aparato conectado.
-- **Organización cómoda**: mueve teclas con **arrastrar y soltar** (intercambia
-  posiciones) y **copia/pega** cualquier tecla para duplicarla (clic derecho →
-  Copiar/Pegar, o `Ctrl+C`/`Ctrl+V`; `Supr` la limpia). Funciona con cualquier tipo de tecla.
-- **Tres tipos de tecla**:
-  - *Acción simple* — una acción, con feedback de estado en la tecla.
-  - *Acciones múltiples* — lista ordenada de acciones que se ejecutan en secuencia
-    al pulsar (con espera opcional entre pasos).
-  - *Conmutable (ON/OFF)* — dos listas de acciones; cada pulsación alterna el estado
-    y ejecuta la lista correspondiente, con apariencia propia por estado.
-- **Integración OBS a fondo**, más completa que la mayoría de alternativas en Linux:
-  - Escenas: cambiar programa/previsualización, modo estudio, transiciones (tipo y duración)
-  - Grabación: iniciar/parar/pausar · Directo: iniciar/parar · Cámara virtual
-  - Replay buffer: activar y guardar · Capturas de fuente a PNG
-  - Audio: silenciar (con feedback), subir/bajar volumen, fijar volumen en dB
-  - Fuentes: mostrar/ocultar por escena · Filtros: activar/desactivar
-  - Media: reproducir/pausar/reiniciar/detener/siguiente/anterior
-  - Colecciones de escenas y perfiles · Hotkeys internos de OBS
-  - **Petición cruda**: cualquier petición del protocolo obs-websocket → cobertura 100%
-- **Feedback en tiempo real**: escena activa iluminada, tecla de grabación en rojo,
-  micrófono silenciado marcado… vía eventos de obs-websocket.
-- **Biblioteca de iconos integrada** (~7.400 iconos de Material Design Icons,
-  categorizados y buscables): cada acción trae ya un icono por defecto, puedes
-  elegir otro de la biblioteca, o usar tu propia imagen. Sin subir nada a mano.
-- Acciones de sistema (ejecutar comando, abrir URL) y navegación entre páginas.
-- Reconexión automática con OBS y hotplug del dispositivo.
+- **Virtual deck in the UI**: the window grid mirrors the physical deck and lets you
+  configure and test actions without the device connected.
+- **Profiles**: each profile stores its own set of pages and keys (with a name and a
+  short description). Switch profiles from the header selector to alternate between
+  configurations as you need (e.g. "Work", "Streaming").
+- **Easy organization**: move keys with **drag & drop** (swaps positions) and
+  **copy/paste** any key to duplicate it (right-click → Copy/Paste, or `Ctrl+C`/`Ctrl+V`;
+  `Delete` clears it). Works with any key type.
+- **Three key types**:
+  - *Single action* — one action, with state feedback on the key.
+  - *Multiple actions* — ordered list of actions run in sequence when pressed
+    (with an optional delay between steps).
+  - *Toggle (ON/OFF)* — two action lists; each press toggles the state and runs the
+    matching list, with its own appearance per state.
+- **Deep OBS integration**, more complete than most alternatives on Linux:
+  - Scenes: switch program/preview, studio mode, transitions (type and duration)
+  - Recording: start/stop/pause · Streaming: start/stop · Virtual camera
+  - Replay buffer: enable and save · Source screenshots to PNG
+  - Audio: mute (with feedback), raise/lower volume, set volume in dB
+  - Sources: show/hide per scene · Filters: enable/disable
+  - Media: play/pause/restart/stop/next/previous
+  - Scene collections and profiles · Internal OBS hotkeys
+  - **Raw request**: any obs-websocket protocol request → 100% coverage
+- **Real-time feedback**: active scene highlighted, recording key in red, muted
+  microphone marked… via obs-websocket events.
+- **Built-in icon library** (~7,400 Material Design Icons, categorized and
+  searchable): every action comes with a default icon, you can pick another from the
+  library, or use your own image. Nothing to upload by hand.
+- System actions (run command, open URL) and navigation between pages.
+- Automatic reconnection to OBS and device hotplug.
 
-## Requisitos
+## Requirements
 
-- Pop!_OS / Ubuntu 24.04 o similar, Python ≥ 3.10
-- OBS Studio 28+ con el servidor WebSocket activado
-  (*Herramientas → Ajustes del servidor WebSocket*)
+- Pop!_OS / Ubuntu 24.04 or similar, Python ≥ 3.10
+- OBS Studio 28+ with the WebSocket server enabled
+  (*Tools → WebSocket Server Settings*)
 
-## Instalación
+## Installation
 
-Forma rápida con los scripts incluidos:
+Quick way with the included scripts:
 
 ```bash
-# 1. Preparar el proyecto: crea el entorno virtual, instala dependencias y
-#    comprueba que compila. Con --apt instala también los paquetes del sistema.
+# 1. Prepare the project: creates the virtual environment, installs dependencies
+#    and checks that it compiles. With --apt it also installs the system packages.
 ./build.sh --apt
 
-# 2. Permisos USB para el Stream Deck (una sola vez)
+# 2. USB permissions for the Stream Deck (one time only)
 sudo ./install-udev.sh
 ```
 
 <details>
-<summary>Pasos manuales (equivalente, sin usar build.sh)</summary>
+<summary>Manual steps (equivalent, without build.sh)</summary>
 
 ```bash
-# Dependencias del sistema
+# System dependencies
 sudo apt install gir1.2-gtk-4.0 gir1.2-adw-1 libhidapi-libusb0 python3-gi python3-gi-cairo
 
-# Entorno Python (con acceso a GTK/PyGObject del sistema)
+# Python environment (with access to the system GTK/PyGObject)
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install -e .
 
-# Permisos USB
+# USB permissions
 sudo ./install-udev.sh
 ```
 </details>
 
-## Uso
+## Usage
 
 ```bash
-./run.sh                 # arranca la app
-LSD_DEBUG=1 ./run.sh     # con log de depuración
+./run.sh                 # starts the app
+LSD_DEBUG=1 ./run.sh     # with debug logging
 ```
 
-(equivale a `.venv/bin/linuxstreamdeck`)
+(equivalent to `.venv/bin/linuxstreamdeck`)
 
-1. Pulsa el botón de red de la cabecera y configura host/puerto/contraseña de obs-websocket.
-2. Haz clic en una tecla de la rejilla, elige el **tipo de tecla** (simple, múltiple o
-   conmutable), la categoría y la acción, rellena los parámetros (los desplegables se
-   rellenan en vivo desde OBS) y pulsa **Guardar**.
-3. En **Icono**, elige uno de la biblioteca integrada, usa tu propia imagen, o deja el
-   que trae la acción por defecto. Añade una **Etiqueta** solo si quieres texto en la tecla.
-4. **Probar** ejecuta la acción sin necesidad del deck físico.
-5. **Reordena** las teclas arrastrándolas de una posición a otra, y **duplica** una
-   tecla con clic derecho → Copiar y luego Pegar sobre otra (o `Ctrl+C`/`Ctrl+V`).
+1. Click the network button in the header and set the obs-websocket host/port/password.
+2. Click a key in the grid, choose the **key type** (single, multiple or toggle), the
+   category and the action, fill in the parameters (the dropdowns are filled live from
+   OBS) and press **Save**.
+3. Under **Icon**, pick one from the built-in library, use your own image, or keep the
+   action's default. Add a **Label** only if you want text on the key.
+4. **Test** runs the action without needing the physical deck.
+5. **Reorder** keys by dragging them from one position to another, and **duplicate** a
+   key with right-click → Copy and then Paste onto another (or `Ctrl+C`/`Ctrl+V`).
+6. **Pages**: use the `+` button to add a page and the menu button (⋮) next to the page
+   selector to **rename** or **delete** the current page.
+7. **Profiles**: use the header selector to switch profiles. With the menu button (⋮)
+   you can **create** a new profile (with a name and description), **edit** it or
+   **delete** it. Each profile has its own pages and keys.
 
-> La app es de **instancia única**: cierra cualquier ventana anterior antes de abrir otra.
+> The app is **single-instance**: close any previous window before opening another.
 
-La configuración se guarda en `~/.config/linuxstreamdeck/config.json`.
+The configuration is saved to `~/.config/linuxstreamdeck/config.json` (with a backup in
+`config.json.bak`). You can change the path with the `LSD_CONFIG_DIR` environment
+variable.
 
-## Estructura
+## Structure
 
 ```
-build.sh · run.sh · install-udev.sh    # preparar / lanzar / permisos USB
+build.sh · run.sh · install-udev.sh    # prepare / launch / USB permissions
 linuxstreamdeck/
-├── core/          # bus de eventos, config, registro de acciones, controlador, iconos
-├── device/        # Stream Deck físico (hidapi) y renderizado de teclas (Pillow)
-├── obs/           # cliente obs-websocket v5 + catálogo completo de acciones OBS
-├── ui/            # GTK4/Libadwaita: ventana, editor, selector de iconos, ajustes OBS
-└── assets/icons/  # biblioteca de iconos (fuente Material Design Icons + índice)
-data/udev/         # regla udev para el acceso al dispositivo
+├── core/          # event bus, config, action registry, controller, icons
+├── device/        # physical Stream Deck (hidapi) and key rendering (Pillow)
+├── obs/           # obs-websocket v5 client + full catalogue of OBS actions
+├── ui/            # GTK4/Libadwaita: window, editor, icon picker, OBS settings
+└── assets/icons/  # icon library (Material Design Icons font + index)
+data/udev/         # udev rule for device access
 ```
 
-## Licencia
+## License
 
 GPL-3.0-or-later — © JavocSoft

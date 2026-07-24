@@ -1,4 +1,4 @@
-"""Punto de entrada: `linuxstreamdeck` o `python -m linuxstreamdeck`."""
+"""Entry point: `linuxstreamdeck` or `python -m linuxstreamdeck`."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ def main() -> int:
     logging.basicConfig(
         level=level, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
     )
-    # silenciar el ruido de reconexión de obsws
+    # silence obsws reconnection noise
     logging.getLogger("obsws_python").setLevel(logging.WARNING)
 
     from .app import LinuxStreamDeckApp

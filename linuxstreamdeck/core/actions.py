@@ -1,8 +1,8 @@
-"""Sistema de acciones: clase base, parámetros declarativos y registro global.
+"""Action system: base class, declarative parameters and global registry.
 
-Cada acción declara sus parámetros con `Param`; el editor de la UI genera los
-widgets automáticamente a partir de ellos. `choices_source` indica al editor
-de dónde sacar las opciones en vivo (escenas de OBS, entradas de audio...).
+Each action declares its parameters with `Param`; the UI editor generates the
+widgets from them automatically. `choices_source` tells the editor where to pull
+the live options from (OBS scenes, audio inputs...).
 """
 
 from __future__ import annotations
@@ -20,15 +20,15 @@ class Param:
     label: str
     kind: str = "string"          # string | int | float | choice
     default: Any = None
-    choices: list[str] = field(default_factory=list)   # para kind == "choice"
-    # Fuente dinámica de opciones que el editor rellena en vivo:
+    choices: list[str] = field(default_factory=list)   # for kind == "choice"
+    # Dynamic source of options that the editor fills in live:
     #   scenes | inputs | media_inputs | transitions | scene_collections
     #   profiles | sources_in_scene | filters_of_source | hotkeys | pages
     choices_source: str = ""
 
 
 class ActionContext:
-    """Lo que una acción necesita para ejecutarse."""
+    """Everything an action needs to run."""
 
     def __init__(self, obs, controller, bus):
         self.obs = obs                # linuxstreamdeck.obs.client.OBSClient
@@ -42,15 +42,15 @@ class Action:
     category: str = ""
     params: list[Param] = []
     description: str = ""
-    default_icon: str = ""      # referencia "mdi:..." usada si la tecla no tiene icono propio
+    default_icon: str = ""      # "mdi:..." reference used when the key has no icon of its own
 
     def execute(self, ctx: ActionContext, params: dict) -> None:
         raise NotImplementedError
 
     def feedback(self, ctx: ActionContext, params: dict) -> dict | None:
-        """Estado visual de la tecla: {'active': bool, 'color': '#rrggbb', 'badge': str}.
+        """Visual state of the key: {'active': bool, 'color': '#rrggbb', 'badge': str}.
 
-        Devuelve None si la acción no tiene estado.
+        Returns None if the action has no state.
         """
         return None
 
@@ -59,10 +59,10 @@ REGISTRY: dict[str, Action] = {}
 
 
 def register(cls: type[Action]) -> type[Action]:
-    """Decorador: instancia y registra la acción."""
+    """Decorator: instantiate and register the action."""
     inst = cls()
     if not inst.id:
-        raise ValueError(f"La acción {cls.__name__} no tiene id")
+        raise ValueError(f"Action {cls.__name__} has no id")
     REGISTRY[inst.id] = inst
     return cls
 
@@ -72,7 +72,7 @@ def get(action_id: str) -> Action | None:
 
 
 def apply_default_icons(mapping: dict[str, str]) -> None:
-    """Asigna el icono por defecto (mdi:...) a las acciones ya registradas."""
+    """Assign the default icon (mdi:...) to already-registered actions."""
     for action_id, ref in mapping.items():
         action = REGISTRY.get(action_id)
         if action is not None:

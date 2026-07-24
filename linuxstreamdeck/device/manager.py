@@ -1,8 +1,8 @@
-"""Gestión del Stream Deck físico: detección, hotplug y envío de imágenes.
+"""Physical Stream Deck management: detection, hotplug and image sending.
 
-Si no hay dispositivo conectado (o falta libhidapi), la aplicación sigue
-funcionando con el deck virtual de la UI: `key_count` e `image_size` toman
-los valores del MK.2 (15 teclas de 72x72).
+If no device is connected (or libhidapi is missing), the application keeps
+working with the UI's virtual deck: `key_count` and `image_size` take the MK.2
+values (15 keys of 72x72).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ class DeckManager:
         self.deck = None
         self.key_count = DEFAULT_KEYS
         self.image_size = DEFAULT_IMAGE_SIZE
-        self._lock = threading.Lock()   # las escrituras HID no son reentrantes
+        self._lock = threading.Lock()   # HID writes are not reentrant
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -36,7 +36,7 @@ class DeckManager:
     def connected(self) -> bool:
         return self.deck is not None
 
-    # ---------- ciclo de vida ----------
+    # ---------- lifecycle ----------
 
     def start(self) -> None:
         self._stop.clear()
@@ -53,10 +53,10 @@ class DeckManager:
                 if self.deck is None:
                     self._try_open()
                 elif not self._alive():
-                    log.info("Stream Deck desconectado")
+                    log.info("Stream Deck disconnected")
                     self._close(emit=True)
             except Exception:
-                log.exception("Error en el escaneo de dispositivos")
+                log.exception("Error while scanning for devices")
             self._stop.wait(SCAN_SECONDS)
 
     def _try_open(self) -> None:
@@ -64,8 +64,8 @@ class DeckManager:
             from StreamDeck.DeviceManager import DeviceManager
             devices = DeviceManager().enumerate()
         except Exception as e:
-            # típico: libhidapi no instalada todavía
-            log.debug("No se pudo enumerar dispositivos HID: %s", e)
+            # typical: libhidapi not installed yet
+            log.debug("Could not enumerate HID devices: %s", e)
             return
         for dev in devices:
             try:
@@ -78,7 +78,7 @@ class DeckManager:
                 fmt = dev.key_image_format()
                 self.image_size = tuple(fmt["size"])
                 log.info(
-                    "Conectado: %s (%d teclas, %sx%s)",
+                    "Connected: %s (%d keys, %sx%s)",
                     dev.deck_type(), self.key_count, *self.image_size,
                 )
                 self.bus.emit(
@@ -86,7 +86,7 @@ class DeckManager:
                 )
                 return
             except Exception as e:
-                log.warning("No se pudo abrir %s: %s", dev, e)
+                log.warning("Could not open %s: %s", dev, e)
                 try:
                     dev.close()
                 except Exception:
@@ -110,10 +110,10 @@ class DeckManager:
             if emit:
                 self.bus.emit("deck.disconnected")
 
-    # ---------- E/S ----------
+    # ---------- I/O ----------
 
     def _on_key(self, deck, index: int, pressed: bool) -> None:
-        # llega en el hilo de lectura de la librería; el bus lo lleva al principal
+        # arrives on the library's read thread; the bus takes it to the main one
         self.bus.emit("deck.key", index=index, pressed=pressed)
 
     def set_key_image(self, index: int, image: Image.Image) -> None:
@@ -126,7 +126,7 @@ class DeckManager:
                 native = PILHelper.to_native_key_format(deck, image)
                 deck.set_key_image(index, native)
             except Exception as e:
-                log.warning("Fallo escribiendo tecla %d: %s", index, e)
+                log.warning("Failed writing key %d: %s", index, e)
 
     def set_brightness(self, pct: int) -> None:
         self.brightness = pct
