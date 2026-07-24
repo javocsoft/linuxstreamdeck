@@ -18,6 +18,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk  # noqa: E402
 
+from ..core import actions as action_registry  # noqa: E402
 from ..core.config import (  # noqa: E402
     KIND_MULTI,
     KIND_SINGLE,
@@ -51,6 +52,13 @@ class EditorPanel(Gtk.Box):
         self.title.add_css_class("title-3")
         self.append(self.title)
 
+        self.ai_button = Gtk.Button(label="Create with AI...")
+        self.ai_button.set_tooltip_text(
+            "Generate a reviewable key proposal with OpenAI or Claude"
+        )
+        self.ai_button.connect("clicked", self._open_ai_assistant)
+        self.append(self.ai_button)
+
         self.kind_dd = Gtk.DropDown.new_from_strings([name for _, name in KINDS])
         self.kind_row = self._labelled("Key type", self.kind_dd)
         self.append(self.kind_row)
@@ -83,6 +91,7 @@ class EditorPanel(Gtk.Box):
 
     def clear(self) -> None:
         self.title.set_label("No key selected")
+        self.ai_button.set_visible(False)
         self.kind_row.set_visible(False)
         self.buttons.set_visible(False)
         self._clear(self.body)
@@ -98,6 +107,7 @@ class EditorPanel(Gtk.Box):
         self.index = index
         kc = self.app.controller.page.key(index) or KeyConfig()
         self.title.set_label(f"Key {index + 1}")
+        self.ai_button.set_visible(True)
         self.kind_row.set_visible(True)
         self.buttons.set_visible(True)
         self._building = True
@@ -117,6 +127,29 @@ class EditorPanel(Gtk.Box):
         i = self.kind_dd.get_selected()
         return KIND_IDS[i] if i != Gtk.INVALID_LIST_POSITION else KIND_SINGLE
 
+    def _open_ai_assistant(self, _button) -> None:
+        if self.index is None:
+            return
+        from .ai_assistant import AIKeyDialog
+
+        AIKeyDialog(
+            self.get_root(),
+            self.app,
+            self._load_ai_proposal,
+        ).present()
+
+    def _load_ai_proposal(self, key: KeyConfig) -> None:
+        if self.index is None or key.kind not in KIND_IDS:
+            return
+        self._building = True
+        self.kind_dd.set_selected(KIND_IDS.index(key.kind))
+        self._building = False
+        self._build_body(key)
+        self.app.bus.emit(
+            "status",
+            text="AI proposal loaded; review it and press Save to keep it",
+        )
+
     def _build_body(self, kc: KeyConfig) -> None:
         self._clear(self.body)
         self.single_editor = self.multi_list = None
@@ -124,41 +157,123 @@ class EditorPanel(Gtk.Box):
         kind = self._current_kind()
 
         if kind == KIND_SINGLE:
-            self.single_editor = StepEditor(self.app)
+            self.single_editor = StepEditor(
+                self.app,
+                on_change=self._update_single_icon_preview,
+            )
             self.single_editor.load(ActionStep(action=kc.action, params=kc.params))
             self.body.append(self.single_editor)
             self.body.append(Gtk.Separator())
             self.app_main = AppearanceBox("Appearance")
-            self.app_main.load(kc.label, kc.icon, kc.bg_color)
+            self.app_main.load(
+                kc.label,
+                kc.icon,
+                kc.bg_color,
+                self._action_icon(kc.action),
+            )
             self.body.append(self.app_main)
 
         elif kind == KIND_MULTI:
             self.body.append(self._hint(
                 "They run in order when pressed. Add a «Wait» action for pauses."
             ))
-            self.multi_list = StepList(self.app)
+            self.multi_list = StepList(
+                self.app,
+                on_change=self._update_multi_icon_preview,
+            )
             self.multi_list.load(kc.steps)
             self.body.append(self.multi_list)
             self.body.append(Gtk.Separator())
             self.app_main = AppearanceBox("Appearance")
-            self.app_main.load(kc.label, kc.icon, kc.bg_color)
+            self.app_main.load(
+                kc.label,
+                kc.icon,
+                kc.bg_color,
+                self._steps_icon(kc.steps, "mdi:playlist-play"),
+            )
             self.body.append(self.app_main)
 
         else:  # KIND_TOGGLE
             self.body.append(self._hint(
                 "Each press toggles the state and runs its action list."
             ))
-            self.on_list = StepList(self.app)
+            self.on_list = StepList(
+                self.app,
+                on_change=self._update_on_icon_preview,
+            )
             self.on_list.load(kc.steps_on)
             self.app_main = AppearanceBox("ON state appearance")
-            self.app_main.load(kc.label, kc.icon, kc.bg_color)
+            self.app_main.load(
+                kc.label,
+                kc.icon,
+                kc.bg_color,
+                self._steps_icon(kc.steps_on, "mdi:toggle-switch"),
+            )
             self.body.append(self._frame("▶ ON state", [self.on_list, self.app_main]))
 
-            self.off_list = StepList(self.app)
+            self.off_list = StepList(
+                self.app,
+                on_change=self._update_off_icon_preview,
+            )
             self.off_list.load(kc.steps_off)
             self.app_off = AppearanceBox("OFF state appearance")
-            self.app_off.load(kc.label_off, kc.icon_off, kc.bg_color_off)
+            self.app_off.load(
+                kc.label_off,
+                kc.icon_off,
+                kc.bg_color_off,
+                kc.icon
+                or self._steps_icon(
+                    kc.steps_off,
+                    "mdi:toggle-switch-off-outline",
+                ),
+            )
             self.body.append(self._frame("■ OFF state", [self.off_list, self.app_off]))
+
+    @staticmethod
+    def _action_icon(action_id: str) -> str:
+        action = action_registry.get(action_id)
+        return action.default_icon if action is not None else ""
+
+    @classmethod
+    def _steps_icon(cls, steps: list[ActionStep], fallback: str) -> str:
+        for step in steps:
+            if icon := cls._action_icon(step.action):
+                return icon
+        return fallback if steps else ""
+
+    def _update_single_icon_preview(self) -> None:
+        if self.single_editor is not None and self.app_main is not None:
+            self.app_main.set_fallback_icon(
+                self._action_icon(self.single_editor.get_step().action)
+            )
+
+    def _update_multi_icon_preview(self) -> None:
+        if self.multi_list is not None and self.app_main is not None:
+            self.app_main.set_fallback_icon(
+                self._steps_icon(
+                    self.multi_list.get_steps(),
+                    "mdi:playlist-play",
+                )
+            )
+
+    def _update_on_icon_preview(self) -> None:
+        if self.on_list is not None and self.app_main is not None:
+            self.app_main.set_fallback_icon(
+                self._steps_icon(
+                    self.on_list.get_steps(),
+                    "mdi:toggle-switch",
+                )
+            )
+
+    def _update_off_icon_preview(self) -> None:
+        if self.off_list is not None and self.app_off is not None:
+            self.app_off.set_fallback_icon(
+                (self.app_main.icon() if self.app_main is not None else "")
+                or self._steps_icon(
+                    self.off_list.get_steps(),
+                    "mdi:toggle-switch-off-outline",
+                )
+            )
 
     def _build_buttons(self) -> Gtk.Box:
         btns = Gtk.Box(spacing=6, margin_top=10)

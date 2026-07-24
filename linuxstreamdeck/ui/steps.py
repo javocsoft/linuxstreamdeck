@@ -312,9 +312,10 @@ class StepEditor(Gtk.Box):
 class StepList(Gtk.Box):
     """Reorderable list of StepEditor with add / up / down / remove."""
 
-    def __init__(self, app) -> None:
+    def __init__(self, app, on_change=None) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.app = app
+        self._on_change = on_change
         self._editors: list[StepEditor] = []
 
         self._list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -329,6 +330,7 @@ class StepList(Gtk.Box):
         for step in steps:
             self._add(step, expand=False, rebuild=False)
         self._rebuild()
+        self._notify_change()
 
     def get_steps(self) -> list[ActionStep]:
         return [s for ed in self._editors if (s := ed.get_step()).action]
@@ -356,12 +358,14 @@ class StepList(Gtk.Box):
         return icon
 
     def _add(self, step: ActionStep, expand: bool, rebuild: bool = True) -> None:
-        editor = StepEditor(self.app, on_change=self._refresh_titles)
+        editor = StepEditor(self.app)
         editor.load(step)
+        editor._on_change = self._editors_changed
         editor._want_expand = expand  # type: ignore[attr-defined]
         self._editors.append(editor)
         if rebuild:
             self._rebuild()
+            self._notify_change()
 
     def _rebuild(self) -> None:
         _clear(self._list_box)
@@ -402,16 +406,23 @@ class StepList(Gtk.Box):
             self._editors[i]._want_expand = True   # type: ignore[attr-defined]
             self._editors[i], self._editors[j] = self._editors[j], self._editors[i]
             self._rebuild()
+            self._notify_change()
 
     def _delete(self, i: int) -> None:
         del self._editors[i]
         self._rebuild()
+        self._notify_change()
 
-    def _refresh_titles(self) -> None:
+    def _editors_changed(self) -> None:
         for i, editor in enumerate(self._editors):
             exp = getattr(editor, "_expander", None)
             if exp is not None:
                 exp.set_label(f"{i + 1}. {editor.action_name()}")
+        self._notify_change()
+
+    def _notify_change(self) -> None:
+        if self._on_change is not None:
+            self._on_change()
 
 
 # ============================= appearance ==============================
@@ -422,6 +433,7 @@ class AppearanceBox(Gtk.Box):
     def __init__(self, title: str = "Appearance") -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self._icon_ref = ""      # "mdi:name" or a file path, or ""
+        self._fallback_icon_ref = ""
 
         heading = Gtk.Label(label=title, xalign=0)
         heading.add_css_class("heading")
@@ -444,7 +456,7 @@ class AppearanceBox(Gtk.Box):
         file_btn.set_tooltip_text("Use your own image")
         file_btn.connect("clicked", self._pick_file)
         clear_btn = Gtk.Button.new_from_icon_name("edit-clear-symbolic")
-        clear_btn.set_tooltip_text("Remove icon")
+        clear_btn.set_tooltip_text("Use the action's default icon")
         clear_btn.connect("clicked", lambda _b: self._set_icon(""))
         for b in (lib_btn, file_btn, clear_btn):
             icon_box.append(b)
@@ -453,8 +465,15 @@ class AppearanceBox(Gtk.Box):
         self.color_btn = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog())
         self.append(_row("Background color", self.color_btn))
 
-    def load(self, label: str, icon: str, color: str) -> None:
+    def load(
+        self,
+        label: str,
+        icon: str,
+        color: str,
+        fallback_icon: str = "",
+    ) -> None:
         self.label_entry.set_text(label)
+        self._fallback_icon_ref = fallback_icon
         self._set_icon(icon)
         rgba = Gdk.RGBA()
         rgba.parse(color or DEFAULT_KEY_BG)
@@ -466,6 +485,11 @@ class AppearanceBox(Gtk.Box):
     def icon(self) -> str:
         return self._icon_ref
 
+    def set_fallback_icon(self, ref: str) -> None:
+        self._fallback_icon_ref = ref
+        if not self._icon_ref:
+            self._set_icon("")
+
     def color(self) -> str:
         return rgba_to_hex(self.color_btn.get_rgba())
 
@@ -473,11 +497,17 @@ class AppearanceBox(Gtk.Box):
 
     def _set_icon(self, ref: str) -> None:
         self._icon_ref = ref
-        tex = self._preview_texture(ref)
+        effective_ref = ref or self._fallback_icon_ref
+        tex = self._preview_texture(effective_ref)
         if tex is not None:
             self.preview.set_from_paintable(tex)
         else:
             self.preview.clear()
+        self.preview.set_tooltip_text(
+            "Using the action's default icon"
+            if not ref and effective_ref
+            else None
+        )
 
     @staticmethod
     def _preview_texture(ref: str):

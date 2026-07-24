@@ -26,6 +26,9 @@ of truth; everything here is Claude-specific and additive.
 - Keep the **BASIC** Pillow layout engine, the shared **`RENDER_LOCK`**, and the
   full-`send` **OBS `_lock`** intact — removing any of them reintroduces
   intermittent blank-icon / hang bugs. See AGENTS.md §5.
+- Treat AI output as untrusted proposal data. Keep provider keys in Secret
+  Service, context opt-in and bounded, dangerous actions excluded, and the final
+  save under explicit user control. See AGENTS.md §3 and §5.
 
 ### Standard verification loop
 
@@ -33,6 +36,8 @@ After editing code:
 
 ```bash
 .venv/bin/python -m compileall -q linuxstreamdeck        # must pass
+TEST_CONFIG_DIR="$(mktemp -d)"
+LSD_CONFIG_DIR="$TEST_CONFIG_DIR" .venv/bin/python -m unittest discover -s tests -v
 ```
 
 For rendering changes, compose the relevant key PNG(s) offscreen and read the

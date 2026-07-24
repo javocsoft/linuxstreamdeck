@@ -12,10 +12,11 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib  # noqa: E402
 
 from . import APP_ID  # noqa: E402
+from .ai.service import AIService  # noqa: E402
 from .core.config import Config  # noqa: E402
 from .core.controller import DeckController  # noqa: E402
 from .core.events import EventBus  # noqa: E402
-from .core.secrets import SecretStore  # noqa: E402
+from .core.secrets import ApiKeyStore, SecretStore  # noqa: E402
 from .device.manager import DeckManager  # noqa: E402
 from .obs.client import OBSClient  # noqa: E402
 
@@ -40,6 +41,8 @@ class LinuxStreamDeckApp:
 
         self.config = Config.load()
         self.secrets = SecretStore()
+        self.ai_keys = ApiKeyStore()
+        self.ai = AIService()
         self.bus = EventBus()
         self.bus.dispatcher = GLib.idle_add
         self.obs = OBSClient(self.bus)

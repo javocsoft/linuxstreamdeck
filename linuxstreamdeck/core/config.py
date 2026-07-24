@@ -16,6 +16,12 @@ import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 
+from ..ai.constants import (
+    DEFAULT_ANTHROPIC_MODEL,
+    DEFAULT_OPENAI_MODEL,
+    PROVIDER_OPENAI,
+    PROVIDERS,
+)
 from .actions import format_duration
 
 log = logging.getLogger(__name__)
@@ -208,10 +214,19 @@ class ObsSettings:
 
 
 @dataclass
+class AISettings:
+    provider: str = PROVIDER_OPENAI
+    openai_model: str = DEFAULT_OPENAI_MODEL
+    anthropic_model: str = DEFAULT_ANTHROPIC_MODEL
+    include_obs_context: bool = False
+
+
+@dataclass
 class Config:
     profiles: list[Profile] = field(default_factory=lambda: [Profile()])
     current_profile: int = 0
     obs: ObsSettings = field(default_factory=ObsSettings)
+    ai: AISettings = field(default_factory=AISettings)
     brightness: int = 80
     obs_password_needs_migration: bool = field(
         default=False, repr=False, compare=False
@@ -281,12 +296,32 @@ class Config:
         raw_obs = raw.get("obs", {})
         if not isinstance(raw_obs, dict):
             raise ValueError("The OBS settings must be a JSON object")
+        raw_ai = raw.get("ai", {})
+        if not isinstance(raw_ai, dict):
+            raise ValueError("The AI settings must be a JSON object")
         try:
             legacy_password = str(raw_obs.get("password", ""))
             obs = ObsSettings(
                 host=str(raw_obs.get("host", "localhost")),
                 port=int(raw_obs.get("port", 4455)),
                 password=legacy_password,
+            )
+            provider = str(raw_ai.get("provider", PROVIDER_OPENAI)).lower()
+            if provider not in PROVIDERS:
+                provider = PROVIDER_OPENAI
+            ai = AISettings(
+                provider=provider,
+                openai_model=cls._model_setting(
+                    raw_ai.get("openai_model"), DEFAULT_OPENAI_MODEL
+                ),
+                anthropic_model=cls._model_setting(
+                    raw_ai.get("anthropic_model"), DEFAULT_ANTHROPIC_MODEL
+                ),
+                include_obs_context=(
+                    raw_ai.get("include_obs_context", False)
+                    if isinstance(raw_ai.get("include_obs_context", False), bool)
+                    else False
+                ),
             )
             brightness = max(10, min(100, int(raw.get("brightness", 80))))
         except (TypeError, ValueError) as error:
@@ -295,9 +330,15 @@ class Config:
             profiles=profiles,
             current_profile=current,
             obs=obs,
+            ai=ai,
             brightness=brightness,
             obs_password_needs_migration="password" in raw_obs,
         )
+
+    @staticmethod
+    def _model_setting(value, default: str) -> str:
+        model = str(value or default).strip()
+        return model[:160] or default
 
     @staticmethod
     def _bounded_index(value, length: int) -> int:
@@ -487,6 +528,7 @@ class Config:
         self.profiles = replacement.profiles
         self.current_profile = replacement.current_profile
         self.obs = replacement.obs
+        self.ai = replacement.ai
         self.brightness = replacement.brightness
         self.obs_password_needs_migration = (
             replacement.obs_password_needs_migration

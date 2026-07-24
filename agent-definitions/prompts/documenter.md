@@ -25,6 +25,8 @@ Never trust a documentation claim without checking its source. Verify at least:
 
 - **Commands / scripts:** `build.sh`, `run.sh`, `install-udev.sh` and
   `packaging/build-deb.sh`, including flags and environment variables.
+- **Automated tests:** `tests/`, including an isolated `LSD_CONFIG_DIR` in the
+  documented `unittest` command.
 - **Packaging / dependencies / versions:** `pyproject.toml` and Debian packaging,
   including Python requirements, entry points and package data.
 - **Module map and structure:** the actual `linuxstreamdeck/` tree.
@@ -34,6 +36,10 @@ Never trust a documentation claim without checking its source. Verify at least:
   `linuxstreamdeck/basic_actions.py` against the user-facing action tables.
 - **Key types and config:** `linuxstreamdeck/core/config.py`, config paths,
   `LSD_CONFIG_DIR`, backups, import/export and profile/page/key models.
+- **AI-assisted creation:** `linuxstreamdeck/ai/`,
+  `linuxstreamdeck/ui/ai_assistant.py` and provider key storage, including
+  bounded opt-in context, blocked dangerous actions, local validation and
+  explicit editor review/save.
 - **Critical invariants:** BASIC Pillow layout, shared `RENDER_LOCK`, serialized
   OBS requests, isolated config experiments and the single-instance GUI rule.
 - **Device facts:** supported device id, key count, grid columns and render size.

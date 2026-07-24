@@ -34,6 +34,7 @@
       <li>Real-time feedback on the keys, driven by obs-websocket events</li>
       <li>Profiles and pages, each with its own set of keys</li>
       <li>Single, multiple, and toggle (ON/OFF) key types, with an optional Wait action</li>
+      <li>Reviewable AI-assisted key creation with OpenAI or Claude using your own API key</li>
       <li>Built-in library of ~7,400 Material Design Icons, or use your own image</li>
       <li>Drag &amp; drop to reorder, copy/paste to duplicate keys</li>
     </ul>

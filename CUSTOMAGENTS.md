@@ -51,8 +51,9 @@ maintenance contract.
 - **What it does:** checks the hard-won checklist — OBS lock covering the whole
   `send`, `RENDER_LOCK`, Pillow `BASIC` layout, config isolation via
   `LSD_CONFIG_DIR`, single-instance / no self-launch of the GUI, the EventBus
-  threading model, reusing feedback color constants, and English-only with no
-  accents. It only reports; it does not edit code.
+  threading model, default-icon inheritance, AI credential/context/proposal
+  safety, reusing feedback color constants, and English-only with no accents. It
+  only reports; it does not edit code.
 
 ## `obs-action-author` — action scaffolder
 

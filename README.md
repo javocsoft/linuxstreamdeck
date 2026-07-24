@@ -56,6 +56,9 @@ implemented actions, no guessing. It runs, and it's useful.
   settings and custom key icons in one file.
 - 🔐 **Secure OBS password storage** — the password stays in your desktop keyring,
   never in the configuration file or an export.
+- ✨ **AI-assisted key creation** — describe the key you want, get a locally
+  validated proposal from OpenAI or Claude, review it in the normal editor, and
+  decide whether to save it.
 
 ### 🎬 What you can do with OBS
 
@@ -145,7 +148,8 @@ The build keeps the version in sync across `pyproject.toml` and
 `linuxstreamdeck/__init__.py`, so passing an explicit `X.Y.Z` bumps both. The
 package is architecture-independent: it vendors the two pip-only Python
 dependencies and pulls GTK4/Libadwaita, Secret Service, GNOME Keyring, Pillow,
-hidapi and websocket-client through apt.
+hidapi, websocket-client and the HTTPS CA certificate bundle through apt. AI
+provider calls use Python's standard library, so they add no pip dependency.
 
 After installing or upgrading the package, refresh the system AppStream cache
 so software centres show the current application metadata:
@@ -170,7 +174,9 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
 2. Click a key in the grid, choose the **key type**, the category and the action, fill in
    the parameters (dropdowns are populated **live from OBS**) and press **Save**.
 3. Under **Icon**, pick one from the built-in library, use your own image, or keep the
-   action's default. Add a **Label** only if you want text on the key.
+   action's default. When inherited, the Appearance preview shows the same default
+   icon as the deck without turning it into a custom override. Add a **Label** only
+   if you want text on the key.
 4. **Test** runs the action without needing the physical deck.
 5. **Reorder** keys by dragging them, and **duplicate** a key with right-click → Copy, then
    Paste onto another (or `Ctrl+C`/`Ctrl+V`).
@@ -198,6 +204,30 @@ If secure storage is unavailable, any plaintext password is still removed. The
 password then lasts only for the current session, so enter it again after restarting
 the app.
 
+## ✨ Create a key with AI
+
+Select a key and click **Create with AI...** to ask OpenAI or Claude for a key
+proposal. Choose the provider and model, enter your own provider API key, and
+describe the result you want. API access is billed separately by the selected
+provider; it is not included with LinuxStreamDeck.
+
+Each provider API key is stored separately in the desktop Secret Service (GNOME
+Keyring). Keys are never written to `config.json`, its backup, or a configuration
+export. If the selected provider already has a key, the dialog shows a fixed,
+read-only mask and uses the saved secret, never the mask itself. Choose **Replace
+saved API key** to enter another key, **Use saved API key** to return to the stored
+one, or **Forget saved API key** to remove it.
+
+The optional context switch sends only a bounded set of OBS and page names to help
+the provider choose existing values; it never sends passwords, commands, or the
+full configuration.
+
+AI-assisted creation cannot propose **Run Command** (`sys.command`) or **Raw OBS
+Request** (`obs.raw`). Every response is validated locally against the installed
+action catalogue and converted into a preview. Nothing is executed or saved
+automatically: load the proposal into the existing editor, review every action
+and parameter, then press **Save** only if you want to keep it.
+
 ## 💾 Import and export configuration
 
 Use the profiles menu (⋮) in the header to choose **Export configuration** or
@@ -205,17 +235,18 @@ Use the profiles menu (⋮) in the header to choose **Export configuration** or
 
 - **Export** creates a portable `.lsdconfig` ZIP archive. It contains the full
   JSON configuration, custom key icon files and non-secret OBS settings, but
-  never the OBS password. Built-in Material Design Icons remain lightweight `mdi:`
-  references because they are bundled with LinuxStreamDeck. If a custom icon file
-  can no longer be found, it is not included and the app shows a warning.
+  never the OBS password or provider API keys. Built-in Material Design Icons
+  remain lightweight `mdi:` references because they are bundled with
+  LinuxStreamDeck. If a custom icon file can no longer be found, it is not
+  included and the app shows a warning.
 - **Import** replaces all current profiles, pages, keys and settings after you
   confirm the warning. The previous configuration is saved as
   `~/.config/linuxstreamdeck/config.json.bak`. Bundled custom icons are restored
   under `~/.config/linuxstreamdeck/imported-icons/`; brightness and OBS settings
   are applied immediately, and OBS reconnects with the imported settings. The
-  import keeps this computer's keyring credential and ignores password fields in
-  older exports. When moving to another computer, enter the OBS password once in
-  its OBS settings.
+  import keeps this computer's keyring credentials and ignores password fields in
+  older exports. When moving to another computer, enter the OBS password and any
+  provider API keys again.
 
 ## 🗂️ Project structure
 
@@ -223,10 +254,11 @@ Use the profiles menu (⋮) in the header to choose **Export configuration** or
 build.sh · run.sh · install-udev.sh    # prepare / launch / USB permissions
 packaging/         # build-deb.sh, .desktop, icon, AppStream metainfo, scripts → .deb
 linuxstreamdeck/
+├── ai/            # OpenAI/Claude requests, bounded context and proposal validation
 ├── core/          # event bus, config, credential storage, action registry, controller, icons
 ├── device/        # physical Stream Deck (hidapi) and key rendering (Pillow)
 ├── obs/           # obs-websocket v5 client + full catalogue of OBS actions
-├── ui/            # GTK4/Libadwaita: window, editor, icon picker, OBS settings
+├── ui/            # GTK4/Libadwaita: window, editor, AI assistant, OBS settings
 └── assets/icons/  # icon library (Material Design Icons font + index)
 data/udev/         # udev rule for device access
 ```

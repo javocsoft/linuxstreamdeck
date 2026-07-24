@@ -47,17 +47,26 @@ gnome-keyring libhidapi-libusb0 python3-gi python3-gi-cairo`.
 .venv/bin/python -m compileall -q linuxstreamdeck
 ```
 
-There is **no automated test suite**. Verify behaviour by compiling, by isolated
-scripts (see §6 for the safe way), and — for rendering — by composing key PNGs
-offscreen. Do **not** rely on launching the GUI to "see" a change (see §5).
+The automated `unittest` suite lives under `tests/`. Run it with an isolated
+configuration directory so no test can reach the user's real configuration:
+
+```bash
+TEST_CONFIG_DIR="$(mktemp -d)"
+LSD_CONFIG_DIR="$TEST_CONFIG_DIR" .venv/bin/python -m unittest discover -s tests -v
+```
+
+Also verify behaviour with targeted isolated scripts when appropriate (see §6)
+and, for rendering, by composing key PNGs offscreen. Do **not** rely on launching
+the GUI to "see" a change (see §5).
 
 **Debian package:** `./packaging/build-deb.sh [X.Y.Z]` produces
 `dist/linux-stream-deck-<version>.deb`. It is `Architecture: all`: the pure-Python
 app plus the two pip-only deps (`StreamDeck`, `obsws_python`) are vendored under
 `/usr/lib/linuxstreamdeck/_vendor`, while GTK4/Adw (PyGObject), Secret Service,
-GNOME Keyring, Pillow, hidapi and websocket-client come from apt `Depends`. The
-launcher `/usr/bin/linuxstreamdeck` runs the system `python3` with those paths on
-`sys.path`. It also installs a
+GNOME Keyring, Pillow, hidapi, websocket-client and `ca-certificates` come from
+apt `Depends`. AI provider HTTPS calls use the Python standard library, so there
+is no additional pip dependency. The launcher `/usr/bin/linuxstreamdeck` runs the
+system `python3` with those paths on `sys.path`. It also installs a
 desktop entry, the app icon, an **AppStream metainfo** (so installed software
 catalogues can discover its icon, description and screenshot), and the udev rule
 (reloaded by the `postinst`). Version defaults to `pyproject.toml`; the build
@@ -79,14 +88,17 @@ HID manager and OBS client, so no background work outlives application teardown.
 ```
 linuxstreamdeck/
 ├── __main__.py        Entry point; logging setup; `linuxstreamdeck` console script.
-├── app.py             LinuxStreamDeckApp: builds Config, SecretStore, EventBus,
-│                      OBSClient, DeckManager, DeckController, MainWindow; app lifecycle.
+├── app.py             LinuxStreamDeckApp: builds config, credential stores, AI service,
+│                      EventBus, OBS client, deck/controller and MainWindow; app lifecycle.
 ├── basic_actions.py   System/navigation actions (run command, open URL, wait, go to page…).
+├── ai/
+│   ├── constants.py   OpenAI/Claude provider ids, labels and default models.
+│   └── service.py     Provider calls, bounded optional context, local proposal validation.
 ├── core/
 │   ├── events.py      EventBus (pub/sub). Emitters may run on any thread; a
 │   │                  `dispatcher` (GLib.idle_add) marshals callbacks to the UI thread.
 │   ├── config.py      Data model + atomic user-only JSON persistence: Config →
-│   │                  Profile → Page → KeyConfig (+ ObsSettings, ActionStep).
+│   │                  Profile → Page → KeyConfig (+ ObsSettings, AISettings, ActionStep).
 │   │                  Migration, backup and portable `.lsdconfig` import/export.
 │   ├── actions.py     Action framework: `Action` base, declarative `Param`,
 │   │                  `ActionContext`, global `REGISTRY`, `@register`, `by_category`.
@@ -94,7 +106,7 @@ linuxstreamdeck/
 │   │                  every key, owns page/profile/key operations, and applies imports.
 │   ├── icons.py       Built-in icon library (Material Design Icons glyphs via
 │   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
-│   └── secrets.py     Async Secret Service / GNOME Keyring OBS credential storage.
+│   └── secrets.py     Async Secret Service storage for OBS and per-provider API keys.
 ├── device/
 │   ├── manager.py     DeckManager: physical device via HID, hotplug, key callbacks.
 │   └── renderer.py    `compose()` — builds each key PNG with Pillow (bg, icon,
@@ -109,6 +121,7 @@ linuxstreamdeck/
 │   │                  configuration import/export, pages, brightness, OBS settings,
 │   │                  About), DnD move, copy/paste, status bar.
 │   ├── editor.py      EditorPanel: right-hand key editor; key-type selector.
+│   ├── ai_assistant.py OpenAI/Claude proposal dialog and explicit editor handoff.
 │   ├── steps.py       StepEditor / StepList / AppearanceBox — reused by the editor
 │   │                  for single, multi and toggle key types.
 │   ├── icon_picker.py Searchable grid to pick a library icon.
@@ -152,6 +165,32 @@ Actions are declarative and self-registering:
 - `apply_default_icons({action_id: "mdi:…"})` assigns default icons after
   registration. Registration happens on import (`app.py` imports the catalogues).
 
+An empty `KeyConfig.icon` or `icon_off` is an inheritance marker, not a missing
+render value. The editor Appearance preview must resolve the same effective
+action/default icon as the controller and deck grid, but must keep the stored
+reference empty. Clearing an explicit icon therefore restores inheritance instead
+of copying the current fallback into config.
+
+### AI-assisted key proposals
+
+`AIService` supports OpenAI and Claude with user-selected models. Provider API
+keys are stored separately per provider through `ApiKeyStore` in Secret Service /
+GNOME Keyring. They must never enter `Config`, `config.json`, its backup, or a
+`.lsdconfig` export. Provider API billing is separate from LinuxStreamDeck.
+When a saved key is displayed, its fixed read-only mask is only a presence
+indicator. The request must use the separately held stored key, never the mask.
+Replacing, returning to the saved key, and forgetting it are explicit UI actions.
+
+The optional generation context is an explicit user opt-in. It contains only
+bounded OBS and page names collected by `collect_generation_context()`; never
+send passwords, commands, the full configuration, or other secrets. The action
+catalogue exposed to a provider always excludes `sys.command` and `obs.raw`.
+
+A provider response is untrusted data. It must pass local structural, action,
+parameter, choice and icon validation before becoming an `AIProposal`. Generation
+must never execute or save a key. The user first previews the proposal, explicitly
+loads it into the existing editor, reviews it, and presses **Save** to persist it.
+
 ### Config / key model
 
 `Config` holds `profiles` and delegates `pages`/`current_page` to the active
@@ -170,15 +209,18 @@ on every save and migration from the old single-profile format on load. The OBS
 password is stored asynchronously in Secret Service / GNOME Keyring, never in
 either JSON file. On first run, legacy plaintext password fields are migrated and
 removed from both files; if Secret Service is unavailable, they are still removed
-and the password is session-only.
+and the password is session-only. OpenAI and Claude API keys are also stored only
+in Secret Service, under separate provider identities; AI preferences in config
+never contain either key.
 
 The profiles menu can export a portable `.lsdconfig` ZIP archive containing the
 full JSON configuration and available custom key icons. Built-in `mdi:` icons
-stay as references, and OBS password is never exported. Import validates the
-archive, restores bundled custom icons below `CONFIG_DIR/imported-icons`, replaces
-the complete configuration and writes the prior configuration to `config.json.bak`.
-It keeps the destination computer's keyring credential and ignores password fields
-in old exports, so a password must be entered once after moving to a new computer.
+stay as references, and OBS passwords and provider API keys are never exported.
+Import validates the archive, restores bundled custom icons below
+`CONFIG_DIR/imported-icons`, replaces the complete configuration and writes the
+prior configuration to `config.json.bak`. It keeps the destination computer's
+keyring credentials and ignores password fields in old exports, so an OBS password
+must be entered once after moving to a new computer.
 
 ---
 
@@ -241,6 +283,13 @@ hard-to-diagnose failures.
    `Gtk.WidgetPaintable` + `Gtk.Snapshot` + `renderer.render_texture` →
    `save_to_png`). To verify the running app, ask the user to close any old window
    and launch it themselves with `./run.sh`.
+
+6. **AI output is an untrusted proposal, never an action.** Keep provider API
+   keys in `ApiKeyStore`; a display mask must never become a request credential.
+   Keep context optional and limited to bounded OBS/page names, and exclude
+   `sys.command` and `obs.raw` from the provider catalogue. Validate every response
+   locally. Generation must not execute or save anything; only the user's explicit
+   **Save** from the existing editor persists the key.
 
 ---
 
