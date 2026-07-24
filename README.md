@@ -43,7 +43,8 @@ implemented actions, no guessing. It runs, and it's useful.
   between "Streaming", "Work", "Gaming" in one click. Rename, delete, describe.
 - 🧩 **Three key types** — *single action*, *multiple actions* (run in sequence, with an
   optional **Wait** action to pause between them), and *toggle (ON/OFF)* with two action
-  lists and its own look per state.
+  lists and its own look per state. Multi and toggle keys show **RUN** with a subtle
+  slow blue breathing halo while their actions are queued or running.
 - 🎨 **Built-in icon library** — ~7,400 Material Design Icons, categorized and searchable.
   Every action ships with a sensible default icon; pick another, or use your own image.
 - ✋ **Drag & drop and copy/paste** — reorder keys by dragging, duplicate any key with
@@ -186,6 +187,14 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
    delete a profile. Each profile has its own pages and keys.
 8. **About** — click the About button in the header for application details,
    licensing and the GitHub link.
+
+If the selected key has unsaved edits, LinuxStreamDeck protects them before you
+select another key, move keys, switch or create a page/profile, import a
+configuration or close the window. Choose **Save and continue**, **Discard
+changes** or **Keep editing**. Reverting every field to its last loaded or saved
+value clears the warning, and AI-loaded proposals receive the same protection.
+Replacing or clearing the edited key offers only **Discard changes** or **Keep
+editing**, because saving immediately before overwriting it would have no effect.
 
 > 💡 The app is **single-instance**: close any previous window before opening another.
 

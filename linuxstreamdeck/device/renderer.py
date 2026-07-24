@@ -29,10 +29,19 @@ TEXT_COLOR = "#ffffff"
 # dark/neutral backgrounds and barely touches saturated ones.
 ACTIVE_LIGHTEN = 0.15
 ACTIVE_ACCENT = 0.12
+# Running multi-actions use a slow two-step "breathing" glow. The values stay
+# deliberately low so the effect is visible without competing with the key art.
+BUSY_BG_BLEND = (0.035, 0.07)
+BUSY_HALO_BLEND = (0.24, 0.38)
 
 
 def _rgb(color) -> tuple[int, int, int]:
     """Parse a '#rrggbb' (or '#rgb') string into an (r, g, b) tuple."""
+    if isinstance(color, (tuple, list)) and len(color) >= 3:
+        try:
+            return tuple(max(0, min(255, int(v))) for v in color[:3])
+        except (ValueError, TypeError):
+            return (20, 20, 24)
     c = str(color).lstrip("#")
     if len(c) == 3:
         c = "".join(ch * 2 for ch in c)
@@ -54,6 +63,16 @@ def _active_bg(bg) -> tuple[int, int, int]:
     g += (ag - g) * am
     b += (ab - b) * am
     return (min(255, int(r * 255)), min(255, int(g * 255)), min(255, int(b * 255)))
+
+
+def _accent_blend(color, amount: float) -> tuple[int, int, int]:
+    """Blend a color gently towards the application accent."""
+    base = _rgb(color)
+    accent = _rgb(ACCENT)
+    return tuple(
+        round(channel + (target - channel) * amount)
+        for channel, target in zip(base, accent)
+    )
 
 
 _FONT_CANDIDATES = [
@@ -107,12 +126,16 @@ def compose(
     icon_path: str = "",
     bg: str = EMPTY_BG,
     active: bool = False,
+    busy: bool = False,
+    busy_phase: bool = False,
     badge: str = "",
     icon_color: str = "#ffffff",
 ) -> Image.Image:
     w, h = size
     # when active, the whole key is softly lit instead of getting a border
     base_bg = _active_bg(bg or EMPTY_BG) if active else (bg or EMPTY_BG)
+    if busy:
+        base_bg = _accent_blend(base_bg, BUSY_BG_BLEND[int(busy_phase)])
     # all text drawing runs under the shared lock (FreeType is not thread-safe);
     # it is reentrant, so icon_library.render can re-acquire it without blocking.
     with RENDER_LOCK:
@@ -145,6 +168,21 @@ def compose(
             bfont = _font(max(10, h // 6))
             bw = draw.textlength(badge, font=bfont)
             draw.text((w - bw - 5, 3), badge, font=bfont, fill="#ffffff")
+
+        if busy:
+            # A narrow rounded halo leaves custom artwork readable. Alternating
+            # only its intensity creates a calm breathing effect, not a flash.
+            inset = max(1, min(w, h) // 48)
+            halo = _accent_blend(
+                base_bg,
+                BUSY_HALO_BLEND[int(busy_phase)],
+            )
+            draw.rounded_rectangle(
+                (inset, inset, w - inset - 1, h - inset - 1),
+                radius=max(5, min(w, h) // 9),
+                outline=halo,
+                width=max(1, min(w, h) // 36),
+            )
 
     return img
 

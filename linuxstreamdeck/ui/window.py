@@ -4,6 +4,7 @@ to test without hardware) + key editor + status bar."""
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 import gi
@@ -43,6 +44,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._key_pictures: list[Gtk.Picture] = []
         self._updating_pages = False
         self._updating_profiles = False
+        self._selected_page = None
+        self._unsaved_dialog: Adw.MessageDialog | None = None
+        self._allow_close = False
         self._clipboard = None            # copied KeyConfig (for pasting)
 
         css = Gtk.CssProvider()
@@ -56,6 +60,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._connect_bus()
         self._refresh_profile_dropdown()
         self._refresh_page_dropdown()
+        self.connect("close-request", self._on_close_request)
 
     # ---------- construction ----------
 
@@ -194,13 +199,107 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_about(self, _button) -> None:
         AboutDialog().present(self)
 
-    def _select(self, index: int) -> None:
-        """Select a key (marks the button and loads the editor)."""
+    def _select(self, index: int, on_selected=None) -> None:
+        """Request a key selection, protecting unsaved editor changes."""
+        if self.selected == index:
+            if on_selected is not None:
+                on_selected()
+            return
+        self._confirm_unsaved_changes(
+            f"switching to Key {index + 1}",
+            lambda: self._apply_selection(index, on_selected),
+        )
+
+    def _apply_selection(self, index: int, on_selected=None) -> None:
         if self.selected is not None and self.selected < len(self._key_buttons):
             self._key_buttons[self.selected].remove_css_class("sel")
         self.selected = index
+        self._selected_page = self.app.controller.page
         self._key_buttons[index].add_css_class("sel")
         self.editor.load(index)
+        if on_selected is not None:
+            on_selected()
+
+    def _confirm_unsaved_changes(
+        self,
+        destination: str,
+        continue_action: Callable[[], None],
+        offer_save: bool = True,
+    ) -> None:
+        if not self.editor.has_unsaved_changes():
+            continue_action()
+            return
+        if self._unsaved_dialog is not None:
+            self._unsaved_dialog.present()
+            return
+
+        key_number = (self.editor.index or 0) + 1
+        if offer_save:
+            body = (
+                f"Key {key_number} has changes that have not been saved. "
+                f"Save them before {destination}, or discard them."
+            )
+        else:
+            body = (
+                f"Key {key_number} has changes that have not been saved. "
+                f"Continuing by {destination} will discard them."
+            )
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Unsaved key changes",
+            body=body,
+        )
+        dialog.add_response("cancel", "Keep editing")
+        dialog.add_response("discard", "Discard changes")
+        dialog.set_response_appearance(
+            "discard",
+            Adw.ResponseAppearance.DESTRUCTIVE,
+        )
+        if offer_save:
+            dialog.add_response("save", "Save and continue")
+            dialog.set_response_appearance(
+                "save",
+                Adw.ResponseAppearance.SUGGESTED,
+            )
+            dialog.set_default_response("save")
+        else:
+            dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect(
+            "response",
+            self._on_unsaved_response,
+            continue_action,
+            offer_save,
+        )
+        self._unsaved_dialog = dialog
+        dialog.present()
+
+    def _on_unsaved_response(
+        self,
+        _dialog,
+        response: str,
+        continue_action: Callable[[], None],
+        offer_save: bool,
+    ) -> None:
+        self._unsaved_dialog = None
+        if response == "save" and offer_save:
+            if self.editor.save():
+                continue_action()
+        elif response == "discard":
+            continue_action()
+
+    def _on_close_request(self, *_args) -> bool:
+        if self._allow_close or not self.editor.has_unsaved_changes():
+            return False
+        self._confirm_unsaved_changes(
+            "closing LinuxStreamDeck",
+            self._close_after_unsaved_confirmation,
+        )
+        return True
+
+    def _close_after_unsaved_confirmation(self) -> None:
+        self._allow_close = True
+        self.close()
 
     # ---------- move / copy / paste / clear keys ----------
 
@@ -245,7 +344,12 @@ class MainWindow(Adw.ApplicationWindow):
             return
         index = dropdown.get_selected()
         if index != Gtk.INVALID_LIST_POSITION and index != self.app.config.current_profile:
-            self.app.controller.set_profile(index)
+            if self.editor.has_unsaved_changes():
+                self._refresh_profile_dropdown()
+            self._confirm_unsaved_changes(
+                "switching profiles",
+                lambda: self.app.controller.set_profile(index),
+            )
 
     def _on_profile_changed(self, topic: str, data: dict) -> None:
         self._refresh_profile_dropdown()
@@ -259,7 +363,10 @@ class MainWindow(Adw.ApplicationWindow):
         from .profile_dialog import ProfileDialog
         ProfileDialog(
             self, "New profile", "", "",
-            on_save=lambda name, desc: self.app.controller.add_profile(name, desc),
+            on_save=lambda name, desc: self._confirm_unsaved_changes(
+                "creating a new profile",
+                lambda: self.app.controller.add_profile(name, desc),
+            ),
         ).present()
 
     def _edit_profile(self) -> None:
@@ -371,6 +478,12 @@ class MainWindow(Adw.ApplicationWindow):
     ) -> None:
         if response != "import":
             return
+        self._confirm_unsaved_changes(
+            "importing a configuration",
+            lambda: self._apply_configuration_import(source),
+        )
+
+    def _apply_configuration_import(self, source: Path) -> None:
         try:
             imported = self.app.controller.import_configuration(source)
         except Exception as error:
@@ -406,7 +519,10 @@ class MainWindow(Adw.ApplicationWindow):
         default = f"Page {len(self.app.config.pages) + 1}"
         self._page_name_dialog(
             "New page", default,
-            on_save=lambda name: self.app.controller.add_page(name),
+            on_save=lambda name: self._confirm_unsaved_changes(
+                "creating a new page",
+                lambda: self.app.controller.add_page(name),
+            ),
         )
 
     def _rename_page(self) -> None:
@@ -490,9 +606,15 @@ class MainWindow(Adw.ApplicationWindow):
             value = value.get_int()
         src = int(value)
         if src != index:
-            self.app.controller.swap_keys(src, index)
-            self._select(index)
+            self._confirm_unsaved_changes(
+                "moving these keys",
+                lambda: self._apply_key_drop(src, index),
+            )
         return True
+
+    def _apply_key_drop(self, source: int, destination: int) -> None:
+        self.app.controller.swap_keys(source, destination)
+        self._apply_selection(destination)
 
     # --- context menu (right-click) ---
 
@@ -502,7 +624,12 @@ class MainWindow(Adw.ApplicationWindow):
         btn.add_controller(gesture)
 
     def _on_key_right_click(self, gesture, n_press, x, y, index):
-        self._select(index)
+        self._select(
+            index,
+            lambda: self._show_key_context_menu(index, x, y),
+        )
+
+    def _show_key_context_menu(self, index: int, x: float, y: float) -> None:
         kc = self.app.controller.page.key(index)
         self._key_actions["key-copy"].set_enabled(kc is not None)
         self._key_actions["key-clear"].set_enabled(kc is not None)
@@ -541,15 +668,36 @@ class MainWindow(Adw.ApplicationWindow):
         if self._clipboard is None:
             self.app.bus.emit("status", text="No key copied")
             return
-        self.app.controller.paste_key(index, self._clipboard)
+
+        def paste() -> None:
+            self.app.controller.paste_key(index, self._clipboard)
+            if self.selected == index:
+                self.editor.load(index)
+            self.app.bus.emit("status", text=f"Pasted into key {index + 1}")
+
         if self.selected == index:
-            self.editor.load(index)
-        self.app.bus.emit("status", text=f"Pasted into key {index + 1}")
+            self._confirm_unsaved_changes(
+                f"replacing Key {index + 1} with the copied key",
+                paste,
+                offer_save=False,
+            )
+        else:
+            paste()
 
     def _clear_key(self, index: int) -> None:
-        self.app.controller.clear_key(index)
+        def clear() -> None:
+            self.app.controller.clear_key(index)
+            if self.selected == index:
+                self.editor.load(index)
+
         if self.selected == index:
-            self.editor.load(index)
+            self._confirm_unsaved_changes(
+                f"clearing Key {index + 1}",
+                clear,
+                offer_save=False,
+            )
+        else:
+            clear()
 
     def _copy_selected(self):
         if self.selected is not None:
@@ -568,14 +716,25 @@ class MainWindow(Adw.ApplicationWindow):
             return
         index = dropdown.get_selected()
         if index != Gtk.INVALID_LIST_POSITION and index != self.app.config.current_page:
-            self.app.controller.set_page(index)
+            if self.editor.has_unsaved_changes():
+                self._refresh_page_dropdown()
+            self._confirm_unsaved_changes(
+                "switching pages",
+                lambda: self.app.controller.set_page(index),
+            )
 
     def _on_page_changed(self) -> None:
         self._refresh_page_dropdown()
+        if self._selected_page is self.app.controller.page:
+            return
+        self._clear_selection()
+
+    def _clear_selection(self) -> None:
         self.editor.clear()
         if self.selected is not None:
             self._key_buttons[self.selected].remove_css_class("sel")
             self.selected = None
+        self._selected_page = None
 
     def _refresh_page_dropdown(self) -> None:
         self._updating_pages = True

@@ -46,7 +46,9 @@ class EditorPanel(Gtk.Box):
         )
         self.app = app
         self.index: int | None = None
+        self._page = None
         self._building = False
+        self._baseline: KeyConfig | None = None
 
         self.title = Gtk.Label(xalign=0)
         self.title.add_css_class("title-3")
@@ -102,10 +104,13 @@ class EditorPanel(Gtk.Box):
         info.add_css_class("dim-label")
         self.body.append(info)
         self.index = None
+        self._page = None
+        self._baseline = None
 
     def load(self, index: int) -> None:
         self.index = index
-        kc = self.app.controller.page.key(index) or KeyConfig()
+        self._page = self.app.controller.page
+        kc = self._page.key(index) or KeyConfig()
         self.title.set_label(f"Key {index + 1}")
         self.ai_button.set_visible(True)
         self.kind_row.set_visible(True)
@@ -114,6 +119,54 @@ class EditorPanel(Gtk.Box):
         self.kind_dd.set_selected(KIND_IDS.index(kc.kind) if kc.kind in KIND_IDS else 0)
         self._building = False
         self._build_body(kc)
+        self._baseline = self.current_key_config()
+
+    def has_unsaved_changes(self) -> bool:
+        return (
+            self.index is not None
+            and self._page is not None
+            and self._baseline is not None
+            and self.current_key_config() != self._baseline
+        )
+
+    def current_key_config(self) -> KeyConfig:
+        """Build a key configuration from the editor without saving it."""
+        kind = self._current_kind()
+        kc = KeyConfig(kind=kind)
+
+        if kind == KIND_SINGLE and self.single_editor is not None:
+            step = self.single_editor.get_step()
+            kc.action, kc.params = step.action, step.params
+        elif kind == KIND_MULTI and self.multi_list is not None:
+            kc.steps = self.multi_list.get_steps()
+        elif kind == KIND_TOGGLE:
+            if self.on_list is not None:
+                kc.steps_on = self.on_list.get_steps()
+            if self.off_list is not None:
+                kc.steps_off = self.off_list.get_steps()
+            if self.app_off is not None:
+                kc.label_off = self.app_off.label()
+                kc.icon_off = self.app_off.icon()
+                kc.bg_color_off = self.app_off.color()
+
+        if self.app_main is not None:
+            kc.label = self.app_main.label()
+            kc.icon = self.app_main.icon()
+            kc.bg_color = self.app_main.color()
+        return kc
+
+    def save(self) -> bool:
+        """Persist the current editor state. Return whether a key was selected."""
+        if self.index is None or self._page is None:
+            return False
+        kc = self.current_key_config()
+        self._page.set_key(self.index, kc)
+        self.app.config.save()
+        self.app.controller.refresh()
+        self._baseline = kc.clone()
+        name = dict(KINDS)[kc.kind]
+        self.app.bus.emit("status", text=f"Key {self.index + 1} saved ({name})")
+        return True
 
     # ---------- body construction ----------
 
@@ -292,37 +345,12 @@ class EditorPanel(Gtk.Box):
     # ---------- save / clear ----------
 
     def _save(self, _btn) -> None:
-        if self.index is None:
-            return
-        kind = self._current_kind()
-        kc = KeyConfig(kind=kind)
-
-        if kind == KIND_SINGLE:
-            step = self.single_editor.get_step()
-            kc.action, kc.params = step.action, step.params
-        elif kind == KIND_MULTI:
-            kc.steps = self.multi_list.get_steps()
-        else:
-            kc.steps_on = self.on_list.get_steps()
-            kc.steps_off = self.off_list.get_steps()
-            kc.label_off = self.app_off.label()
-            kc.icon_off = self.app_off.icon()
-            kc.bg_color_off = self.app_off.color()
-
-        kc.label = self.app_main.label()
-        kc.icon = self.app_main.icon()
-        kc.bg_color = self.app_main.color()
-
-        self.app.controller.page.set_key(self.index, kc)
-        self.app.config.save()
-        self.app.controller.refresh()
-        name = dict(KINDS)[kind]
-        self.app.bus.emit("status", text=f"Key {self.index + 1} saved ({name})")
+        self.save()
 
     def _wipe(self, _btn) -> None:
-        if self.index is None:
+        if self.index is None or self._page is None:
             return
-        self.app.controller.page.set_key(self.index, None)
+        self._page.set_key(self.index, None)
         self.app.config.save()
         self.app.controller.refresh()
         self.load(self.index)

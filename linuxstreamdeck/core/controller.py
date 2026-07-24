@@ -1,9 +1,10 @@
 """Central controller: ties together configuration, device, actions and UI.
 
 - Receives key presses (physical via `deck.key` or virtual from the UI) and
-  runs the configured action on a worker thread.
+  runs configured actions on worker threads.
 - Re-renders the active page when the OBS state, the page or the configuration
-  changes, sending each image to the physical deck and to the UI.
+  changes, sending each image to the physical deck and to the UI. Rendering has
+  its own worker so long actions cannot starve visual feedback.
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ from ..device import renderer
 
 log = logging.getLogger(__name__)
 
+BUSY_PULSE_SECONDS = 0.75
+
 
 class DeckController:
     def __init__(self, config: Config, bus: EventBus, obs, deck: DeckManager) -> None:
@@ -38,11 +41,30 @@ class DeckController:
         self.obs = obs
         self.deck = deck
         self.ctx = ActionContext(obs=obs, controller=self, bus=bus)
-        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="action")
+        self._action_executor = ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="action",
+        )
+        # Rendering must not wait behind long-running actions such as Wait.
+        self._render_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="render",
+        )
         self._render_pending = threading.Event()
         self._stopping = threading.Event()
         # ON/OFF state of toggle keys, keyed by (profile, page, key)
         self._toggle: dict[tuple[int, int, int], bool] = {}
+        # Number of queued/running multi-action invocations for each key.
+        self._running: dict[tuple[int, int, int], int] = {}
+        self._running_lock = threading.Lock()
+        self._busy_phase = False
+        self._busy_wakeup = threading.Event()
+        self._busy_thread = threading.Thread(
+            target=self._busy_loop,
+            daemon=True,
+            name="key-activity",
+        )
+        self._busy_thread.start()
 
         bus.subscribe("deck.key", self._on_deck_key)
         bus.subscribe("deck.connected", lambda t, d: self.refresh())
@@ -239,30 +261,113 @@ class DeckController:
             new_state = not self._toggle.get(key, False)
             self._toggle[key] = new_state
             steps = list(kc.steps_on if new_state else kc.steps_off)
-            self.refresh()  # reflect the new state on the key
         else:
             return
+        runtime_key = (
+            self._tkey(index)
+            if kc.kind in (KIND_MULTI, KIND_TOGGLE)
+            else None
+        )
+        if runtime_key is not None:
+            self._begin_running(runtime_key)
         try:
-            self._executor.submit(self._run_steps, steps, index)
+            self._action_executor.submit(
+                self._run_steps,
+                steps,
+                index,
+                runtime_key,
+            )
         except RuntimeError:
+            if runtime_key is not None:
+                self._end_running(runtime_key)
             if not self._stopping.is_set():
                 raise
 
-    def _run_steps(self, steps: list[ActionStep], index: int) -> None:
-        for step in steps:
+    def _run_steps(
+        self,
+        steps: list[ActionStep],
+        index: int,
+        runtime_key: tuple[int, int, int] | None = None,
+    ) -> None:
+        try:
+            for step in steps:
+                if self._stopping.is_set():
+                    return
+                action = action_registry.get(step.action)
+                if action is None:
+                    if step.action:
+                        log.warning("Unknown action on key %d: %s", index, step.action)
+                    continue
+                try:
+                    action.execute(self.ctx, dict(step.params))
+                    log.debug("Ran %s (key %d)", action.id, index)
+                except Exception as e:
+                    log.exception("Error running %s", action.id)
+                    self.bus.emit("status", text=f"Error in «{action.name}»: {e}")
+        finally:
+            if runtime_key is not None:
+                self._end_running(runtime_key)
+
+    # ---------- running feedback ----------
+
+    def _begin_running(self, key: tuple[int, int, int]) -> None:
+        with self._running_lock:
+            self._running[key] = self._running.get(key, 0) + 1
+            self._busy_wakeup.set()
+        self._refresh_runtime_keys((key,))
+
+    def _end_running(self, key: tuple[int, int, int]) -> None:
+        with self._running_lock:
+            count = self._running.get(key, 0)
+            if count <= 1:
+                self._running.pop(key, None)
+                became_idle = True
+            else:
+                self._running[key] = count - 1
+                became_idle = False
+        if became_idle:
+            self._refresh_runtime_keys((key,))
+
+    def _busy_state(self, index: int) -> tuple[bool, bool]:
+        key = self._tkey(index)
+        with self._running_lock:
+            return key in self._running, self._busy_phase
+
+    def _busy_loop(self) -> None:
+        while not self._stopping.is_set():
+            self._busy_wakeup.wait()
             if self._stopping.is_set():
                 return
-            action = action_registry.get(step.action)
-            if action is None:
-                if step.action:
-                    log.warning("Unknown action on key %d: %s", index, step.action)
-                continue
-            try:
-                action.execute(self.ctx, dict(step.params))
-                log.debug("Ran %s (key %d)", action.id, index)
-            except Exception as e:
-                log.exception("Error running %s", action.id)
-                self.bus.emit("status", text=f"Error in «{action.name}»: {e}")
+            if self._stopping.wait(BUSY_PULSE_SECONDS):
+                return
+            with self._running_lock:
+                if not self._running:
+                    self._busy_phase = False
+                    self._busy_wakeup.clear()
+                    continue
+                self._busy_phase = not self._busy_phase
+                keys = tuple(self._running)
+            self._refresh_runtime_keys(keys)
+
+    def _refresh_runtime_keys(
+        self,
+        keys: tuple[tuple[int, int, int], ...],
+    ) -> None:
+        if self._stopping.is_set():
+            return
+        view = (self.current_profile, self.current_page)
+        indices = sorted({
+            index
+            for profile, page, index in keys
+            if (profile, page) == view
+        })
+        if not indices:
+            return
+        try:
+            self._render_executor.submit(self._render_keys, indices, view)
+        except RuntimeError:
+            if not self._stopping.is_set():
+                raise
 
     # ---------- rendering ----------
 
@@ -272,7 +377,7 @@ class DeckController:
             return
         self._render_pending.set()
         try:
-            self._executor.submit(self._render_page)
+            self._render_executor.submit(self._render_page)
         except RuntimeError:
             self._render_pending.clear()
             if not self._stopping.is_set():
@@ -280,12 +385,21 @@ class DeckController:
 
     def _render_page(self) -> None:
         self._render_pending.clear()
+        view = (self.current_profile, self.current_page)
+        self._render_keys(range(self.deck.key_count), view)
+
+    def _render_keys(self, indices, view: tuple[int, int]) -> None:
+        if view != (self.current_profile, self.current_page):
+            return
+        page = self.page
         size = self.deck.image_size
-        for index in range(self.deck.key_count):
+        for index in indices:
             if self._stopping.is_set():
                 return
-            spec = self._key_spec(index, self.page.key(index), size)
+            spec = self._key_spec(index, page.key(index), size)
             image = renderer.compose(**spec)
+            if view != (self.current_profile, self.current_page):
+                return
             self.deck.set_key_image(index, image)
             self.bus.emit("ui.key_image", index=index, png=renderer.to_png_bytes(image))
 
@@ -297,9 +411,11 @@ class DeckController:
         if kc.kind == KIND_TOGGLE:
             return self._toggle_spec(index, kc, size)
         if kc.kind == KIND_MULTI:
+            busy, phase = self._busy_state(index)
             icon = kc.icon or self._first_step_icon(kc.steps) or "mdi:playlist-play"
             return {"size": size, "label": kc.label, "icon_path": icon,
-                    "bg": kc.bg_color, "badge": "⋯"}
+                    "bg": kc.bg_color, "busy": busy, "busy_phase": phase,
+                    "badge": "RUN" if busy else "⋯"}
         return self._single_spec(kc, size)
 
     @staticmethod
@@ -333,14 +449,17 @@ class DeckController:
         }
 
     def _toggle_spec(self, index: int, kc: KeyConfig, size) -> dict:
+        busy, phase = self._busy_state(index)
         if self.toggle_state(index):
             icon = kc.icon or self._first_step_icon(kc.steps_on) or "mdi:toggle-switch"
             return {"size": size, "label": kc.label, "icon_path": icon,
-                    "bg": kc.bg_color, "active": True, "badge": "ON"}
+                    "bg": kc.bg_color, "active": True, "busy": busy,
+                    "busy_phase": phase, "badge": "RUN" if busy else "ON"}
         icon = (kc.icon_off or kc.icon
                 or self._first_step_icon(kc.steps_off) or "mdi:toggle-switch-off-outline")
         return {"size": size, "label": kc.label_off or kc.label, "icon_path": icon,
-                "bg": kc.bg_color_off, "badge": "OFF"}
+                "bg": kc.bg_color_off, "busy": busy, "busy_phase": phase,
+                "badge": "RUN" if busy else "OFF"}
 
     def wait_until_stopped(self, timeout: float) -> bool:
         """Wait for timeout seconds, returning early when shutdown begins."""
@@ -349,5 +468,8 @@ class DeckController:
     def shutdown(self) -> None:
         """Cancel queued work and wait for running actions/renders to finish."""
         self._stopping.set()
+        self._busy_wakeup.set()
         self._render_pending.clear()
-        self._executor.shutdown(wait=True, cancel_futures=True)
+        self._action_executor.shutdown(wait=True, cancel_futures=True)
+        self._busy_thread.join()
+        self._render_executor.shutdown(wait=True, cancel_futures=True)

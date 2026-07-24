@@ -28,24 +28,36 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    config. Editor previews should resolve the same effective action/default icon
    as the controller and deck grid for display only; clearing an override must
    restore inheritance rather than persist the fallback.
-5. **Config isolation.** Experiments that can reach `Config.save()` or
+5. **Unsaved editor state.** Dirty detection must compare a complete canonical
+   `KeyConfig` draft with the load/save baseline so reverted values become clean.
+   Key selection, page/profile switch or creation, moves, import, close, paste and
+   clear must protect the draft with the appropriate save/discard/keep choices.
+   Deferred saves must target the editor's source page; same-key clicks and
+   same-page rename events must not reload or clear the editor.
+6. **Config isolation.** Experiments that can reach `Config.save()` or
    `Config.import_bundle()` must set `LSD_CONFIG_DIR` before importing config.
    Confirm backup behavior remains intact.
-6. **Single instance.** Automation must not launch the GUI for verification.
+7. **Single instance.** Automation must not launch the GUI for verification.
    Rendering checks should run offscreen or be handed to the user.
-7. **EventBus threading.** Background emitters must reach UI subscribers through
+8. **EventBus threading.** Background emitters must reach UI subscribers through
    the dispatcher. Event payloads must match the documented topic contract.
-8. **Feedback colors.** OBS feedback should reuse shared state color constants.
-9. **AI proposal safety.** Provider API keys must remain per-provider secrets and
+9. **Feedback colors.** OBS feedback should reuse shared state color constants.
+10. **Running feedback concurrency.** Multi/toggle activity must count every
+   queued or running invocation by profile/page/key and restore toggle feedback
+   only after the count reaches zero. Action and render executors must remain
+   separate; pulses should refresh only busy keys in the active view. Shutdown
+   must stop the action executor, then the activity thread, then the render
+   executor.
+11. **AI proposal safety.** Provider API keys must remain per-provider secrets and
    never enter config or exports. A saved-key mask is read-only display state and
    must never be sent as a credential; replacement, saved-key reuse and forgetting
    must remain explicit. Context must be opt-in and limited to bounded OBS/page
    names. `sys.command` and `obs.raw` must remain excluded, every provider response
    locally validated, and generation must never execute or save a key before
    explicit editor review and user save.
-10. **English-only.** Flag Spanish or accented text introduced in any versioned
+12. **English-only.** Flag Spanish or accented text introduced in any versioned
    user-facing string, comment, log or document.
-11. **General correctness.** Report proven bugs, resource leaks and broken error
+13. **General correctness.** Report proven bugs, resource leaks and broken error
    handling beyond the specialist checklist.
 
 ## Output

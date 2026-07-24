@@ -56,7 +56,8 @@ Never trust a documentation claim without checking its source. Verify at least:
   bounded opt-in context, blocked dangerous actions, local validation and
   explicit editor review/save.
 - **Critical invariants:** BASIC Pillow layout, shared `RENDER_LOCK`, serialized
-  OBS requests, isolated config experiments and the single-instance GUI rule.
+  OBS requests, separate action/render workers and ordered activity shutdown,
+  isolated config experiments and the single-instance GUI rule.
 - **Device facts:** supported device id, key count, grid columns and render size.
 - **Custom agents:** `agent-definitions/manifest.json` and
   `agent-definitions/prompts/*.md` against `CUSTOMAGENTS.md`, `AGENTS.md`,

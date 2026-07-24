@@ -24,6 +24,9 @@ from ..ai.service import (  # noqa: E402
 log = logging.getLogger(__name__)
 
 SAVED_API_KEY_MASK = "************"
+PROMPT_INITIAL_HEIGHT = 260
+PROMPT_MIN_HEIGHT = 180
+PROMPT_MAX_HEIGHT = 700
 
 
 class AIKeyDialog(Adw.Window):
@@ -35,7 +38,7 @@ class AIKeyDialog(Adw.Window):
             modal=True,
             title="Create key with AI",
             default_width=580,
-            default_height=720,
+            default_height=820,
         )
         self.app = app
         self._on_apply = on_apply
@@ -148,13 +151,23 @@ class AIKeyDialog(Adw.Window):
             left_margin=10,
             right_margin=10,
         )
-        self.prompt.set_size_request(-1, 150)
-        prompt_scroller = Gtk.ScrolledWindow(child=self.prompt)
-        prompt_scroller.set_policy(
+        self.prompt_scroller = Gtk.ScrolledWindow(child=self.prompt)
+        self.prompt_scroller.set_policy(
             Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC
         )
-        prompt_scroller.add_css_class("card")
-        prompt_group.add(prompt_scroller)
+        self._prompt_height = PROMPT_INITIAL_HEIGHT
+        self._prompt_drag_height = PROMPT_INITIAL_HEIGHT
+        self.prompt_scroller.set_size_request(-1, self._prompt_height)
+        self.prompt_scroller.add_css_class("card")
+
+        self.prompt_container = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=2,
+        )
+        self.prompt_resize_handle = self._build_prompt_resize_handle()
+        self.prompt_container.append(self.prompt_scroller)
+        self.prompt_container.append(self.prompt_resize_handle)
+        prompt_group.add(self.prompt_container)
         page.add(prompt_group)
 
         actions = Adw.PreferencesGroup()
@@ -171,6 +184,56 @@ class AIKeyDialog(Adw.Window):
         actions.add(self.generate)
         page.add(actions)
         return page
+
+    def _build_prompt_resize_handle(self) -> Gtk.DrawingArea:
+        handle = Gtk.DrawingArea(
+            content_height=18,
+            hexpand=True,
+        )
+        handle.set_cursor_from_name("ns-resize")
+        handle.set_tooltip_text("Drag to resize the description field")
+
+        def draw(widget, context, width, height) -> None:
+            color = widget.get_color()
+            context.set_source_rgba(
+                color.red,
+                color.green,
+                color.blue,
+                color.alpha * 0.55,
+            )
+            x = width / 2 - 18
+            y = height / 2
+            for offset in (-3, 0, 3):
+                context.rectangle(x, y + offset, 36, 1)
+            context.fill()
+
+        handle.set_draw_func(draw)
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", self._prompt_resize_begin)
+        drag.connect("drag-update", self._prompt_resize_update)
+        handle.add_controller(drag)
+        return handle
+
+    def _prompt_resize_begin(self, _gesture, _x: float, _y: float) -> None:
+        self._prompt_drag_height = self._prompt_height
+
+    def _prompt_resize_update(
+        self,
+        _gesture,
+        _offset_x: float,
+        offset_y: float,
+    ) -> None:
+        height = max(
+            PROMPT_MIN_HEIGHT,
+            min(
+                PROMPT_MAX_HEIGHT,
+                round(self._prompt_drag_height + offset_y),
+            ),
+        )
+        if height == self._prompt_height:
+            return
+        self._prompt_height = height
+        self.prompt_scroller.set_size_request(-1, height)
 
     def _build_preview_page(self) -> Adw.PreferencesPage:
         page = Adw.PreferencesPage()

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from linuxstreamdeck import basic_actions as _basic_actions  # noqa: F401
 from linuxstreamdeck.core.config import ActionStep
 from linuxstreamdeck.obs import actions as _obs_actions  # noqa: F401
 from linuxstreamdeck.ui.editor import EditorPanel
+from linuxstreamdeck.ui.window import MainWindow
 
 
 class EditorIconTests(unittest.TestCase):
@@ -32,6 +34,60 @@ class EditorIconTests(unittest.TestCase):
             EditorPanel._steps_icon([], "mdi:playlist-play"),
             "",
         )
+
+
+class UnsavedResponseTests(unittest.TestCase):
+    def test_save_response_saves_before_continuing(self) -> None:
+        calls = []
+        window = SimpleNamespace(
+            _unsaved_dialog=object(),
+            editor=SimpleNamespace(save=lambda: calls.append("save") or True),
+        )
+
+        MainWindow._on_unsaved_response(
+            window,
+            None,
+            "save",
+            lambda: calls.append("continue"),
+            True,
+        )
+
+        self.assertEqual(calls, ["save", "continue"])
+        self.assertIsNone(window._unsaved_dialog)
+
+    def test_discard_response_continues_without_saving(self) -> None:
+        calls = []
+        window = SimpleNamespace(
+            _unsaved_dialog=object(),
+            editor=SimpleNamespace(save=lambda: calls.append("save") or True),
+        )
+
+        MainWindow._on_unsaved_response(
+            window,
+            None,
+            "discard",
+            lambda: calls.append("continue"),
+            True,
+        )
+
+        self.assertEqual(calls, ["continue"])
+
+    def test_cancel_response_keeps_editing(self) -> None:
+        calls = []
+        window = SimpleNamespace(
+            _unsaved_dialog=object(),
+            editor=SimpleNamespace(save=lambda: calls.append("save") or True),
+        )
+
+        MainWindow._on_unsaved_response(
+            window,
+            None,
+            "cancel",
+            lambda: calls.append("continue"),
+            True,
+        )
+
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

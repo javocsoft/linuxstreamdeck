@@ -51,9 +51,10 @@ maintenance contract.
 - **What it does:** checks the hard-won checklist — OBS lock covering the whole
   `send`, `RENDER_LOCK`, Pillow `BASIC` layout, config isolation via
   `LSD_CONFIG_DIR`, single-instance / no self-launch of the GUI, the EventBus
-  threading model, default-icon inheritance, AI credential/context/proposal
-  safety, reusing feedback color constants, and English-only with no accents. It
-  only reports; it does not edit code.
+  threading model, running-feedback concurrency, default-icon inheritance,
+  unsaved-editor guards, AI credential/context/proposal safety, reusing feedback
+  color constants, and English-only with no accents. It only reports; it does not
+  edit code.
 
 ## `obs-action-author` — action scaffolder
 
@@ -74,8 +75,9 @@ maintenance contract.
 - **What it does:** composes key PNGs **without launching the GUI** (with an
   isolated `LSD_CONFIG_DIR`) and objectively checks that glyphs are not blank, are
   centered, that the active background lights up without a border, and that colors
-  are preserved — plus it eyeballs the images itself. It reports; it does not fix
-  unless asked.
+  are preserved. It also compares both running-feedback phases to confirm the
+  subtle breathing halo and `RUN` badge remain visible without obscuring key art.
+  It eyeballs the images itself, and reports without fixing unless asked.
 
 ## `documenter` — documentation keeper
 

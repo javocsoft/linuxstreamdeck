@@ -102,15 +102,15 @@ linuxstreamdeck/
 │   │                  Migration, backup and portable `.lsdconfig` import/export.
 │   ├── actions.py     Action framework: `Action` base, declarative `Param`,
 │   │                  `ActionContext`, global `REGISTRY`, `@register`, `by_category`.
-│   ├── controller.py  DeckController: handles presses, runs action steps, renders
-│   │                  every key, owns page/profile/key operations, and applies imports.
+│   ├── controller.py  DeckController: handles presses, separate action/render workers,
+│   │                  running feedback, page/profile/key operations and imports.
 │   ├── icons.py       Built-in icon library (Material Design Icons glyphs via
 │   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
 │   └── secrets.py     Async Secret Service storage for OBS and per-provider API keys.
 ├── device/
 │   ├── manager.py     DeckManager: physical device via HID, hotplug, key callbacks.
 │   └── renderer.py    `compose()` — builds each key PNG with Pillow (bg, icon,
-│                      label, badge, active-state soft lighting).
+│                      label, badge, active-state lighting, running halo).
 ├── obs/
 │   ├── client.py      OBSClient: obs-websocket v5 connection, auto-reconnect,
 │   │                  thread-safe requests, re-emits OBS events onto the bus.
@@ -119,8 +119,8 @@ linuxstreamdeck/
 ├── ui/
 │   ├── window.py      MainWindow: key grid (virtual deck), header (profiles,
 │   │                  configuration import/export, pages, brightness, OBS settings,
-│   │                  About), DnD move, copy/paste, status bar.
-│   ├── editor.py      EditorPanel: right-hand key editor; key-type selector.
+│   │                  About), DnD move, copy/paste, unsaved-change guard, status bar.
+│   ├── editor.py      EditorPanel: key editor, canonical draft/baseline and key type.
 │   ├── ai_assistant.py OpenAI/Claude proposal dialog and explicit editor handoff.
 │   ├── steps.py       StepEditor / StepList / AppearanceBox — reused by the editor
 │   │                  for single, multi and toggle key types.
@@ -202,6 +202,50 @@ loads it into the existing editor, reviews it, and presses **Save** to persist i
   per-step delay.
 - `multi_toggle` (`KIND_TOGGLE`) — two lists (`steps_on` / `steps_off`) with an
   ON/OFF state; the state is keyed by (profile, page, key) in the controller.
+
+### Running key feedback and workers
+
+Multi and multi-toggle invocations are counted from queueing through completion,
+keyed by `(profile, page, key)`. While the count is nonzero, that key shows a
+`RUN` badge and a subtle slow blue breathing halo. Repeated presses increment the
+count, so the feedback remains until every invocation finishes. Toggle keys keep
+their ON/OFF state underneath the temporary running feedback and restore the
+appropriate badge when the final invocation completes.
+
+Action execution and rendering use separate `ThreadPoolExecutor` instances. Two
+long `Wait` actions may occupy both action workers, but must never prevent a key
+image or activity pulse from rendering. The activity thread alternates the pulse
+phase and asks the render executor to refresh only busy keys on the active
+profile/page; activity belonging to another profile or page must not leak into the
+current view.
+
+Controller shutdown order is deliberate: set the stopping signal, shut down the
+action executor, join the activity thread, then shut down the render executor.
+`Wait` observes the stopping signal so running waits can end promptly. Do not
+merge the executors or reorder teardown in a way that lets actions/activity submit
+work after the render executor has stopped.
+
+### Unsaved editor protection
+
+`EditorPanel.current_key_config()` must reconstruct the complete canonical
+`KeyConfig` draft without persisting it. On load and after a successful save, the
+editor stores a cloned baseline and reports unsaved changes by comparing the
+current draft with that baseline. Do not replace this with a sticky dirty flag:
+action changes, parameter values/order, appearance and AI-loaded proposals must
+all count, while reverting every value must become clean again.
+
+The editor retains both its source `Page` object and key index. A deferred
+**Save and continue** must write to that source page, never whichever page became
+active later. `MainWindow` gates key selection, key moves, page/profile switches
+and creation, configuration import and window close through the unsaved-change
+dialog. It offers **Keep editing**, **Discard changes** and, when the destination
+will preserve the saved key, **Save and continue**. Paste or clear of the edited
+key deliberately omits the save option because the next operation overwrites that
+same key.
+
+Clicking the already selected key must not reload the editor. Page-change handling
+tracks the selected page by object identity so renaming that same page preserves
+the selection, while a real page change clears it.
 
 Persistence is atomic JSON with user-only (`0600`) permissions at
 `~/.config/linuxstreamdeck/config.json`, with a `config.json.bak` backup written
@@ -290,6 +334,17 @@ hard-to-diagnose failures.
    `sys.command` and `obs.raw` from the provider catalogue. Validate every response
    locally. Generation must not execute or save anything; only the user's explicit
    **Save** from the existing editor persists the key.
+
+7. **Unsaved key edits must survive navigation decisions.** Dirty state is a
+   canonical `KeyConfig` comparison, not a sticky UI flag. Keep the source page
+   reference stable across deferred dialog responses, preserve the guarded paths
+   described in §3, and never reload on a same-key click or a rename event for the
+   same page object.
+
+8. **Action work must not starve running feedback.** Keep action and render
+   executors separate, count every queued/running invocation per profile/page/key,
+   pulse only busy keys in the active view, and preserve shutdown order: action
+   executor, activity thread, render executor.
 
 ---
 
