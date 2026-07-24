@@ -77,15 +77,12 @@ class MainWindow(Adw.ApplicationWindow):
 
         header.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
 
-        # page selector + add page + pages menu (of the active profile)
+        # page selector + pages menu (of the active profile), mirroring profiles
         self.page_dropdown = Gtk.DropDown.new_from_strings([])
         self.page_dropdown.connect("notify::selected", self._on_page_selected)
         header.pack_start(self.page_dropdown)
-        add_btn = Gtk.Button.new_from_icon_name("list-add-symbolic")
-        add_btn.set_tooltip_text("Add page")
-        add_btn.connect("clicked", self._on_add_page)
-        header.pack_start(add_btn)
         page_menu = Gio.Menu()
+        page_menu.append("New page…", "win.page-new")
         page_menu.append("Rename page…", "win.page-rename")
         page_menu.append("Delete page", "win.page-delete")
         page_menu_btn = Gtk.MenuButton(icon_name="view-more-symbolic",
@@ -202,6 +199,7 @@ class MainWindow(Adw.ApplicationWindow):
                          ("profile-new", self._new_profile),
                          ("profile-edit", self._edit_profile),
                          ("profile-delete", self._delete_profile),
+                         ("page-new", self._new_page),
                          ("page-rename", self._rename_page),
                          ("page-delete", self._delete_page)):
             act = Gio.SimpleAction.new(name, None)
@@ -271,15 +269,28 @@ class MainWindow(Adw.ApplicationWindow):
 
     # --- pages ---
 
+    def _new_page(self) -> None:
+        default = f"Page {len(self.app.config.pages) + 1}"
+        self._page_name_dialog(
+            "New page", default,
+            on_save=lambda name: self.app.controller.add_page(name),
+        )
+
     def _rename_page(self) -> None:
-        page = self.app.controller.page
-        dialog = Adw.Window(transient_for=self, modal=True, title="Rename page",
+        self._page_name_dialog(
+            "Rename page", self.app.controller.page.name,
+            on_save=lambda name: self.app.controller.rename_page(name),
+        )
+
+    def _page_name_dialog(self, title: str, initial: str, on_save) -> None:
+        """Small dialog asking for a page name (shared by new/rename)."""
+        dialog = Adw.Window(transient_for=self, modal=True, title=title,
                             default_width=440, default_height=240)
         view = Adw.ToolbarView()
         view.add_top_bar(Adw.HeaderBar())
         pg = Adw.PreferencesPage()
         group = Adw.PreferencesGroup()
-        entry = Adw.EntryRow(title="Page name", text=page.name)
+        entry = Adw.EntryRow(title="Page name", text=initial)
         group.add(entry)
         pg.add(group)
         actions = Adw.PreferencesGroup()
@@ -289,10 +300,11 @@ class MainWindow(Adw.ApplicationWindow):
         def do_save(_b):
             name = entry.get_text().strip()
             if name:
-                self.app.controller.rename_page(name)
+                on_save(name)
             dialog.close()
 
         save.connect("clicked", do_save)
+        entry.connect("entry-activated", do_save)
         actions.add(save)
         pg.add(actions)
         view.set_content(pg)
@@ -438,10 +450,6 @@ class MainWindow(Adw.ApplicationWindow):
         self.page_dropdown.set_model(Gtk.StringList.new(names))
         self.page_dropdown.set_selected(self.app.config.current_page)
         self._updating_pages = False
-
-    def _on_add_page(self, _btn) -> None:
-        n = len(self.app.config.pages) + 1
-        self.app.controller.add_page(f"Page {n}")
 
     def _on_brightness(self, _btn, value: float) -> None:
         self.app.config.brightness = int(value)

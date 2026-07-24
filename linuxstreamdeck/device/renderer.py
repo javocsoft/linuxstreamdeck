@@ -1,11 +1,12 @@
 """Key image composition with Pillow.
 
-Each key is composed of: background (configurable color or state color),
-optional icon, text label and active-state decoration (accent border + badge).
+Each key is composed of: background (configurable color or state color; softly
+lit when the action is active), optional icon, text label and a state badge.
 """
 
 from __future__ import annotations
 
+import colorsys
 import io
 import logging
 from functools import lru_cache
@@ -20,6 +21,40 @@ log = logging.getLogger(__name__)
 ACCENT = "#62a0ea"
 EMPTY_BG = "#141418"
 TEXT_COLOR = "#ffffff"
+
+# "Active" state: instead of a border, the whole key is softly lit (like the
+# native Stream Deck software). ACTIVE_LIGHTEN raises the background lightness
+# (preserving hue, so a red key gets brighter red); ACTIVE_ACCENT adds a faint
+# accent glow scaled by how neutral the color is, so it mainly shows on
+# dark/neutral backgrounds and barely touches saturated ones.
+ACTIVE_LIGHTEN = 0.15
+ACTIVE_ACCENT = 0.12
+
+
+def _rgb(color) -> tuple[int, int, int]:
+    """Parse a '#rrggbb' (or '#rgb') string into an (r, g, b) tuple."""
+    c = str(color).lstrip("#")
+    if len(c) == 3:
+        c = "".join(ch * 2 for ch in c)
+    try:
+        return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+    except (ValueError, IndexError):
+        return (20, 20, 24)
+
+
+def _active_bg(bg) -> tuple[int, int, int]:
+    """Softly 'lit' version of a background, used for the active state."""
+    r, g, b = (v / 255 for v in _rgb(bg))
+    h, lightness, s = colorsys.rgb_to_hls(r, g, b)
+    r, g, b = colorsys.hls_to_rgb(h, min(1.0, lightness + ACTIVE_LIGHTEN), s)
+    # accent glow only on desaturated (neutral/dark) backgrounds
+    ar, ag, ab = (v / 255 for v in _rgb(ACCENT))
+    am = ACTIVE_ACCENT * (1 - s)
+    r += (ar - r) * am
+    g += (ag - g) * am
+    b += (ab - b) * am
+    return (min(255, int(r * 255)), min(255, int(g * 255)), min(255, int(b * 255)))
+
 
 _FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -76,10 +111,12 @@ def compose(
     icon_color: str = "#ffffff",
 ) -> Image.Image:
     w, h = size
+    # when active, the whole key is softly lit instead of getting a border
+    base_bg = _active_bg(bg or EMPTY_BG) if active else (bg or EMPTY_BG)
     # all text drawing runs under the shared lock (FreeType is not thread-safe);
     # it is reentrant, so icon_library.render can re-acquire it without blocking.
     with RENDER_LOCK:
-        img = Image.new("RGB", size, bg or EMPTY_BG)
+        img = Image.new("RGB", size, base_bg)
         draw = ImageDraw.Draw(img)
 
         font_size = max(10, h // 6)
@@ -108,11 +145,6 @@ def compose(
             bfont = _font(max(10, h // 6))
             bw = draw.textlength(badge, font=bfont)
             draw.text((w - bw - 5, 3), badge, font=bfont, fill="#ffffff")
-
-        # accent border when the action is active
-        if active:
-            for i in range(3):
-                draw.rectangle([i, i, w - 1 - i, h - 1 - i], outline=ACCENT)
 
     return img
 
