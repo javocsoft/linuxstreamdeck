@@ -120,6 +120,20 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[st
     return lines
 
 
+def _fitted_font(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    max_width: int,
+    preferred_size: int,
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    for size in range(preferred_size, 8, -1):
+        font = _font(size)
+        left, _top, right, _bottom = draw.textbbox((0, 0), text, font=font)
+        if right - left <= max_width:
+            return font
+    return _font(9)
+
+
 def compose(
     size: tuple[int, int] = (72, 72),
     label: str = "",
@@ -129,6 +143,7 @@ def compose(
     busy: bool = False,
     busy_phase: bool = False,
     badge: str = "",
+    center_text: str = "",
     icon_color: str = "#ffffff",
 ) -> Image.Image:
     w, h = size
@@ -147,9 +162,34 @@ def compose(
         label_lines = _wrap(draw, label, font, w - 8) if label else []
         label_height = len(label_lines) * (font_size + 2)
 
-        # icon centered in the free space above the label. Accepts both a library
-        # icon ("mdi:name") and a path to the user's own image.
-        if icon_path:
+        # Dynamic values such as clocks replace the icon and use the full
+        # available width. Otherwise show the configured or built-in icon.
+        if center_text:
+            value_font = _fitted_font(
+                draw,
+                center_text,
+                w - 6,
+                max(12, h // 4),
+            )
+            left, top, right, bottom = draw.textbbox(
+                (0, 0),
+                center_text,
+                font=value_font,
+            )
+            value_width = right - left
+            value_height = bottom - top
+            available_height = h - label_height
+            x = (w - value_width) // 2 - left
+            y = (available_height - value_height) // 2 - top
+            draw.text(
+                (x, max(2, y)),
+                center_text,
+                font=value_font,
+                fill=TEXT_COLOR,
+            )
+        elif icon_path:
+            # Icons accept both a library reference ("mdi:name") and a path to
+            # the user's own image.
             box = h - label_height - 14
             if (icon := icon_library.render(icon_path, box, icon_color)) is not None:
                 x = (w - icon.width) // 2

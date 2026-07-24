@@ -23,6 +23,16 @@ class EditorIconTests(unittest.TestCase):
             "mdi:music-note",
         )
 
+    def test_clock_action_default_icons_are_resolved(self) -> None:
+        self.assertEqual(
+            EditorPanel._action_icon("sys.timer"),
+            "mdi:timer-outline",
+        )
+        self.assertEqual(
+            EditorPanel._action_icon("sys.stopwatch"),
+            "mdi:clock-outline",
+        )
+
     def test_multiple_action_uses_first_available_default_icon(self) -> None:
         steps = [
             ActionStep(action=""),

@@ -161,6 +161,7 @@ class EditorPanel(Gtk.Box):
             return False
         kc = self.current_key_config()
         self._page.set_key(self.index, kc)
+        self.app.controller.key_config_changed(self.index)
         self.app.config.save()
         self.app.controller.refresh()
         self._baseline = kc.clone()

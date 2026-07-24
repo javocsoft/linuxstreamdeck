@@ -53,7 +53,7 @@ def parse_duration(text) -> int:
                 total = total * 60 + max(0, int(part.strip() or 0))
             return total
         return max(0, int(float(s)))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return 0
 
 
@@ -61,7 +61,7 @@ def format_duration(seconds) -> str:
     """Format whole seconds as 'MM:SS' (minutes grow past 99 if needed)."""
     try:
         total = max(0, int(seconds))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         total = 0
     return f"{total // 60:02d}:{total % 60:02d}"
 
@@ -69,11 +69,28 @@ def format_duration(seconds) -> str:
 class ActionContext:
     """Everything an action needs to run."""
 
-    def __init__(self, obs, controller, bus, cancellation: Event | None = None):
+    def __init__(
+        self,
+        obs,
+        controller,
+        bus,
+        cancellation: Event | None = None,
+        key: tuple[int, int, int] | None = None,
+    ):
         self.obs = obs                # linuxstreamdeck.obs.client.OBSClient
         self.controller = controller  # linuxstreamdeck.core.controller.DeckController
         self.bus = bus
+        self.key = key                # (profile, page, key), when key-specific
         self._cancellation = cancellation
+
+    def for_key(self, key: tuple[int, int, int]) -> "ActionContext":
+        return ActionContext(
+            obs=self.obs,
+            controller=self.controller,
+            bus=self.bus,
+            cancellation=self._cancellation,
+            key=key,
+        )
 
     def stop_requested(self) -> bool:
         """Whether app shutdown or a replacement execution cancelled this run."""
@@ -103,12 +120,13 @@ class Action:
     default_icon: str = ""      # "mdi:..." reference used when the key has no icon of its own
     running_feedback: bool = False
     restart_on_repress: bool = False
+    immediate: bool = False      # press-thread execution; must never block
 
     def execute(self, ctx: ActionContext, params: dict) -> None:
         raise NotImplementedError
 
     def feedback(self, ctx: ActionContext, params: dict) -> dict | None:
-        """Visual state of the key: {'active': bool, 'color': '#rrggbb', 'badge': str}.
+        """Visual state: active, color, badge and/or centered display text.
 
         Returns None if the action has no state.
         """

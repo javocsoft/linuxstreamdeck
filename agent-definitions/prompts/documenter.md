@@ -36,8 +36,11 @@ Never trust a documentation claim without checking its source. Verify at least:
   `linuxstreamdeck/basic_actions.py` against the user-facing action tables.
 - **Key types and config:** `linuxstreamdeck/core/config.py`, config paths,
   `LSD_CONFIG_DIR`, backups, import/export versions and limits, portable audio,
-  legacy page-action migration, named page-target maintenance, and
-  profile/page/key models.
+  timer-sound deduplication, legacy page-action migration, named page-target
+  maintenance, and profile/page/key models.
+- **Stateful clocks:** `linuxstreamdeck/core/clocks.py`, key identity propagation,
+  immediate execution, second-change rendering, view-independent runtime state,
+  timer completion audio and reset/clear/move/shutdown lifecycle.
 - **AI-assisted creation:** `linuxstreamdeck/ai/`,
   `linuxstreamdeck/ui/ai_assistant.py` and provider key storage, including
   bounded opt-in context, blocked dangerous actions, local validation and
@@ -46,8 +49,8 @@ Never trust a documentation claim without checking its source. Verify at least:
   OBS requests, separate action/render workers and ordered activity shutdown,
   same-key restart cancellation and predecessor ordering, exclusive/cancellable
   physical startup, unambiguous/migrated page navigation, bounded/path-safe
-  portable audio, grid-level validated DnD, isolated config experiments and the
-  single-instance GUI rule.
+  portable audio, key-scoped clock lifecycle, grid-level validated DnD, isolated
+  config experiments and the single-instance GUI rule.
 - **Device facts:** supported device id, key count, grid columns, render size,
   startup frame/title layout, brightness bounds and connection publication order.
 - **Custom agents:** `agent-definitions/manifest.json` and

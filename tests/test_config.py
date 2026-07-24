@@ -79,6 +79,42 @@ class PortableAudioTests(unittest.TestCase):
         self.assertEqual(exported.bundled_audio, 0)
         self.assertEqual(exported.missing_audio, 1)
 
+    def test_timer_completion_sound_is_bundled_and_deduplicated(self) -> None:
+        source = self._config(self.audio)
+        source.pages[0].set_key(
+            1,
+            KeyConfig(
+                kind=KIND_SINGLE,
+                action="sys.timer",
+                params={
+                    "duration": "01:00",
+                    "sound": str(self.audio),
+                    "volume": 75,
+                },
+            ),
+        )
+        bundle = self.root / "timer-sound.lsdconfig"
+
+        exported = source.export_bundle(bundle)
+
+        self.assertEqual(exported.bundled_audio, 1)
+        with zipfile.ZipFile(bundle) as archive:
+            raw = json.loads(archive.read(EXPORT_CONFIG_FILE))
+        keys = raw["profiles"][0]["pages"][0]["keys"]
+        self.assertEqual(
+            keys["0"]["params"]["file"],
+            keys["1"]["params"]["sound"],
+        )
+
+        restored = Config()
+        imported = restored.import_bundle(bundle)
+
+        audio_path = restored.pages[0].key(0).params["file"]
+        timer_path = restored.pages[0].key(1).params["sound"]
+        self.assertEqual(imported.restored_audio, 1)
+        self.assertEqual(audio_path, timer_path)
+        self.assertTrue(Path(timer_path).is_file())
+
     def test_import_rejects_an_audio_path_outside_its_bundle_directory(
         self,
     ) -> None:

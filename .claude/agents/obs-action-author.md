@@ -41,11 +41,14 @@ style.
 3. **Implement `execute(ctx, params)`.** Access OBS only through `ctx.obs`, whose
    `OBSClient` serializes complete requests. Never touch the raw request client or
    websocket. Use `ctx.controller` for deck/page operations and `ctx.bus` for
-   status events.
+   status events. `ctx.key` is the current `(profile, page, key)` identity when
+   available; use `ctx.for_key(key)` when deriving a context for execution or
+   feedback so cancellation and identity travel together.
 4. **Implement `feedback(ctx, params)`** when the action has live state. Return
-   `{"active": bool, "color": "#rrggbb", "badge": str}` or `None`. Reuse shared
-   feedback color constants. Feedback runs on the render worker and must keep OBS
-   access cheap and serialized through `ctx.obs`.
+   any applicable `active`, `color`, `badge` or `display` keys, or `None`.
+   `display` replaces the icon with fitted centered text. Reuse shared feedback
+   color constants. Feedback runs on the render worker and must keep OBS access
+   cheap and serialized through `ctx.obs`.
 5. **Register the action** with `@register`. Add its id and `"mdi:name"` reference
    to `apply_default_icons({...})` when it needs a default icon, after confirming
    the icon exists in `linuxstreamdeck/assets/icons/icons.json`.
@@ -57,6 +60,9 @@ style.
    profile/page/key should cancel the prior invocation and restart the complete
    key sequence. The action must cooperate with its `ActionContext` cancellation
    and finish releasing resources before the replacement can start.
+8. Set **`immediate = True`** only for a fast, non-blocking state mutation. A
+   single-action key then runs synchronously on press rather than occupying an
+   action worker; multi/toggle sequences keep their normal worker semantics.
 
 ## Rules
 

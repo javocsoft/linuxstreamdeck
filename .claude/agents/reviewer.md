@@ -61,9 +61,11 @@ Read `AGENTS.md` sections 5-6 for the rationale.
 10. **Running feedback concurrency.** Multi/toggle activity and opted-in blocking
    single actions must count every queued or running invocation by
    profile/page/key; toggle feedback returns only after the count reaches zero.
-   Action and render executors must remain separate, and pulses should refresh
-   only busy keys in the active view. Shutdown must stop the action executor,
-   then the activity thread, then the render executor.
+   Action, timer-sound and render executors must remain separate, and pulses
+   should refresh only busy keys in the active view. Controller shutdown must set
+   stopping; stop/clear clocks and signal completion sounds; wake activity and
+   clear the pending-render marker; stop the action executor; stop the
+   timer-sound executor; join activity; then stop the render executor.
 11. **Local audio lifecycle.** `sys.audio` must accept only its documented local
    formats, clamp volume, block a sequence until EOS/limit, surface playback
    errors and always reset GStreamer state. Playback must observe its
@@ -90,27 +92,36 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    status. Page names must remain unique per profile, and rename must rewrite
    every same-profile go-to reference without disturbing editor selection.
    Selecting the current page must not save or emit redundant events.
-15. **Portable audio archives.** Export v2 must deduplicate supported `sys.audio`
-   files and enforce per-file/total limits. Import must retain v1 compatibility,
-   reject unsafe or unsupported archive paths, enforce limits before writing and
-   restore audio only under `CONFIG_DIR/imported-audio`.
-16. **AI proposal safety.** Provider API keys must remain per-provider secrets and
+15. **Stateful clock lifecycle.** Countdown/stopwatch runtime and completion
+   controls must remain keyed by profile/page/key, with that identity propagated
+   through `ActionContext`. Single-action clocks must use immediate execution,
+   while the 0.1-second scheduler repaints only changed seconds in the active
+   view without pausing hidden clocks. DnD must move state; edit/paste/clear must
+   reset one position; page/profile deletion, import and shutdown must clear
+   state safely. Emit each completion once, run sounds outside action workers and
+   cancel them on reset/shutdown.
+16. **Portable audio archives.** Export v2 must deduplicate supported `sys.audio`
+   files and `sys.timer` `sound` parameters, including identical content across
+   both actions, and enforce per-file/total limits. Import must retain v1
+   compatibility, reject unsafe or unsupported archive paths, enforce limits
+   before writing and restore audio only under `CONFIG_DIR/imported-audio`.
+17. **AI proposal safety.** Provider API keys must remain per-provider secrets and
    never enter config or exports. A saved-key mask is read-only display state and
    must never be sent as a credential; replacement, saved-key reuse and forgetting
    must remain explicit. Context must be opt-in and limited to bounded OBS/page
    names. `sys.command` and `obs.raw` must remain excluded, every provider response
    locally validated, and generation must never execute or save a key before
    explicit editor review and user save.
-17. **Grid drag/drop reliability.** Keep one grid-level source/target pair using
+18. **Grid drag/drop reliability.** Keep one grid-level source/target pair using
    CAPTURE propagation, primary-button dragging, preload and an internal typed
    string payload. Pointer resolution must walk through child widgets to the key
    button. Empty keys cannot start drags; any different empty or occupied key is
    a valid destination in either direction. Reject malformed, foreign and stale
    payloads, preserve subtle source/destination feedback and unsaved-change
-   confirmation, and move toggle state with the key during moves/swaps.
-18. **English-only.** Flag Spanish or accented text introduced in any versioned
+   confirmation, and move toggle/clock state with the key during moves/swaps.
+19. **English-only.** Flag Spanish or accented text introduced in any versioned
    user-facing string, comment, log or document.
-19. **General correctness.** Report proven bugs, resource leaks and broken error
+20. **General correctness.** Report proven bugs, resource leaks and broken error
    handling beyond the specialist checklist.
 
 ## Output

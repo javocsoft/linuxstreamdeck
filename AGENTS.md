@@ -94,7 +94,7 @@ linuxstreamdeck/
 ├── __main__.py        Entry point; logging setup; `linuxstreamdeck` console script.
 ├── app.py             LinuxStreamDeckApp: builds config, credential stores, AI service,
 │                      EventBus, OBS client, deck/controller and MainWindow; app lifecycle.
-├── basic_actions.py   System actions plus explicit next/previous/go page navigation.
+├── basic_actions.py   System actions (including clocks/audio) plus explicit page navigation.
 ├── ai/
 │   ├── constants.py   OpenAI/Claude provider ids, labels and default models.
 │   └── service.py     Provider calls, bounded optional context, local proposal validation.
@@ -107,8 +107,9 @@ linuxstreamdeck/
 │   ├── actions.py     Action framework: `Action` base, declarative `Param`,
 │   │                  `ActionContext`, global `REGISTRY`, `@register`, `by_category`.
 │   ├── audio.py       Blocking local playback via GStreamer playbin; shutdown-aware.
+│   ├── clocks.py      Thread-safe countdown/stopwatch runtime keyed by profile/page/key.
 │   ├── controller.py  DeckController: presses, action/render workers, running feedback,
-│   │                  page target maintenance, profile/key operations and imports.
+│   │                  clocks/audio notifications, profile/key operations and imports.
 │   ├── icons.py       Built-in icon library (Material Design Icons glyphs via
 │   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
 │   └── secrets.py     Async Secret Service storage for OBS and per-provider API keys.
@@ -116,7 +117,7 @@ linuxstreamdeck/
 │   ├── manager.py     DeckManager: HID hotplug, exclusive startup, key callbacks.
 │   ├── startup_animation.py 33-frame offscreen physical-deck wake/title sequence.
 │   └── renderer.py    `compose()` — builds each configured key PNG with Pillow
-│                      (bg, icon, label, badge, active-state lighting, running halo).
+│                      (bg, icon or centered value, label, badge, lighting, running halo).
 ├── obs/
 │   ├── client.py      OBSClient: obs-websocket v5 connection, auto-reconnect,
 │   │                  thread-safe requests, re-emits OBS events onto the bus.
@@ -192,8 +193,15 @@ Actions are declarative and self-registering:
   (`scenes`, `inputs`, `media_inputs`, `transitions`, `scene_collections`,
   `profiles`, `sources_in_scene`, `filters_of_source`, `hotkeys`, `pages`).
   The `pages` source reads page names from the active profile, not OBS.
-- `execute(ctx, params)` performs the action; `feedback(ctx, params)` optionally
-  returns `{"active": bool, "color": "#rrggbb", "badge": str}` for live key state.
+- `execute(ctx, params)` performs the action; `feedback(ctx, params)` may return
+  any of `active`, `color`, `badge` and `display` for live key state. `display`
+  replaces the icon with fitted, centered text.
+- `ActionContext.key` identifies the executing `(profile, page, key)` when
+  available. Use `ctx.for_key(key)` to derive a context with that identity while
+  preserving its cancellation controls.
+- Set `immediate = True` only for fast, non-blocking state changes. A
+  single-action key then executes synchronously on press instead of occupying an
+  action worker; multi/toggle sequences still use their normal worker.
 - Set `running_feedback = True` on a blocking action that should show the
   controller's temporary `RUN`/breathing feedback even as a single-action key.
 - Set `restart_on_repress = True` when pressing the same profile/page/key again
@@ -203,6 +211,35 @@ Actions are declarative and self-registering:
   shutdown and replacement cancellation.
 - `apply_default_icons({action_id: "mdi:…"})` assigns default icons after
   registration. Registration happens on import (`app.py` imports the catalogues).
+
+### Countdown timer and stopwatch
+
+The **System** category includes two stateful clock actions:
+
+| ID | Parameters | Press behavior | Default icon |
+| --- | --- | --- | --- |
+| `sys.timer` | `duration`; optional supported audio `sound`; `volume` 0-100 | Idle shows the configured duration; first press starts, a running press resets, completion stays at `00:00:00`, and a finished press resets/stops its sound | `mdi:timer-outline` |
+| `sys.stopwatch` | None | Idle shows `00:00:00`; first press starts and the next resets to zero | `mdi:clock-outline` |
+
+Both actions return their `HH:MM:SS` value through feedback `display`, which the
+renderer centers in place of the icon while retaining any label. They set
+`immediate = True`, so single-action keys update without entering the action
+executor. A timer rejects a non-positive duration. Its optional completion sound
+accepts the same `.wav`, `.wave`, `.mp3`, `.ogg`, `.oga`, `.flac` and `.opus`
+formats as `sys.audio`, with independently clamped volume.
+
+`ClockRuntime` owns transient timer/stopwatch state under a lock, keyed by
+`(profile, page, key)`. Its scheduler checks running clocks every 0.1 seconds but
+requests a render only when a displayed second changes, and only the visible
+profile/page is repainted. State continues to advance across page/profile
+switches. Completion is emitted once; its optional sound runs on the separate
+notification executor so it cannot consume action workers.
+
+Drag/drop moves or swaps clock state with its configured key. Editing/saving,
+pasting over or clearing a key resets that position and cancels its timer sound.
+Profile/page deletion clears all clock state because stored indices shift, as do
+configuration import and controller shutdown. Pressing a running timer resets it;
+pressing a finished timer also cancels its completion sound.
 
 ### Page navigation actions and migration
 
@@ -313,12 +350,14 @@ phase and asks the render executor to refresh only busy keys on the active
 profile/page; activity belonging to another profile or page must not leak into the
 current view.
 
-Controller shutdown order is deliberate: set the stopping signal, shut down the
-action executor, join the activity thread, then shut down the render executor.
-`Wait` observes both the stopping signal and per-invocation cancellation through
-its `ActionContext`, so shutdown and same-key replacement can end it promptly.
-Do not merge the executors or reorder teardown in a way that lets
-actions/activity submit work after the render executor has stopped.
+Controller shutdown order is deliberate: set the stopping signal, stop and clear
+the clock runtime/completion sounds, shut down the action executor, shut down the
+timer-notification executor, join the activity thread, then shut down the render
+executor. `Wait` observes both the stopping signal and per-invocation cancellation
+through its `ActionContext`, so shutdown and same-key replacement can end it
+promptly. Do not merge the executors or reorder teardown in a way that lets
+actions, clocks or activity submit work after their destination executor has
+stopped.
 
 ### Unsaved editor protection
 
@@ -363,8 +402,8 @@ are rejected. CSS classes dim the source and subtly highlight the current valid
 destination. Destination feedback clears on leave/drop, and drag end clears all
 remaining feedback. A valid drop still goes through the unsaved-change
 confirmation before `DeckController.swap_keys()`; the key configuration and
-transient toggle state travel together, and selection follows the destination.
-Copy/paste remains a separate context-menu/shortcut operation.
+transient toggle/clock state travel together, and selection follows the
+destination. Copy/paste remains a separate context-menu/shortcut operation.
 
 Persistence is atomic JSON with user-only (`0600`) permissions at
 `~/.config/linuxstreamdeck/config.json`, with a `config.json.bak` backup written
@@ -379,11 +418,11 @@ never contain either key.
 
 The profiles menu exports `.lsdconfig` ZIP format v2 with the full JSON
 configuration, available custom key icons and supported files referenced by
-`sys.audio`; identical audio content is deduplicated. Audio is limited to 200 MiB
-per file and 500 MiB total. Built-in `mdi:` icons stay as references, and OBS
-passwords and provider API keys are never exported. Missing, unreadable,
-unsupported or oversized audio remains a local reference and produces an export
-warning.
+`sys.audio` or the `sound` parameter of `sys.timer`; identical audio content is
+deduplicated even across both actions. Audio is limited to 200 MiB per file and
+500 MiB total. Built-in `mdi:` icons stay as references, and OBS passwords and
+provider API keys are never exported. Missing, unreadable, unsupported or
+oversized audio remains a local reference and produces an export warning.
 
 Import accepts format v1 and v2, validates archive member paths and size limits,
 restores bundled icons below `CONFIG_DIR/imported-icons` and audio below
@@ -470,10 +509,14 @@ hard-to-diagnose failures.
    described in §3, and never reload on a same-key click or a rename event for the
    same page object.
 
-8. **Action work must not starve running feedback.** Keep action and render
-   executors separate, count every queued/running invocation per profile/page/key,
-   pulse only busy keys in the active view, and preserve shutdown order: action
-   executor, activity thread, render executor.
+8. **Action work must not starve running feedback.** Keep action, timer-sound and
+   render executors separate, count every queued/running invocation per
+   profile/page/key, and pulse only busy keys in the active view. Preserve the
+   complete controller shutdown order: set the stopping signal; stop the clock
+   scheduler; clear clock state and signal completion sounds; wake activity and
+   clear the pending-render marker; shut down the action executor; shut down the
+   timer-sound executor; join the activity thread; then shut down the render
+   executor.
 
 9. **Restartable actions must never overlap.** Keep cancellation controls scoped
    by profile/page/key, cancel the prior same-key invocation and wait for its
@@ -482,9 +525,10 @@ hard-to-diagnose failures.
    exit without executing so rapid presses collapse to the latest invocation.
 
 10. **Portable audio must stay bounded and path-safe.** Keep `.lsdconfig` v1 import
-   compatibility while exporting v2. Bundle only supported `sys.audio` files,
-   deduplicate content, enforce per-file/total limits, validate archive paths
-   before extraction and restore only below `CONFIG_DIR/imported-audio`.
+   compatibility while exporting v2. Bundle only supported `sys.audio` files and
+   `sys.timer` `sound` parameters, deduplicate content across both actions,
+   enforce per-file/total limits, validate archive paths before extraction and
+   restore only below `CONFIG_DIR/imported-audio`.
 
 11. **Physical startup must remain exclusive and cancellable.** Generate frames
    offscreen under `RENDER_LOCK`, keep their brightness at or below the configured
@@ -507,7 +551,16 @@ hard-to-diagnose failures.
    picked child to its key button. Empty keys cannot be sources; empty and
    occupied keys are valid destinations in any direction. Validate the payload
    against the active source, preserve unsaved-change confirmation, move toggle
-   state with the key and always clear source/destination feedback.
+   and clock state with the key and always clear source/destination feedback.
+
+14. **Stateful clocks must remain key-scoped and cheap.** Keep countdown and
+   stopwatch state keyed by profile/page/key and pass that identity through
+   `ActionContext`. A single-action `immediate` clock must never occupy an action
+   worker. The scheduler may poll at 0.1 seconds but should render only changed
+   seconds in the visible view; switching views must not pause state. Move state
+   with DnD, reset it on edit/paste/clear, clear it when indices or configuration
+   are replaced, and emit each timer completion once. Completion audio must stay
+   on its separate executor and stop on reset or shutdown.
 
 ---
 

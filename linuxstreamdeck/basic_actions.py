@@ -17,6 +17,7 @@ CAT_NAV = "Navigation"
 # Upper bound for a single Wait step. One hour is far beyond any real use and
 # prevents a mistaken value from holding an action worker indefinitely.
 MAX_WAIT_SECONDS = 3600
+TIMER_FINISHED_COLOR = "#8a4b08"
 
 
 @register
@@ -108,6 +109,105 @@ class PlayAudio(Action):
 
 
 @register
+class CountdownTimer(Action):
+    id = "sys.timer"
+    name = "Countdown timer"
+    category = CAT_SYSTEM
+    description = (
+        "Start a countdown shown as HH:MM:SS. Press again while it is running "
+        "or after it finishes to stop and reset it. An optional sound can play "
+        "on completion."
+    )
+    params = [
+        Param(
+            "duration",
+            "Timer duration (MM:SS)",
+            kind="duration",
+            default="01:00",
+        ),
+        Param(
+            "sound",
+            "Completion sound (optional)",
+            kind="file",
+            file_filter_name="Audio files",
+            extensions=list(SUPPORTED_AUDIO_EXTENSIONS),
+        ),
+        Param(
+            "volume",
+            "Sound volume (%)",
+            kind="int",
+            default=100,
+            minimum=0,
+            maximum=100,
+            step=5,
+        ),
+    ]
+    immediate = True
+
+    def execute(self, ctx, p):
+        duration = parse_duration(p.get("duration"))
+        if duration <= 0:
+            ctx.bus.emit(
+                "status",
+                text="Timer duration must be greater than zero",
+            )
+            return
+        if ctx.key is None:
+            return
+        started = ctx.controller.toggle_countdown(
+            ctx.key,
+            duration,
+            p.get("sound", ""),
+            p.get("volume", 100),
+        )
+        ctx.bus.emit(
+            "status",
+            text="Timer started" if started else "Timer reset",
+        )
+
+    def feedback(self, ctx, p):
+        snapshot = ctx.controller.countdown_snapshot(
+            ctx.key,
+            parse_duration(p.get("duration")),
+        )
+        feedback = {
+            "display": snapshot.display,
+            "active": snapshot.running or snapshot.finished,
+        }
+        if snapshot.finished:
+            feedback["color"] = TIMER_FINISHED_COLOR
+        return feedback
+
+
+@register
+class Stopwatch(Action):
+    id = "sys.stopwatch"
+    name = "Stopwatch"
+    category = CAT_SYSTEM
+    description = (
+        "Count elapsed time as HH:MM:SS. Press again to stop and reset it "
+        "to zero."
+    )
+    immediate = True
+
+    def execute(self, ctx, p):
+        if ctx.key is None:
+            return
+        started = ctx.controller.toggle_stopwatch(ctx.key)
+        ctx.bus.emit(
+            "status",
+            text="Stopwatch started" if started else "Stopwatch reset",
+        )
+
+    def feedback(self, ctx, p):
+        snapshot = ctx.controller.stopwatch_snapshot(ctx.key)
+        return {
+            "display": snapshot.display,
+            "active": snapshot.running,
+        }
+
+
+@register
 class PageNext(Action):
     id = "nav.page.next"
     name = "Next page"
@@ -167,6 +267,8 @@ apply_default_icons({
     "sys.url": "mdi:web",
     "sys.wait": "mdi:timer-sand",
     "sys.audio": "mdi:music-note",
+    "sys.timer": "mdi:timer-outline",
+    "sys.stopwatch": "mdi:clock-outline",
     "nav.page.next": "mdi:page-next",
     "nav.page.previous": "mdi:page-previous",
     "nav.page.go": "mdi:book-open-page-variant",

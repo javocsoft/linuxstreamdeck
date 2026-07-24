@@ -49,6 +49,11 @@ MAX_TOTAL_ICON_BYTES = 200 * 1024 * 1024
 MAX_AUDIO_BYTES = 200 * 1024 * 1024
 MAX_TOTAL_AUDIO_BYTES = 500 * 1024 * 1024
 
+_ACTION_AUDIO_PARAMETERS = {
+    "sys.audio": "file",
+    "sys.timer": "sound",
+}
+
 # Key types
 KIND_SINGLE = "single"          # a single action (with state feedback)
 KIND_MULTI = "multi"            # ordered list of actions run in sequence
@@ -461,9 +466,10 @@ class Config:
                         icon_files.setdefault(archive_name, data)
                         key[field_name] = f"{EXPORT_ICON_PREFIX}{archive_name}"
                     for action, params in self._raw_action_params(key):
-                        if action != "sys.audio":
+                        parameter = _ACTION_AUDIO_PARAMETERS.get(action)
+                        if parameter is None:
                             continue
-                        ref = str(params.get("file", "") or "")
+                        ref = str(params.get(parameter, "") or "")
                         if not ref:
                             continue
                         try:
@@ -489,7 +495,9 @@ class Config:
                                 continue
                             audio_files[archive_name] = data
                             total_audio_bytes += len(data)
-                        params["file"] = f"{EXPORT_AUDIO_PREFIX}{archive_name}"
+                        params[parameter] = (
+                            f"{EXPORT_AUDIO_PREFIX}{archive_name}"
+                        )
 
         manifest = {
             "format": EXPORT_FORMAT,
@@ -588,14 +596,15 @@ class Config:
                     restored_members[archive_name] = target
                     setattr(key, field_name, str(target))
                 for action, params in replacement._action_params(key):
-                    if action != "sys.audio":
+                    parameter = _ACTION_AUDIO_PARAMETERS.get(action)
+                    if parameter is None:
                         continue
-                    ref = str(params.get("file", "") or "")
+                    ref = str(params.get(parameter, "") or "")
                     if not ref.startswith(EXPORT_AUDIO_PREFIX):
                         continue
                     archive_name = ref.removeprefix(EXPORT_AUDIO_PREFIX)
                     if archive_name in restored_audio_members:
-                        params["file"] = str(
+                        params[parameter] = str(
                             restored_audio_members[archive_name]
                         )
                         continue
@@ -611,7 +620,7 @@ class Config:
                     target = CONFIG_DIR / "imported-audio" / f"{digest}{suffix}"
                     audio_payloads[target] = data
                     restored_audio_members[archive_name] = target
-                    params["file"] = str(target)
+                    params[parameter] = str(target)
 
         for target, data in icon_payloads.items():
             target.parent.mkdir(parents=True, exist_ok=True)

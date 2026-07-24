@@ -167,6 +167,8 @@ class AIServiceTests(unittest.TestCase):
         self.assertIn("nav.page.next", action_ids)
         self.assertIn("nav.page.previous", action_ids)
         self.assertIn("nav.page.go", action_ids)
+        self.assertIn("sys.timer", action_ids)
+        self.assertIn("sys.stopwatch", action_ids)
         self.assertNotIn("nav.page", action_ids)
 
     def test_context_choices_are_validated(self) -> None:
@@ -297,6 +299,33 @@ class AIServiceTests(unittest.TestCase):
                 "secret",
                 "Play my sound",
             )
+
+    def test_timer_parameters_are_validated(self) -> None:
+        raw = proposal(
+            action="sys.timer",
+            parameters=[
+                {"name": "duration", "value": "1:02"},
+                {"name": "sound", "value": "/home/user/finished.wav"},
+                {"name": "volume", "value": "40"},
+            ],
+        )
+        http = FakeHTTP({
+            "output": [{
+                "type": "function_call",
+                "name": "propose_key_configuration",
+                "arguments": json.dumps(raw),
+            }],
+        })
+
+        generated = AIService(http_post=http).generate(
+            "openai",
+            "gpt-test",
+            "secret",
+            "Create a timer",
+        )
+
+        self.assertEqual(generated.key.params["duration"], "01:02")
+        self.assertEqual(generated.key.params["volume"], 40)
 
     def test_context_is_bounded_and_contains_no_credentials(self) -> None:
         config = Config()

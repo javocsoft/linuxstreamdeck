@@ -16,6 +16,7 @@ from linuxstreamdeck.core.config import (
     KeyConfig,
     Page,
 )
+from linuxstreamdeck.core.clocks import TimerCompletion
 from linuxstreamdeck.core.controller import DeckController
 from linuxstreamdeck.core.events import EventBus
 from linuxstreamdeck.device.renderer import compose
@@ -129,6 +130,84 @@ class ControllerActivityTests(unittest.TestCase):
             self.controller._key_spec(0, audio, self.deck.image_size)["badge"],
             "",
         )
+
+    def test_countdown_starts_immediately_and_second_press_resets(self) -> None:
+        timer = KeyConfig(
+            kind=KIND_SINGLE,
+            action="sys.timer",
+            params={
+                "duration": "00:10",
+                "sound": "",
+                "volume": 100,
+            },
+        )
+        self.config.pages[0].set_key(0, timer)
+
+        with patch.object(self.controller._action_executor, "submit") as submit:
+            self.controller.press(0)
+
+        submit.assert_not_called()
+        running = self.controller.countdown_snapshot((0, 0, 0), 10)
+        self.assertTrue(running.running)
+        spec = self.controller._key_spec(0, timer, self.deck.image_size)
+        self.assertEqual(spec["center_text"], "00:00:10")
+        self.assertTrue(spec["active"])
+
+        self.controller.press(0)
+        reset = self.controller.countdown_snapshot((0, 0, 0), 10)
+        self.assertEqual(reset.display, "00:00:10")
+        self.assertFalse(reset.running)
+
+    def test_resetting_a_finished_timer_stops_its_sound(self) -> None:
+        started = threading.Event()
+        stopped = threading.Event()
+        completion = TimerCompletion(
+            key=(0, 0, 4),
+            token=object(),
+            sound_file="/tmp/finished.mp3",
+            volume=70,
+        )
+        real_clocks = self.controller._clocks
+        self.controller._clocks = SimpleNamespace(
+            is_current_completion=lambda _completion: True,
+        )
+
+        def fake_play_audio(
+            _path,
+            _volume,
+            stop_requested,
+        ) -> None:
+            started.set()
+            while not stop_requested():
+                stopped.wait(0.01)
+            stopped.set()
+
+        try:
+            with patch(
+                "linuxstreamdeck.core.controller.play_audio",
+                side_effect=fake_play_audio,
+            ):
+                self.controller._on_timer_finished(completion)
+                self.assertTrue(started.wait(1))
+                self.controller._cancel_timer_sound(completion.key)
+                self.assertTrue(stopped.wait(1))
+        finally:
+            self.controller._clocks = real_clocks
+
+    def test_replacing_a_key_clears_all_transient_state(self) -> None:
+        key = self.controller._tkey(6)
+        sound = threading.Event()
+        self.controller._toggle[key] = True
+        self.controller._clocks.toggle_stopwatch(key)
+        self.controller._notification_controls[key] = sound
+
+        self.controller.key_config_changed(6)
+
+        self.assertNotIn(key, self.controller._toggle)
+        self.assertFalse(
+            self.controller.stopwatch_snapshot(key).running
+        )
+        self.assertTrue(sound.is_set())
 
     def test_rapid_audio_repress_stops_then_starts_latest_invocation(self) -> None:
         key_config = KeyConfig(
@@ -307,6 +386,16 @@ class BusyRenderingTests(unittest.TestCase):
             max(abs(a - b) for a, b in zip(low_center, high_center)),
             8,
         )
+
+    def test_centered_clock_text_replaces_the_icon_area(self) -> None:
+        empty = compose(bg="#141418")
+        clock = compose(
+            bg="#141418",
+            icon_path="mdi:clock-outline",
+            center_text="12:34:56",
+        )
+
+        self.assertNotEqual(empty.tobytes(), clock.tobytes())
 
 
 if __name__ == "__main__":

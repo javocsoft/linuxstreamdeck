@@ -55,9 +55,10 @@ maintenance contract.
   unsaved-editor guards, GStreamer audio lifecycle, same-key restart cancellation
   and ordering, physical startup exclusivity/cancellation/brightness restoration,
   page-navigation migration/reference integrity, portable-archive limits/path
-  safety, grid-DnD gesture/payload validation, AI credential/context/proposal
-  safety, reusing feedback color constants, and English-only with no accents. It
-  only reports; it does not edit code.
+  safety and audio deduplication, stateful clock identity/ticking/reset/completion
+  lifecycle, grid-DnD gesture/payload validation, AI credential/context/proposal
+  safety, reusing feedback color constants, and English-only with no accents.
+  It only reports; it does not edit code.
 
 ## `obs-action-author` — action scaffolder
 
@@ -66,11 +67,12 @@ maintenance contract.
   key"*).
 - **What it does:** generates the action with the correct declarative pattern
   (`Param` kinds/bounds/file filters, `choices_source`, feedback with the shared
-  colors, blocking-action running feedback, cooperative cancellation and optional
-  same-key restart semantics, profile-scoped page choices, `default_icon`,
-  `@register`,
-  `apply_default_icons`), OBS access always under the lock, verifies the id is
-  unique and the category exists, compiles, and flags when the docs need updating.
+  colors or centered display, key-scoped `ActionContext`, fast non-blocking
+  `immediate` actions, blocking-action running feedback, cooperative cancellation
+  and optional same-key restart semantics, profile-scoped page choices,
+  `default_icon`, `@register`, `apply_default_icons`), OBS access always under
+  the lock, verifies the id is unique and the category exists, compiles, and
+  flags when the docs need updating.
 
 ## `render-qa` — offscreen render verifier
 
@@ -82,6 +84,8 @@ maintenance contract.
   centered, that the active background lights up without a border, and that colors
   are preserved. It also compares both running-feedback phases to confirm the
   subtle breathing halo and `RUN` badge remain visible without obscuring key art.
+  Dynamic centered values such as `HH:MM:SS` clocks are checked with and without
+  labels to ensure they replace the icon cleanly and remain legible.
   For the physical startup sequence, it can also inspect the complete offscreen
   5×3 frame grid, title mapping, brightness bounds and fade to black. It eyeballs
   the images itself, and reports without fixing unless asked.

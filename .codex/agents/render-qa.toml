@@ -32,8 +32,8 @@ Read `linuxstreamdeck/device/renderer.py`,
 
 Drive `linuxstreamdeck.device.renderer.compose(...)` directly, then read the
 resulting images back. The function accepts `size`, `label`, `icon_path`, `bg`,
-`active`, `busy`, `busy_phase`, `badge` and `icon_color`; `to_png_bytes`
-serializes the image.
+`active`, `busy`, `busy_phase`, `badge`, `center_text` and `icon_color`;
+`to_png_bytes` serializes the image.
 
 Cover a representative matrix:
 
@@ -42,6 +42,7 @@ Cover a representative matrix:
 - Inactive and active forms of the same key.
 - Low and high running phases with the `RUN` badge.
 - No label, a short label and a long wrapping label.
+- A centered dynamic value such as `00:12:34`, both with and without a label.
 
 ### Objective checks
 
@@ -57,6 +58,8 @@ Cover a representative matrix:
 5. **Running feedback.** Both busy phases must retain the key art and show the
    `RUN` badge plus a narrow blue halo. The phases must differ visibly but subtly,
    without flashing or replacing the configured background.
+6. **Centered dynamic text.** A non-empty `center_text` value must replace the icon,
+   fit within the key and remain centered in the area above an optional label.
 
 Implement pixel checks programmatically with Pillow and also inspect the generated
 PNGs visually. Measure and report any failure rather than relying on impression.

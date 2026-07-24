@@ -16,6 +16,8 @@ from pathlib import Path
 
 from . import actions as action_registry
 from .actions import ActionContext
+from .audio import play_audio
+from .clocks import ClockRuntime, ClockSnapshot, TimerCompletion
 from .config import (
     KIND_MULTI,
     KIND_SINGLE,
@@ -48,17 +50,30 @@ class DeckController:
         self.obs = obs
         self.deck = deck
         self.ctx = ActionContext(obs=obs, controller=self, bus=bus)
+        self._stopping = threading.Event()
         self._action_executor = ThreadPoolExecutor(
             max_workers=2,
             thread_name_prefix="action",
         )
+        self._notification_executor = ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="timer-sound",
+        )
+        self._notification_lock = threading.Lock()
+        self._notification_controls: dict[
+            tuple[int, int, int],
+            threading.Event,
+        ] = {}
         # Rendering must not wait behind long-running actions such as Wait.
         self._render_executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="render",
         )
         self._render_pending = threading.Event()
-        self._stopping = threading.Event()
+        self._clocks = ClockRuntime(
+            self._refresh_runtime_keys,
+            self._on_timer_finished,
+        )
         # ON/OFF state of toggle keys, keyed by (profile, page, key)
         self._toggle: dict[tuple[int, int, int], bool] = {}
         # Number of queued/running feedback-enabled invocations for each key.
@@ -98,7 +113,7 @@ class DeckController:
         return self.config.pages[self.config.current_page]
 
     def _tkey(self, index: int) -> tuple[int, int, int]:
-        """Key of a toggle's ON/OFF state: (profile, page, key)."""
+        """Stable identity for transient key state: (profile, page, key)."""
         return (self.current_profile, self.current_page, index)
 
     # ---------- profiles ----------
@@ -139,6 +154,7 @@ class DeckController:
         # no need to discard the deleted profile's ON/OFF states individually:
         # clear them all and re-render whichever profile becomes active.
         self._toggle.clear()
+        self._clear_time_actions()
         self.config.current_profile = min(self.current_profile, len(self.config.profiles) - 1)
         self.config.save()
         prof = self.config.profile
@@ -210,6 +226,7 @@ class DeckController:
         # the ON/OFF states of toggle keys reference the page index, which shifts
         # after deletion; they are transient, so clear them and re-render.
         self._toggle.clear()
+        self._clear_time_actions()
         self.config.current_page = min(self.current_page, len(pages) - 1)
         self.config.save()
         self.bus.emit("page.changed", index=self.current_page, name=self.page.name)
@@ -221,6 +238,7 @@ class DeckController:
         """Replace the configuration and apply its runtime settings."""
         result = self.config.import_bundle(source)
         self._toggle.clear()
+        self._clear_time_actions()
         self.deck.set_brightness(self.config.brightness)
         cfg = self.config.obs
         self.obs.configure(cfg.host, cfg.port, cfg.password)
@@ -259,21 +277,31 @@ class DeckController:
             self._toggle[pa] = sb
         if sa is not None:
             self._toggle[pb] = sa
+        self._clocks.swap(pa, pb)
+        self._cancel_timer_sound(pa)
+        self._cancel_timer_sound(pb)
         self.config.save()
         self.refresh()
 
     def paste_key(self, index: int, kc: KeyConfig) -> None:
         """Place an independent copy of kc at position index."""
         self.page.set_key(index, kc.clone())
-        self._toggle.pop(self._tkey(index), None)  # fresh state (OFF)
+        self.key_config_changed(index)
         self.config.save()
         self.refresh()
 
     def clear_key(self, index: int) -> None:
         self.page.set_key(index, None)
-        self._toggle.pop(self._tkey(index), None)
+        self.key_config_changed(index)
         self.config.save()
         self.refresh()
+
+    def key_config_changed(self, index: int) -> None:
+        """Reset transient state after replacing a key's saved configuration."""
+        key = self._tkey(index)
+        self._toggle.pop(key, None)
+        self._clocks.reset(key, refresh=False)
+        self._cancel_timer_sound(key)
 
     # ---------- presses ----------
 
@@ -308,11 +336,19 @@ class DeckController:
             if kc.kind == KIND_SINGLE
             else None
         )
+        execution_key = self._tkey(index)
+        if single_action is not None and single_action.immediate:
+            self._run_immediate(
+                single_action,
+                dict(kc.params),
+                index,
+                execution_key,
+            )
+            return
         show_running = (
             kc.kind in (KIND_MULTI, KIND_TOGGLE)
             or bool(single_action and single_action.running_feedback)
         )
-        execution_key = self._tkey(index)
         runtime_key = execution_key if show_running else None
         control = self._prepare_execution(execution_key, steps)
         if runtime_key is not None:
@@ -334,6 +370,24 @@ class DeckController:
             if not self._stopping.is_set():
                 raise
 
+    def _run_immediate(
+        self,
+        action,
+        params: dict,
+        index: int,
+        key: tuple[int, int, int],
+    ) -> None:
+        run_ctx = self.ctx.for_key(key)
+        try:
+            action.execute(run_ctx, params)
+            log.debug("Ran %s immediately (key %d)", action.id, index)
+        except Exception as error:
+            log.exception("Error running %s", action.id)
+            self.bus.emit(
+                "status",
+                text=f"Error in «{action.name}»: {error}",
+            )
+
     def _run_steps(
         self,
         steps: list[ActionStep],
@@ -347,6 +401,7 @@ class DeckController:
             controller=self,
             bus=self.bus,
             cancellation=control.cancel if control is not None else None,
+            key=execution_key,
         )
         try:
             if control is not None and control.predecessor is not None:
@@ -477,6 +532,115 @@ class DeckController:
             if not self._stopping.is_set():
                 raise
 
+    # ---------- timer and stopwatch state ----------
+
+    def toggle_countdown(
+        self,
+        key: tuple[int, int, int],
+        duration: float,
+        sound_file: str,
+        volume,
+    ) -> bool:
+        started = self._clocks.toggle_timer(
+            key,
+            duration,
+            sound_file,
+            volume,
+        )
+        self._cancel_timer_sound(key)
+        return started
+
+    def toggle_stopwatch(self, key: tuple[int, int, int]) -> bool:
+        started = self._clocks.toggle_stopwatch(key)
+        self._cancel_timer_sound(key)
+        return started
+
+    def countdown_snapshot(
+        self,
+        key: tuple[int, int, int] | None,
+        idle_seconds: float,
+    ) -> ClockSnapshot:
+        return self._clocks.timer_snapshot(key, idle_seconds)
+
+    def stopwatch_snapshot(
+        self,
+        key: tuple[int, int, int] | None,
+    ) -> ClockSnapshot:
+        return self._clocks.stopwatch_snapshot(key)
+
+    def _on_timer_finished(self, completion: TimerCompletion) -> None:
+        control = None
+        with self._notification_lock:
+            if (
+                self._stopping.is_set()
+                or not self._clocks.is_current_completion(completion)
+            ):
+                return
+            if completion.sound_file:
+                control = threading.Event()
+                previous = self._notification_controls.get(completion.key)
+                if previous is not None:
+                    previous.set()
+                self._notification_controls[completion.key] = control
+        self.bus.emit("status", text="Timer finished")
+        if control is None:
+            return
+        try:
+            self._notification_executor.submit(
+                self._play_timer_sound,
+                completion,
+                control,
+            )
+        except RuntimeError:
+            control.set()
+            with self._notification_lock:
+                if self._notification_controls.get(completion.key) is control:
+                    self._notification_controls.pop(completion.key, None)
+            if not self._stopping.is_set():
+                raise
+
+    def _play_timer_sound(
+        self,
+        completion: TimerCompletion,
+        control: threading.Event,
+    ) -> None:
+        try:
+            play_audio(
+                completion.sound_file,
+                completion.volume,
+                stop_requested=lambda: (
+                    control.is_set() or self._stopping.is_set()
+                ),
+            )
+        except Exception as error:
+            if not control.is_set() and not self._stopping.is_set():
+                log.exception("Could not play timer completion sound")
+                self.bus.emit(
+                    "status",
+                    text=f"Timer sound failed: {error}",
+                )
+        finally:
+            with self._notification_lock:
+                if self._notification_controls.get(completion.key) is control:
+                    self._notification_controls.pop(completion.key, None)
+
+    def _cancel_timer_sound(self, key: tuple[int, int, int]) -> None:
+        with self._notification_lock:
+            control = self._notification_controls.pop(key, None)
+        if control is not None:
+            control.set()
+
+    def _clear_time_actions(self) -> None:
+        self._clocks.clear()
+        self._cancel_all_timer_sounds()
+
+    def _cancel_all_timer_sounds(self) -> None:
+        with self._notification_lock:
+            controls = tuple(self._notification_controls.values())
+            self._notification_controls.clear()
+        for control in controls:
+            control.set()
+
     # ---------- rendering ----------
 
     def refresh(self) -> None:
@@ -539,7 +703,10 @@ class DeckController:
         action = action_registry.get(kc.action)
         if action is not None:
             try:
-                fb = action.feedback(self.ctx, kc.params)
+                fb = action.feedback(
+                    self.ctx.for_key(self._tkey(index)),
+                    kc.params,
+                )
             except Exception:
                 log.debug("feedback of %s failed", kc.action, exc_info=True)
         fb = fb or {}
@@ -557,6 +724,7 @@ class DeckController:
             "busy": busy,
             "busy_phase": phase,
             "badge": "RUN" if busy else fb.get("badge", ""),
+            "center_text": fb.get("display", ""),
         }
 
     def _toggle_spec(self, index: int, kc: KeyConfig, size) -> dict:
@@ -579,8 +747,11 @@ class DeckController:
     def shutdown(self) -> None:
         """Cancel queued work and wait for running actions/renders to finish."""
         self._stopping.set()
+        self._clocks.shutdown()
+        self._cancel_all_timer_sounds()
         self._busy_wakeup.set()
         self._render_pending.clear()
         self._action_executor.shutdown(wait=True, cancel_futures=True)
+        self._notification_executor.shutdown(wait=True, cancel_futures=True)
         self._busy_thread.join()
         self._render_executor.shutdown(wait=True, cancel_futures=True)

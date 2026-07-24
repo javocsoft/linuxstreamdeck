@@ -47,6 +47,10 @@ of truth; everything here is Claude-specific and additive.
   keys may start a primary-button drag, internal payloads must match the active
   source, and moves/swaps must keep the unsaved-edit guard. See AGENTS.md §3 and
   §5.
+- Keep countdown/stopwatch state scoped by profile/page/key. Immediate clock
+  presses must stay off action workers, ticks must repaint only changed seconds
+  in the visible view, DnD must move runtime state, and edits/import/shutdown
+  must reset it and stop completion audio. See AGENTS.md §3 and §5.
 
 ### Standard verification loop
 
@@ -68,8 +72,9 @@ first — single instance).
 - Prefer the dedicated Read/Edit/Grep/Glob tools over shelling out to
   `cat`/`sed`/`grep`.
 - When adding an OBS or system action, follow the declarative pattern in
-  `core/actions.py` (`Param`, `choices_source`, `feedback`, `default_icon`) and
-  register it with `@register`; register default icons via `apply_default_icons`.
+  `core/actions.py` (`Param`, `choices_source`, key-scoped `ActionContext`,
+  `feedback`, `immediate`, `default_icon`) and register it with `@register`;
+  register default icons via `apply_default_icons`.
 - Match the style of the file you touch (naming, comment density, private `_helpers`).
 
 ### Keeping documentation current

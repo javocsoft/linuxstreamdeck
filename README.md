@@ -49,6 +49,9 @@ implemented actions, no guessing. It runs, and it's useful.
   single **Wait** and **Play audio file** actions use the same feedback.
 - 🔊 **Local audio playback** — play WAV, MP3, OGG, FLAC or Opus files at a chosen
   volume, for the full file or an optional maximum duration.
+- ⏱️ **On-key timer and stopwatch** — show a live `HH:MM:SS` value in the
+  center of a key. Timers can play an optional completion sound, and both clocks
+  keep counting while you visit another page or profile.
 - 🎨 **Built-in icon library** — ~7,400 Material Design Icons, categorized and searchable.
   Every action ships with a sensible default icon; pick another, or use your own image.
 - ✋ **Drag & drop and copy/paste** — drag any configured key with the primary
@@ -63,7 +66,7 @@ implemented actions, no guessing. It runs, and it's useful.
 - 🔌 **Auto-reconnect & hotplug** — connects to OBS on its own and picks up the deck when
   you plug it in.
 - 💾 **Portable configuration backups** — export or import profiles, pages, keys,
-  settings, custom key icons and referenced action audio in one file.
+  settings, custom key icons and referenced playback or timer audio in one file.
 - 🔐 **Secure OBS password storage** — the password stays in your desktop keyring,
   never in the configuration file or an export.
 - ✨ **AI-assisted key creation** — describe the key you want, get a locally
@@ -82,9 +85,9 @@ implemented actions, no guessing. It runs, and it's useful.
 | **Media** | Play / pause / restart / stop / next / previous |
 | **Advanced** | Scene collections & profiles · internal hotkeys · **raw request** (100% of the API) |
 
-Plus system actions (run a command, open a URL, wait a set time or play a local
-audio file). The **Navigation** category provides separate **Next page**,
-**Previous page** and **Go to page** actions.
+Plus system actions (run a command, open a URL, wait, play local audio, count
+down or run a stopwatch). The **Navigation** category provides separate
+**Next page**, **Previous page** and **Go to page** actions.
 
 ## 📦 Requirements
 
@@ -248,6 +251,26 @@ profile, and duplicate page names are rejected so targets remain unambiguous.
 Keys created with the older combined page-navigation action are migrated
 automatically; after the next save or export they use the three current actions.
 
+### ⏱️ Use a countdown timer or stopwatch
+
+Choose **System → Countdown timer** to set a duration and, optionally, a
+completion sound and volume. The idle key shows the configured duration. Press
+it once to start; the value counts down in the center of the key as
+`HH:MM:SS`. Press it while running to stop and reset it. At zero the key remains
+visibly finished and can play a WAV, MP3, OGG/OGA, FLAC or Opus sound; press it
+again to reset the timer and stop any completion sound.
+
+Choose **System → Stopwatch** for a counter that starts at `00:00:00`. Press
+once to start and again to stop and reset it to zero. Both clocks react
+immediately on single-action keys without occupying an action worker. They keep
+running when you switch pages or profiles and show the current value when you
+return.
+
+Dragging a configured clock key moves its live state with it. Saving a changed
+key, pasting over it or clearing it resets that position. Clock state is
+temporary rather than part of the saved configuration, so deleting a page or
+profile, importing a configuration or closing LinuxStreamDeck clears it.
+
 ### 🔊 Play a local audio file
 
 Choose **System → Play audio file**, then select a local WAV (`.wav` or `.wave`),
@@ -310,12 +333,14 @@ Use the profiles menu (⋮) in the header to choose **Export configuration** or
 
 - **Export** creates a portable `.lsdconfig` ZIP archive. Format v2 contains the
   full JSON configuration, custom key icons, supported audio referenced by
-  **Play audio file**, and non-secret OBS settings, but never the OBS password or
-  provider API keys. Identical audio files are stored once. Each audio file is
-  limited to 200 MiB and bundled audio to 500 MiB total. Built-in Material Design
-  Icons remain lightweight `mdi:` references because they ship with
-  LinuxStreamDeck. Missing or oversized files, and audio with an unsupported
-  extension, keep their original local reference and produce an export warning.
+  **Play audio file** or a countdown timer's completion sound, and non-secret OBS
+  settings, but never the OBS password or provider API keys. Identical audio
+  files are stored once, even when both actions reference the same content. Each
+  audio file is limited to 200 MiB and bundled audio to 500 MiB total. Built-in
+  Material Design Icons remain lightweight `mdi:` references because they ship
+  with LinuxStreamDeck. Missing or oversized files, and audio with an
+  unsupported extension, keep their original local reference and produce an
+  export warning.
 - **Import** replaces all current profiles, pages, keys and settings after you
   confirm the warning. The previous configuration is saved as
   `~/.config/linuxstreamdeck/config.json.bak`. Bundled custom icons and audio are
@@ -334,7 +359,7 @@ build.sh · run.sh · install-udev.sh    # prepare / launch / USB permissions
 packaging/         # build-deb.sh, .desktop, icon, AppStream metainfo, scripts → .deb
 linuxstreamdeck/
 ├── ai/            # OpenAI/Claude requests, bounded context and proposal validation
-├── core/          # events, config, secrets, actions, controller, audio playback, icons
+├── core/          # events, config, actions, controller, clocks, audio, secrets, icons
 ├── device/        # physical Stream Deck, startup animation and key rendering
 ├── obs/           # obs-websocket v5 client + full catalogue of OBS actions
 ├── ui/            # GTK4/Libadwaita: window, editor, AI assistant, OBS settings
