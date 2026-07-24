@@ -6,6 +6,8 @@
 
   <name>LinuxStreamDeck</name>
   <summary>Control your Elgato Stream Deck with deep OBS Studio integration</summary>
+  <icon type="stock">com.javocsoft.LinuxStreamDeck</icon>
+  <pkgname>linux-stream-deck</pkgname>
   <!-- New-style block (AppStream 0.16+) plus the legacy tag, so the developer
        name shows on both recent and older software centres. -->
   <developer id="com.javocsoft">
