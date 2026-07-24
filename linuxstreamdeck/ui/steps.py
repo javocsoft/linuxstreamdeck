@@ -333,6 +333,28 @@ class StepList(Gtk.Box):
     def get_steps(self) -> list[ActionStep]:
         return [s for ed in self._editors if (s := ed.get_step()).action]
 
+    @staticmethod
+    def _delete_icon() -> Gtk.DrawingArea:
+        icon = Gtk.DrawingArea()
+        icon.set_content_width(16)
+        icon.set_content_height(16)
+
+        def draw(widget, context, width, height) -> None:
+            color = widget.get_color()
+            context.set_source_rgba(color.red, color.green, color.blue, color.alpha)
+            context.translate((width - 16) / 2, (height - 16) / 2)
+            context.rectangle(6, 1, 4, 2)
+            context.rectangle(2, 3, 12, 2)
+            context.move_to(4, 6)
+            context.line_to(12, 6)
+            context.line_to(11, 15)
+            context.line_to(5, 15)
+            context.close_path()
+            context.fill()
+
+        icon.set_draw_func(draw)
+        return icon
+
     def _add(self, step: ActionStep, expand: bool, rebuild: bool = True) -> None:
         editor = StepEditor(self.app, on_change=self._refresh_titles)
         editor.load(step)
@@ -360,8 +382,8 @@ class StepList(Gtk.Box):
         down.set_tooltip_text("Move down")
         down.set_sensitive(i < len(self._editors) - 1)
         down.connect("clicked", lambda _b: self._move(i, +1))
-        delete = Gtk.Button.new_from_icon_name("user-trash-symbolic")
-        delete.set_tooltip_text("Remove")
+        delete = Gtk.Button(child=self._delete_icon())
+        delete.set_tooltip_text("Remove action")
         delete.add_css_class("destructive-action")
         delete.connect("clicked", lambda _b: self._delete(i))
         for b in (up, down, delete):
