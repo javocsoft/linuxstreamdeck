@@ -55,8 +55,9 @@ maintenance contract.
   unsaved-editor guards, GStreamer audio lifecycle, same-key restart cancellation
   and ordering, physical startup exclusivity/cancellation/brightness restoration,
   page-navigation migration/reference integrity, portable-archive limits/path
-  safety, AI credential/context/proposal safety, reusing feedback color constants,
-  and English-only with no accents. It only reports; it does not edit code.
+  safety, grid-DnD gesture/payload validation, AI credential/context/proposal
+  safety, reusing feedback color constants, and English-only with no accents. It
+  only reports; it does not edit code.
 
 ## `obs-action-author` — action scaffolder
 

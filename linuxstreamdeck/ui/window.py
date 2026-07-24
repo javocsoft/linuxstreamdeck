@@ -10,6 +10,7 @@ from pathlib import Path
 import gi
 
 gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
@@ -30,8 +31,15 @@ _CSS = b"""
     border: 2px solid transparent;   /* always reserved to prevent grid reflow */
 }
 .deck-key.sel { border-color: @accent_bg_color; }
+.deck-key.drag-source { opacity: 0.65; }
+.deck-key.drop-target {
+    border-color: @accent_bg_color;
+    background-color: alpha(@accent_bg_color, 0.14);
+}
 .statusbar { padding: 4px 10px; font-size: 0.85em; }
 """
+
+_KEY_DRAG_PREFIX = "linuxstreamdeck-key:"
 
 
 class MainWindow(Adw.ApplicationWindow):
@@ -48,6 +56,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._unsaved_dialog: Adw.MessageDialog | None = None
         self._allow_close = False
         self._clipboard = None            # copied KeyConfig (for pasting)
+        self._drag_source_index: int | None = None
+        self._drag_destination_index: int | None = None
 
         css = Gtk.CssProvider()
         css.load_from_data(_CSS)
@@ -142,12 +152,13 @@ class MainWindow(Adw.ApplicationWindow):
             pic.set_size_request(KEY_PIXELS, KEY_PIXELS)
             btn.set_child(pic)
             btn.connect("clicked", self._on_key_clicked, index)
-            self._add_key_dnd(btn, index)
             self._add_key_contextmenu(btn, index)
             self._add_key_shortcuts(btn, index)
             grid.attach(btn, index % GRID_COLS, index // GRID_COLS, 1, 1)
             self._key_buttons.append(btn)
             self._key_pictures.append(pic)
+        self._key_grid = grid
+        self._add_grid_dnd(grid)
         grid_box.append(grid)
         hint = Gtk.Label(
             label="Drag to move · right-click to copy/paste · "
@@ -599,35 +610,122 @@ class MainWindow(Adw.ApplicationWindow):
 
     # --- drag & drop (swaps two keys) ---
 
-    def _add_key_dnd(self, btn: Gtk.Button, index: int) -> None:
+    def _add_grid_dnd(self, grid: Gtk.Grid) -> None:
+        """Use one grid-level DnD pair so child buttons cannot steal gestures."""
         drag = Gtk.DragSource()
         drag.set_actions(Gdk.DragAction.MOVE)
-        drag.connect("prepare", self._on_drag_prepare, index)
-        drag.connect("drag-begin", self._on_drag_begin, index)
-        btn.add_controller(drag)
+        drag.set_button(Gdk.BUTTON_PRIMARY)
+        drag.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        drag.connect("prepare", self._on_drag_prepare)
+        drag.connect("drag-begin", self._on_drag_begin)
+        drag.connect("drag-end", self._on_drag_end)
+        grid.add_controller(drag)
 
-        drop = Gtk.DropTarget.new(GObject.TYPE_INT, Gdk.DragAction.MOVE)
-        drop.connect("drop", self._on_drop, index)
-        btn.add_controller(drop)
+        drop = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+        drop.set_preload(True)
+        drop.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        drop.connect("enter", self._on_drag_motion)
+        drop.connect("motion", self._on_drag_motion)
+        drop.connect("leave", self._on_drag_leave)
+        drop.connect("drop", self._on_drop)
+        grid.add_controller(drop)
 
-    def _on_drag_prepare(self, source, x, y, index):
-        return Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_INT, index))
+    def _key_at_grid_point(self, x: float, y: float) -> int | None:
+        widget = self._key_grid.pick(x, y, Gtk.PickFlags.DEFAULT)
+        while widget is not None and widget is not self._key_grid:
+            try:
+                return self._key_buttons.index(widget)
+            except ValueError:
+                widget = widget.get_parent()
+        return None
 
-    def _on_drag_begin(self, source, drag, index):
+    def _on_drag_prepare(self, source, x, y):
+        index = self._key_at_grid_point(x, y)
+        if index is None or self.app.controller.page.key(index) is None:
+            self._drag_source_index = None
+            return None
+        self._drag_source_index = index
+        payload = GObject.Value(
+            GObject.TYPE_STRING,
+            f"{_KEY_DRAG_PREFIX}{index}",
+        )
+        return Gdk.ContentProvider.new_for_value(payload)
+
+    def _on_drag_begin(self, source, drag):
+        index = self._drag_source_index
+        if index is None:
+            return
+        self._key_buttons[index].add_css_class("drag-source")
         paintable = self._key_pictures[index].get_paintable()
         if paintable is not None:                       # the drag icon = the key
             source.set_icon(paintable, KEY_PIXELS // 2, KEY_PIXELS // 2)
 
-    def _on_drop(self, target, value, x, y, index):
-        if isinstance(value, GObject.Value):     # GTK normally already delivers an int
-            value = value.get_int()
-        src = int(value)
-        if src != index:
-            self._confirm_unsaved_changes(
-                "moving these keys",
-                lambda: self._apply_key_drop(src, index),
+    def _on_drag_end(self, source, drag, delete_data) -> None:
+        self._clear_drag_feedback()
+
+    def _on_drag_motion(self, target, x, y):
+        destination = self._key_at_grid_point(x, y)
+        if destination == self._drag_source_index:
+            destination = None
+        self._set_drag_destination(destination)
+        if self._drag_source_index is None or destination is None:
+            return Gdk.DragAction(0)
+        return Gdk.DragAction.MOVE
+
+    def _on_drag_leave(self, target) -> None:
+        self._set_drag_destination(None)
+
+    def _on_drop(self, target, value, x, y):
+        if isinstance(value, GObject.Value):
+            value = value.get_string()
+        source = self._decode_key_drag(value)
+        destination = self._key_at_grid_point(x, y)
+        if (
+            source is None
+            or source != self._drag_source_index
+            or destination is None
+            or source == destination
+        ):
+            log.debug(
+                "Rejected key drop: source=%r active=%r destination=%r",
+                source,
+                self._drag_source_index,
+                destination,
             )
+            self._set_drag_destination(None)
+            return False
+        self._confirm_unsaved_changes(
+            "moving these keys",
+            lambda: self._apply_key_drop(source, destination),
+        )
+        self._set_drag_destination(None)
         return True
+
+    @staticmethod
+    def _decode_key_drag(value) -> int | None:
+        if not isinstance(value, str) or not value.startswith(_KEY_DRAG_PREFIX):
+            return None
+        try:
+            return int(value.removeprefix(_KEY_DRAG_PREFIX))
+        except ValueError:
+            return None
+
+    def _set_drag_destination(self, index: int | None) -> None:
+        previous = self._drag_destination_index
+        if previous == index:
+            return
+        if previous is not None and previous < len(self._key_buttons):
+            self._key_buttons[previous].remove_css_class("drop-target")
+        self._drag_destination_index = index
+        if index is not None:
+            self._key_buttons[index].add_css_class("drop-target")
+
+    def _clear_drag_feedback(self) -> None:
+        source = self._drag_source_index
+        if source is not None and source < len(self._key_buttons):
+            self._key_buttons[source].remove_css_class("drag-source")
+        self._drag_source_index = None
+        self._set_drag_destination(None)
 
     def _apply_key_drop(self, source: int, destination: int) -> None:
         self.app.controller.swap_keys(source, destination)

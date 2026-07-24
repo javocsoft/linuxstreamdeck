@@ -43,6 +43,10 @@ of truth; everything here is Claude-specific and additive.
 - Preserve page-navigation compatibility: keep legacy `nav.page` migration while
   exposing only the three explicit IDs, keep page names unique per profile and
   rewrite every `nav.page.go` target on rename. See AGENTS.md §3 and §5.
+- Preserve grid-level DnD: CAPTURE must win over child buttons, only configured
+  keys may start a primary-button drag, internal payloads must match the active
+  source, and moves/swaps must keep the unsaved-edit guard. See AGENTS.md §3 and
+  §5.
 
 ### Standard verification loop
 

@@ -54,7 +54,8 @@ Never trust a documentation claim without checking its source. Verify at least:
   OBS requests, separate action/render workers and ordered activity shutdown,
   same-key restart cancellation and predecessor ordering, exclusive/cancellable
   physical startup, unambiguous/migrated page navigation, bounded/path-safe
-  portable audio, isolated config experiments and the single-instance GUI rule.
+  portable audio, grid-level validated DnD, isolated config experiments and the
+  single-instance GUI rule.
 - **Device facts:** supported device id, key count, grid columns, render size,
   startup frame/title layout, brightness bounds and connection publication order.
 - **Custom agents:** `agent-definitions/manifest.json` and

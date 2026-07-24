@@ -125,7 +125,7 @@ linuxstreamdeck/
 ├── ui/
 │   ├── window.py      MainWindow: key grid (virtual deck), header (profiles,
 │   │                  configuration import/export, pages, brightness, OBS settings,
-│   │                  About), DnD move, copy/paste, unsaved-change guard, status bar.
+│   │                  About), grid-level DnD, copy/paste, unsaved guard, status bar.
 │   ├── editor.py      EditorPanel: key editor, canonical draft/baseline and key type.
 │   ├── ai_assistant.py OpenAI/Claude proposal dialog and explicit editor handoff.
 │   ├── steps.py       StepEditor / StepList / AppearanceBox — reused by the editor
@@ -342,6 +342,30 @@ Clicking the already selected key must not reload the editor. Page-change handli
 tracks the selected page by object identity so renaming that same page preserves
 the selection, while a real page change clears it.
 
+### Grid drag and drop
+
+`MainWindow` owns one `Gtk.DragSource` / `Gtk.DropTarget` pair on the entire key
+grid, not one pair per button. Both controllers use
+`Gtk.PropagationPhase.CAPTURE`, the source accepts only
+`Gdk.BUTTON_PRIMARY`, and the target enables preload. This lets the grid claim
+the gesture before a child `Gtk.Button` or `Gtk.Picture` consumes it.
+
+Drag data is an internal `GObject.TYPE_STRING` value prefixed with
+`linuxstreamdeck-key:`. Preparation resolves the source from the pointer with
+`Gtk.Grid.pick()` and walks parent widgets until it finds the owning key button.
+An empty key returns no content provider and therefore cannot start a drag.
+Motion and drop resolve the destination the same way, so configured keys can move
+upward or downward into any empty slot, or swap with any occupied slot.
+
+The drop handler must decode the typed payload and require its source index to
+match the active drag. Foreign, malformed, stale, outside-grid and same-key drops
+are rejected. CSS classes dim the source and subtly highlight the current valid
+destination. Destination feedback clears on leave/drop, and drag end clears all
+remaining feedback. A valid drop still goes through the unsaved-change
+confirmation before `DeckController.swap_keys()`; the key configuration and
+transient toggle state travel together, and selection follows the destination.
+Copy/paste remains a separate context-menu/shortcut operation.
+
 Persistence is atomic JSON with user-only (`0600`) permissions at
 `~/.config/linuxstreamdeck/config.json`, with a `config.json.bak` backup written
 on every save. Loading migrates both the old single-profile format and legacy
@@ -476,6 +500,14 @@ hard-to-diagnose failures.
    from the active profile, reject duplicate names and update every same-profile
    reference on rename. Next/previous must wrap, missing names must report status
    and a same-page selection must not save or emit redundant events.
+
+13. **Grid DnD must survive child widgets and reject foreign data.** Keep one
+   CAPTURE-phase, primary-button source/target pair on the grid, preload the typed
+   internal string payload and resolve source/destination by walking from the
+   picked child to its key button. Empty keys cannot be sources; empty and
+   occupied keys are valid destinations in any direction. Validate the payload
+   against the active source, preserve unsaved-change confirmation, move toggle
+   state with the key and always clear source/destination feedback.
 
 ---
 

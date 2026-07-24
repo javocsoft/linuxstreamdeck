@@ -51,8 +51,10 @@ implemented actions, no guessing. It runs, and it's useful.
   volume, for the full file or an optional maximum duration.
 - 🎨 **Built-in icon library** — ~7,400 Material Design Icons, categorized and searchable.
   Every action ships with a sensible default icon; pick another, or use your own image.
-- ✋ **Drag & drop and copy/paste** — reorder keys by dragging, duplicate any key with
-  right-click → Copy/Paste (or `Ctrl+C`/`Ctrl+V`). Works with any key type.
+- ✋ **Drag & drop and copy/paste** — drag any configured key with the primary
+  mouse button to an empty position to move it, or onto another configured key
+  to swap them. The source dims and the destination highlights while dragging.
+  Duplicate any key with right-click → Copy/Paste (or `Ctrl+C`/`Ctrl+V`).
 - 🖥️ **Virtual deck** — the on-screen grid mirrors the physical device, so you can
   configure and test everything **without the hardware even connected**.
 - ✨ **Physical deck startup animation** — a newly connected 15-key deck wakes
@@ -191,8 +193,11 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
    icon as the deck without turning it into a custom override. Add a **Label** only
    if you want text on the key.
 4. **Test** runs the action without needing the physical deck.
-5. **Reorder** keys by dragging them, and **duplicate** a key with right-click → Copy, then
-   Paste onto another (or `Ctrl+C`/`Ctrl+V`).
+5. **Reorder** configured keys by dragging with the primary mouse button. Drop
+   onto an empty position to move the key, or onto an occupied position to swap
+   both keys; dragging works in any direction. Empty keys are destinations, not
+   drag sources. **Duplicate** a key with right-click → Copy, then Paste onto
+   another (or `Ctrl+C`/`Ctrl+V`).
 6. **Pages** — use the menu (⋮) next to the page selector to add a new page, rename or
    delete the current one. Page names must be unique within their profile.
 7. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or

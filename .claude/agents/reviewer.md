@@ -101,9 +101,16 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    names. `sys.command` and `obs.raw` must remain excluded, every provider response
    locally validated, and generation must never execute or save a key before
    explicit editor review and user save.
-17. **English-only.** Flag Spanish or accented text introduced in any versioned
+17. **Grid drag/drop reliability.** Keep one grid-level source/target pair using
+   CAPTURE propagation, primary-button dragging, preload and an internal typed
+   string payload. Pointer resolution must walk through child widgets to the key
+   button. Empty keys cannot start drags; any different empty or occupied key is
+   a valid destination in either direction. Reject malformed, foreign and stale
+   payloads, preserve subtle source/destination feedback and unsaved-change
+   confirmation, and move toggle state with the key during moves/swaps.
+18. **English-only.** Flag Spanish or accented text introduced in any versioned
    user-facing string, comment, log or document.
-18. **General correctness.** Report proven bugs, resource leaks and broken error
+19. **General correctness.** Report proven bugs, resource leaks and broken error
    handling beyond the specialist checklist.
 
 ## Output

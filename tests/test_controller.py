@@ -258,6 +258,38 @@ class ControllerActivityTests(unittest.TestCase):
         self.assertTrue(pulse_rendered.wait(1.5))
         self.assertTrue(self.controller._busy_state(0)[0])
 
+    def test_swap_moves_a_key_to_empty_targets_in_both_directions(self) -> None:
+        page = self.config.pages[0]
+        key = KeyConfig(action="nav.page.next")
+        page.set_key(11, key)
+        self.controller._toggle[self.controller._tkey(11)] = True
+        self.config.save = lambda: None
+        self.controller.refresh = lambda: None
+
+        self.controller.swap_keys(11, 1)
+        self.assertIs(page.key(1), key)
+        self.assertIsNone(page.key(11))
+        self.assertTrue(self.controller._toggle[self.controller._tkey(1)])
+
+        self.controller.swap_keys(1, 13)
+        self.assertIs(page.key(13), key)
+        self.assertIsNone(page.key(1))
+        self.assertTrue(self.controller._toggle[self.controller._tkey(13)])
+
+    def test_swap_exchanges_two_configured_keys(self) -> None:
+        page = self.config.pages[0]
+        previous = KeyConfig(action="nav.page.previous")
+        following = KeyConfig(action="nav.page.next")
+        page.set_key(0, previous)
+        page.set_key(14, following)
+        self.config.save = lambda: None
+        self.controller.refresh = lambda: None
+
+        self.controller.swap_keys(14, 0)
+
+        self.assertIs(page.key(0), following)
+        self.assertIs(page.key(14), previous)
+
 
 class BusyRenderingTests(unittest.TestCase):
     def test_busy_phases_create_a_subtle_visible_change(self) -> None:
