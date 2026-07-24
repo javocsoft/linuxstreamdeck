@@ -99,8 +99,9 @@ you (unplug and reconnect the deck once after installing). To remove it later:
 Quick way with the included scripts:
 
 ```bash
-# 1. Prepare the project: creates the virtual environment, installs dependencies
-#    and checks that it compiles. With --apt it also installs the system packages.
+# 1. Prepare the project: verifies custom agent adapters, creates the virtual
+#    environment, installs dependencies and checks that it compiles. With --apt
+#    it also installs the system packages.
 ./build.sh --apt
 
 # 2. USB permissions for the Stream Deck (one time only)
@@ -113,6 +114,9 @@ sudo ./install-udev.sh
 ```bash
 # System dependencies
 sudo apt install gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-secret-1 gnome-keyring libhidapi-libusb0 python3-gi python3-gi-cairo
+
+# Verify the generated Claude and Codex custom agent adapters
+python3 agent-definitions/sync.py --check
 
 # Python environment (with access to the system GTK/PyGObject)
 python3 -m venv --system-site-packages .venv
@@ -127,7 +131,7 @@ sudo ./install-udev.sh
 <summary>Build the <code>.deb</code> yourself</summary>
 
 ```bash
-./build.sh                       # once, to create the .venv it reads deps from
+./build.sh                       # once, to check agents and create the .venv it reads deps from
 ./packaging/build-deb.sh         # version from pyproject.toml
 ./packaging/build-deb.sh 1.2.3   # …or an explicit X.Y.Z (also bumps the version)
 
@@ -215,7 +219,7 @@ Use the profiles menu (⋮) in the header to choose **Export configuration** or
 build.sh · run.sh · install-udev.sh    # prepare / launch / USB permissions
 packaging/         # build-deb.sh, .desktop, icon, AppStream metainfo, scripts → .deb
 linuxstreamdeck/
-├── core/          # event bus, config, action registry, controller, icons
+├── core/          # event bus, config, credential storage, action registry, controller, icons
 ├── device/        # physical Stream Deck (hidapi) and key rendering (Pillow)
 ├── obs/           # obs-websocket v5 client + full catalogue of OBS actions
 ├── ui/            # GTK4/Libadwaita: window, editor, icon picker, OBS settings

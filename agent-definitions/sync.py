@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Generate provider-specific custom agents from the canonical definitions."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+import textwrap
+from pathlib import Path
+
+SOURCE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SOURCE_DIR.parent
+MANIFEST = SOURCE_DIR / "manifest.json"
+CATALOG = REPO_ROOT / "CUSTOMAGENTS.md"
+CLAUDE_DIR = REPO_ROOT / ".claude" / "agents"
+CODEX_DIR = REPO_ROOT / ".codex" / "agents"
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+CATALOG_NAME_RE = re.compile(r"^## `([^`]+)`", re.MULTILINE)
+SANDBOX_MODES = {"read-only", "workspace-write", "danger-full-access"}
+
+
+def _load_specs() -> list[dict]:
+    data = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    specs = data.get("agents")
+    if not isinstance(specs, list) or not specs:
+        raise ValueError("manifest.json must contain a non-empty agents list")
+
+    names: set[str] = set()
+    prompt_paths: set[Path] = set()
+    for spec in specs:
+        name = spec.get("name", "")
+        if not isinstance(name, str) or not NAME_RE.fullmatch(name):
+            raise ValueError(f"Invalid agent name: {name!r}")
+        if name in names:
+            raise ValueError(f"Duplicate agent name: {name}")
+        names.add(name)
+
+        description = spec.get("description")
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError(f"{name}: description must be a non-empty string")
+
+        relative_prompt = Path(spec.get("prompt", ""))
+        prompt_path = (SOURCE_DIR / relative_prompt).resolve()
+        try:
+            prompt_path.relative_to(SOURCE_DIR / "prompts")
+        except ValueError as exc:
+            raise ValueError(f"{name}: prompt must be below agent-definitions/prompts") from exc
+        if not prompt_path.is_file():
+            raise ValueError(f"{name}: missing prompt file {relative_prompt}")
+        if prompt_path in prompt_paths:
+            raise ValueError(f"{name}: prompt file is already used by another agent")
+        prompt_paths.add(prompt_path)
+
+        claude = spec.get("claude")
+        if not isinstance(claude, dict):
+            raise ValueError(f"{name}: missing claude settings")
+        tools = claude.get("tools")
+        if not isinstance(tools, list) or not all(
+            isinstance(tool, str) and tool for tool in tools
+        ):
+            raise ValueError(f"{name}: claude.tools must be a non-empty string list")
+        if not isinstance(claude.get("model"), str) or not claude["model"]:
+            raise ValueError(f"{name}: claude.model must be a non-empty string")
+
+        codex = spec.get("codex")
+        if not isinstance(codex, dict):
+            raise ValueError(f"{name}: missing codex settings")
+        if codex.get("sandbox_mode") not in SANDBOX_MODES:
+            raise ValueError(f"{name}: invalid codex sandbox_mode")
+        effort = codex.get("model_reasoning_effort")
+        if effort not in {"low", "medium", "high", "xhigh", "max", "ultra"}:
+            raise ValueError(f"{name}: invalid codex model_reasoning_effort")
+
+    actual_prompts = set((SOURCE_DIR / "prompts").glob("*.md"))
+    if actual_prompts != prompt_paths:
+        paths = sorted(
+            str(path.relative_to(SOURCE_DIR)) for path in actual_prompts ^ prompt_paths
+        )
+        raise ValueError(f"Manifest/prompt inventory mismatch: {', '.join(paths)}")
+
+    catalog_names = CATALOG_NAME_RE.findall(CATALOG.read_text(encoding="utf-8"))
+    if len(catalog_names) != len(set(catalog_names)):
+        raise ValueError("CUSTOMAGENTS.md contains duplicate agent headings")
+    if set(catalog_names) != names:
+        mismatch = sorted(set(catalog_names) ^ names)
+        raise ValueError(
+            f"Manifest/CUSTOMAGENTS.md inventory mismatch: {', '.join(mismatch)}"
+        )
+
+    return specs
+
+
+def _prompt(spec: dict) -> str:
+    path = SOURCE_DIR / spec["prompt"]
+    prompt = path.read_text(encoding="utf-8").strip()
+    if not prompt:
+        raise ValueError(f"{spec['name']}: canonical prompt is empty")
+    if '"""' in prompt:
+        raise ValueError(f"{spec['name']}: canonical prompt cannot contain triple quotes")
+    return prompt
+
+
+def _fold_yaml(text: str) -> str:
+    lines = textwrap.wrap(
+        " ".join(text.split()),
+        width=76,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    return "\n".join(f"  {line}" for line in lines)
+
+
+def _claude_content(spec: dict) -> str:
+    source = spec["prompt"]
+    tools = ", ".join(spec["claude"]["tools"])
+    return (
+        "---\n"
+        f"name: {spec['name']}\n"
+        "description: >-\n"
+        f"{_fold_yaml(spec['description'])}\n"
+        f"tools: {tools}\n"
+        f"model: {spec['claude']['model']}\n"
+        "---\n"
+        f"<!-- Generated from agent-definitions/{source} by agent-definitions/sync.py. -->\n"
+        "<!-- Do not edit this file directly. -->\n\n"
+        f"{_prompt(spec)}\n"
+    )
+
+
+def _codex_content(spec: dict) -> str:
+    source = spec["prompt"]
+    codex = spec["codex"]
+    description = json.dumps(spec["description"], ensure_ascii=False)
+    return (
+        f"# Generated from agent-definitions/{source} by agent-definitions/sync.py.\n"
+        "# Do not edit this file directly.\n\n"
+        f"name = {json.dumps(spec['name'])}\n"
+        f"description = {description}\n"
+        f"sandbox_mode = {json.dumps(codex['sandbox_mode'])}\n"
+        "model_reasoning_effort = "
+        f"{json.dumps(codex['model_reasoning_effort'])}\n"
+        'developer_instructions = """\n'
+        f"{_prompt(spec)}\n"
+        '"""\n'
+    )
+
+
+def _expected_files(specs: list[dict]) -> dict[Path, str]:
+    expected: dict[Path, str] = {}
+    for spec in specs:
+        name = spec["name"]
+        expected[CLAUDE_DIR / f"{name}.md"] = _claude_content(spec)
+        expected[CODEX_DIR / f"{name}.toml"] = _codex_content(spec)
+    return expected
+
+
+def _check(expected: dict[Path, str]) -> int:
+    stale = [
+        path.relative_to(REPO_ROOT)
+        for path, content in expected.items()
+        if not path.is_file() or path.read_text(encoding="utf-8") != content
+    ]
+    expected_paths = set(expected)
+    actual_paths = set(CLAUDE_DIR.glob("*.md")) | set(CODEX_DIR.glob("*.toml"))
+    unmanaged = sorted(path.relative_to(REPO_ROOT) for path in actual_paths - expected_paths)
+    if stale or unmanaged:
+        for path in stale:
+            print(f"Out of sync: {path}", file=sys.stderr)
+        for path in unmanaged:
+            print(f"Unmanaged adapter: {path}", file=sys.stderr)
+        print(
+            "Run: python3 agent-definitions/sync.py",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"Agent adapters are synchronized ({len(expected)} files).")
+    return 0
+
+
+def _write(expected: dict[Path, str]) -> int:
+    expected_paths = set(expected)
+    actual_paths = set(CLAUDE_DIR.glob("*.md")) | set(CODEX_DIR.glob("*.toml"))
+    unmanaged = sorted(path.relative_to(REPO_ROOT) for path in actual_paths - expected_paths)
+    if unmanaged:
+        paths = ", ".join(str(path) for path in unmanaged)
+        raise ValueError(f"Unmanaged generated adapter(s): {paths}")
+
+    changed: list[Path] = []
+    for path, content in expected.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        current = path.read_text(encoding="utf-8") if path.is_file() else None
+        if current == content:
+            continue
+        path.write_text(content, encoding="utf-8")
+        changed.append(path.relative_to(REPO_ROOT))
+
+    if changed:
+        for path in changed:
+            print(f"Generated: {path}")
+    else:
+        print("Agent adapters were already synchronized.")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Synchronize Claude and Codex custom agent definitions."
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="report drift without writing files",
+    )
+    args = parser.parse_args()
+    try:
+        expected = _expected_files(_load_specs())
+        return _check(expected) if args.check else _write(expected)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"Agent definition error: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

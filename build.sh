@@ -4,6 +4,7 @@
 #   - checks (or optionally installs) the system dependencies
 #   - creates the .venv virtual environment (with access to the system GTK/PyGObject)
 #   - installs the package and its Python dependencies
+#   - verifies that Claude and Codex custom agent adapters are synchronized
 #   - checks that all the code compiles
 #
 # Usage:
@@ -40,6 +41,10 @@ if [[ "${1:-}" == "--apt" ]]; then
 fi
 
 command -v "$PY" >/dev/null 2>&1 || { err "$PY not found. Install Python 3.10+."; exit 1; }
+
+# ---- custom agent synchronization ----
+info "Checking custom agent definitions…"
+"$PY" agent-definitions/sync.py --check
 
 # ---- system dependency check ----
 missing=()

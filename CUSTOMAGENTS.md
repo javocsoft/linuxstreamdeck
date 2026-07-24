@@ -1,27 +1,44 @@
 # CUSTOMAGENTS.md
 
-Reference for the project's **custom Claude Code subagents** — what each one does
-and when it activates. The agent definitions live in `.claude/agents/*.md`; this
-file is the human-readable index. See `AGENTS.md` for the project's operational
-guide that these agents enforce.
+Reference for the project's custom Claude Code and OpenAI Codex subagents: what
+each one does and when it should run. This is the human-readable catalogue;
+`AGENTS.md` remains the shared operational guide that every agent enforces.
+
+## One source, two native formats
+
+Shared system prompts live in `agent-definitions/prompts/*.md`, while
+`agent-definitions/manifest.json` holds trigger descriptions and
+provider-specific tools, models and sandbox settings. The deterministic generator
+produces the native files each provider discovers:
+
+- Claude Code: `.claude/agents/*.md` (Markdown with YAML frontmatter).
+- OpenAI Codex: `.codex/agents/*.toml` (standalone TOML agent config).
+
+Never edit either generated directory directly. Change the canonical prompt or
+manifest, then synchronize and check both providers:
+
+```bash
+python3 agent-definitions/sync.py
+python3 agent-definitions/sync.py --check
+```
+
+The adapters are versioned with the repository, so a clone is immediately usable
+without running the generator. See `agent-definitions/README.md` for the
+maintenance contract.
 
 ## How subagents trigger
 
-In Claude Code a subagent fires in one of two ways:
+- **Claude Code:** delegates when a task matches the generated agent description,
+  or when the user names or mentions the agent.
+- **Codex:** delegates when explicitly requested or when applicable `AGENTS.md` or
+  skill guidance calls for it; the generated description identifies the intended
+  specialist.
+- **Both:** the main session owns orchestration and receives the specialist's
+  report or changes.
 
-- **Automatically**, when the task matches the agent's `description` (the
-  definitions say "Use PROACTIVELY…" where that is intended).
-- **Explicitly**, when you ask for it by name (e.g. *"use the reviewer agent"*).
-
-The main session can also delegate to them when the work calls for it. All agents
-live in `.claude/agents/`, are written in English with no accented characters, and
-are versioned with the repo (not gitignored), so anyone who clones the project
-gets them.
-
-> **Caveat — not a deterministic hook.** The "automatic" trigger is a decision the
-> main agent makes based on each `description`; it is **not** a hook that runs on
-> every file save. If you need a hard guarantee that an agent runs on every change,
-> configure a hook in `settings.json` instead.
+> **Caveat — not a deterministic hook.** Delegation is a model decision, not a
+> callback that runs on every file save. Invoke an agent explicitly when a check
+> must run, and use CI or provider hooks for mechanically enforced guarantees.
 
 ---
 
@@ -65,11 +82,9 @@ gets them.
   structure, dependencies or conventions — anything that could make a `.md` stale.
 - **Manual:** *"update the documentation"*, *"review the docs"*.
 - **What it does:** inventories every Markdown file (README.md, AGENTS.md,
-  CLAUDE.md, `docs/`, and any others), treats the **code as the ground truth**, and
-  edits the docs to match reality — verifying commands, dependencies/versions, the
-  module tree, EventBus topics, the action catalogue, config paths and the critical
-  gotchas. It edits **documentation only** (never application code), keeps English
-  with no accents, preserves each file's tone (README's friendly/gracious voice,
-  AGENTS/CLAUDE's terse operational style), maintains the AGENTS.md ⇄ CLAUDE.md
-  relationship, and ends with a report of what changed and any drift a human should
-  decide on.
+  CLAUDE.md, CUSTOMAGENTS.md, `docs/`, canonical agent prompts and any others),
+  treats the **code and canonical agent definitions as ground truth**, and edits
+  documentation to match reality. It checks both generated provider directories
+  with `agent-definitions/sync.py --check`, keeps English with no accents,
+  preserves each file's tone, maintains the AGENTS.md / CLAUDE.md relationship,
+  and ends with a report of changes and any drift a human should decide on.

@@ -31,7 +31,7 @@ and is created **with `--system-site-packages`** so it can import the system GTK
 PyGObject.
 
 ```bash
-./build.sh              # create .venv, install the package (editable) + deps, compile-check
+./build.sh              # check agent adapters; create .venv, install package + deps, compile-check
 ./build.sh --apt        # same, and install the system packages first (needs sudo)
 sudo ./install-udev.sh  # one-time USB permissions for the Stream Deck
 ./run.sh                # launch the app
@@ -273,9 +273,22 @@ The project's documentation must stay in sync with the code. Documentation files
 - `README.md` — user-facing overview, features, install/usage.
 - `AGENTS.md` — this file (agent operational guide).
 - `CLAUDE.md` — Claude-specific notes; imports this file.
+- `CUSTOMAGENTS.md` — provider-neutral catalogue of the custom subagents.
+- `agent-definitions/` — canonical prompts, provider settings and the generator
+  for Claude/Codex agent adapters.
 - `docs/` — assets such as `screenshot.png`.
 
-There is a dedicated **`documenter` agent** (`.claude/agents/documenter.md`) whose
-job is to review all `.md` files and bring them up to date with the current state
-of the project. Invoke it when the code has changed in ways that affect the docs,
-or when asked to "update the documentation".
+Custom agent prompts must be edited only below `agent-definitions/`; files below
+`.claude/agents/` and `.codex/agents/` are generated provider adapters. After an
+agent prompt or manifest change, run:
+
+```bash
+python3 agent-definitions/sync.py
+python3 agent-definitions/sync.py --check
+```
+
+There is a dedicated **`documenter` agent** for both Claude and Codex. Its job is
+to review every Markdown file and bring it up to date with the current code and
+canonical agent definitions. Invoke it when code or agent changes affect the
+docs, or when asked to "update the documentation". It must include generated
+agent Markdown in its audit and finish with the synchronization check above.

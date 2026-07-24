@@ -53,6 +53,8 @@ first — single instance).
 
 When a change affects user-facing behaviour, structure, commands or conventions,
 update the docs — or delegate to the **`documenter`** subagent
-(`.claude/agents/documenter.md`), which reviews every `.md` file and brings it in
-line with the current code. Invoke it when the user asks to "update the
-documentation", or proactively after a change that clearly makes a doc stale.
+(`.claude/agents/documenter.md`, generated from
+`agent-definitions/prompts/documenter.md`), which reviews every `.md` file and
+brings it in line with the current code and canonical agent definitions. Invoke
+it when the user asks to "update the documentation", or proactively after a
+change that clearly makes a doc stale.
