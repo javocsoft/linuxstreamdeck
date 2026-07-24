@@ -26,7 +26,7 @@ _CSS = b"""
 .deck-key {
     padding: 3px;
     border-radius: 10px;
-    border: 2px solid transparent;   /* reservado siempre para no reflowar la rejilla */
+    border: 2px solid transparent;   /* always reserved to prevent grid reflow */
 }
 .deck-key.sel { border-color: @accent_bg_color; }
 .statusbar { padding: 4px 10px; font-size: 0.85em; }
