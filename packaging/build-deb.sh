@@ -75,6 +75,7 @@ mkdir -p "$STAGE/DEBIAN" \
          "$LIB/_vendor" \
          "$STAGE/usr/bin" \
          "$STAGE/usr/share/applications" \
+         "$STAGE/usr/share/metainfo" \
          "$STAGE/usr/share/icons/hicolor/scalable/apps" \
          "$STAGE/usr/lib/udev/rules.d" \
          "$STAGE/usr/share/doc/$PKG"
@@ -98,9 +99,13 @@ sys.exit(main())
 LAUNCH
 chmod 755 "$STAGE/usr/bin/$APPDIR"
 
-# ---- desktop entry, icon, udev rule, docs ----
+# ---- desktop entry, AppStream metadata, icon, udev rule, docs ----
 cp "$HERE/$APPID.desktop" "$STAGE/usr/share/applications/"
 cp "$HERE/$APPID.svg"     "$STAGE/usr/share/icons/hicolor/scalable/apps/"
+# AppStream metainfo makes software centres show the app icon, summary and
+# screenshot instead of a generic package entry. Inject the built version/date.
+sed -e "s/@VERSION@/$VERSION/" -e "s/@DATE@/$(date +%F)/" \
+    "$HERE/$APPID.metainfo.xml" > "$STAGE/usr/share/metainfo/$APPID.metainfo.xml"
 cp "$ROOT/data/udev/70-linuxstreamdeck.rules" "$STAGE/usr/lib/udev/rules.d/"
 cp "$ROOT/README.md" "$STAGE/usr/share/doc/$PKG/"
 cat > "$STAGE/usr/share/doc/$PKG/copyright" <<EOF

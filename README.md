@@ -166,7 +166,7 @@ backup in `config.json.bak`). Point `LSD_CONFIG_DIR` somewhere else to relocate 
 
 ```
 build.sh · run.sh · install-udev.sh    # prepare / launch / USB permissions
-packaging/         # build-deb.sh, .desktop, icon, maintainer scripts → .deb
+packaging/         # build-deb.sh, .desktop, icon, AppStream metainfo, scripts → .deb
 linuxstreamdeck/
 ├── core/          # event bus, config, action registry, controller, icons
 ├── device/        # physical Stream Deck (hidapi) and key rendering (Pillow)

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.javocsoft.LinuxStreamDeck</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>LinuxStreamDeck</name>
+  <summary>Control your Elgato Stream Deck with deep OBS Studio integration</summary>
+  <!-- New-style block (AppStream 0.16+) plus the legacy tag, so the developer
+       name shows on both recent and older software centres. -->
+  <developer id="com.javocsoft">
+    <name>JavocSoft</name>
+  </developer>
+  <developer_name>JavocSoft</developer_name>
+
+  <description>
+    <p>
+      LinuxStreamDeck is a GTK4/Libadwaita desktop application to control the
+      Elgato Stream Deck on Linux, built around full OBS Studio integration
+      (obs-websocket v5) with live feedback right on the keys: the active scene
+      lights up, recording turns red, going live turns green, a muted mic is
+      marked.
+    </p>
+    <p>
+      It ships a large built-in icon library and works as a virtual on-screen
+      deck, so you can configure and test everything even without the hardware
+      connected.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Deep OBS control: scenes, recording and streaming, audio, sources and filters, media, and a raw-request escape hatch</li>
+      <li>Real-time feedback on the keys, driven by obs-websocket events</li>
+      <li>Profiles and pages, each with its own set of keys</li>
+      <li>Single, multiple, and toggle (ON/OFF) key types, with an optional Wait action</li>
+      <li>Built-in library of ~7,400 Material Design Icons, or use your own image</li>
+      <li>Drag &amp; drop to reorder, copy/paste to duplicate keys</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">com.javocsoft.LinuxStreamDeck.desktop</launchable>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Utility</category>
+  </categories>
+
+  <keywords>
+    <keyword>streamdeck</keyword>
+    <keyword>elgato</keyword>
+    <keyword>obs</keyword>
+    <keyword>deck</keyword>
+    <keyword>macro</keyword>
+  </keywords>
+
+  <url type="homepage">https://github.com/javocsoft/linuxstreamdeck</url>
+  <url type="bugtracker">https://github.com/javocsoft/linuxstreamdeck/issues</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>Controlling OBS Studio with live feedback on the keys</caption>
+      <image>https://raw.githubusercontent.com/javocsoft/linuxstreamdeck/main/docs/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

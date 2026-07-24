@@ -56,9 +56,12 @@ offscreen. Do **not** rely on launching the GUI to "see" a change (see §5).
 app plus the two pip-only deps (`StreamDeck`, `obsws_python`) are vendored under
 `/usr/lib/linuxstreamdeck/_vendor`, while GTK4/Adw (PyGObject), Pillow, hidapi and
 websocket-client come from apt `Depends`. The launcher `/usr/bin/linuxstreamdeck`
-runs the system `python3` with those paths on `sys.path`. Version defaults to
-`pyproject.toml`; the build **syncs it into both** `pyproject.toml` and
-`linuxstreamdeck/__init__.py::VERSION`, so passing `X.Y.Z` also bumps those sources.
+runs the system `python3` with those paths on `sys.path`. It also installs a
+desktop entry, the app icon, an **AppStream metainfo** (so software centres show
+it as an app with icon/screenshot, not a generic package), and the udev rule
+(reloaded by the `postinst`). Version defaults to `pyproject.toml`; the build
+**syncs it into both** `pyproject.toml` and `linuxstreamdeck/__init__.py::VERSION`,
+so passing `X.Y.Z` also bumps those sources.
 
 ---
 
