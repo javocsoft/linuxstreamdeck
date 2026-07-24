@@ -113,9 +113,10 @@ linuxstreamdeck/
 │   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
 │   └── secrets.py     Async Secret Service storage for OBS and per-provider API keys.
 ├── device/
-│   ├── manager.py     DeckManager: physical device via HID, hotplug, key callbacks.
-│   └── renderer.py    `compose()` — builds each key PNG with Pillow (bg, icon,
-│                      label, badge, active-state lighting, running halo).
+│   ├── manager.py     DeckManager: HID hotplug, exclusive startup, key callbacks.
+│   ├── startup_animation.py 33-frame offscreen physical-deck wake/title sequence.
+│   └── renderer.py    `compose()` — builds each configured key PNG with Pillow
+│                      (bg, icon, label, badge, active-state lighting, running halo).
 ├── obs/
 │   ├── client.py      OBSClient: obs-websocket v5 connection, auto-reconnect,
 │   │                  thread-safe requests, re-emits OBS events onto the bus.
@@ -141,7 +142,7 @@ linuxstreamdeck/
 | Topic | Payload | Meaning |
 | --- | --- | --- |
 | `deck.key` | `index:int, pressed:bool` | Physical key pressed/released. |
-| `deck.connected` | `model:str, keys:int` | Device plugged in. |
+| `deck.connected` | `model:str, keys:int` | Physical device ready after startup. |
 | `deck.disconnected` | — | Device removed. |
 | `obs.connected` / `obs.disconnected` | — | OBS websocket state. |
 | `obs.state` | `what:str` | Any OBS state change (drives key feedback). |
@@ -153,6 +154,28 @@ linuxstreamdeck/
 The `*` topic receives every event. `EventBus.dispatcher` is `GLib.idle_add` in
 the app, so subscribers always run on the GTK main thread even when the emit came
 from the deck read thread or the obs-websocket event thread.
+
+### Physical deck startup and connection ordering
+
+`device/startup_animation.py::startup_frames()` creates a 33-frame offscreen
+sequence for the physical 15-key, 5×3 deck: wake/energy wave, burst, progressive
+title, hold, fade and a final black frame. The 15-character
+`LinuxStreamDeck` title is assigned one character per key in row-major order:
+`Linux` / `Strea` / `mDeck`. Frame brightness changes smoothly but
+`_scaled_brightness()` never exceeds the user's configured target.
+
+`DeckManager` plays the sequence directly on a newly opened device from the
+monitor thread. Until it completes, the manager must not assign `self.deck`,
+register the key callback or emit `deck.connected`; this keeps normal controller
+renders and physical presses from interleaving with startup writes. The final
+`deck.connected` event triggers the controller's existing configured-key refresh
+after the black frame. The virtual deck does not display this animation.
+
+Every wait and per-key write checks the monitor stop event. Shutdown therefore
+cancels startup promptly and closes the provisional device without publishing a
+connection. Rendering or HID I/O failure skips the remainder safely so connection
+can continue when the device remains available, and `DeckManager` restores the
+current configured brightness in `finally` on every exit path.
 
 ### Action framework
 
@@ -331,7 +354,7 @@ must be entered once after moving to a new computer.
 
 ---
 
-## 5. Critical gotchas (read before editing rendering, OBS or the UI)
+## 5. Critical gotchas (read before editing rendering, devices, OBS or the UI)
 
 These are hard-won and easy to reintroduce. Violating them causes intermittent,
 hard-to-diagnose failures.
@@ -340,19 +363,22 @@ hard-to-diagnose failures.
    harfbuzz; used alongside GTK/Pango's system harfbuzz it intermittently draws
    **blank glyphs** (random per process — some launches all icons fine, others all
    blank). The fix, which must stay in place, is
-   `ImageFont.truetype(path, size, layout_engine=ImageFont.Layout.BASIC)` in both
-   `core/icons.py` and `device/renderer.py`. Do **not** use raqm, `anchor="mm"`,
-   or oversized fonts for glyphs (the latter caused giant masks →
-   `DecompressionBombWarning` + blank keys). Glyph centering uses
-   `textbbox` + ink-bbox recenter.
+   `ImageFont.truetype(path, size, layout_engine=ImageFont.Layout.BASIC)` in
+   `core/icons.py`, `device/renderer.py` and `device/startup_animation.py`. Do
+   **not** use raqm, `anchor="mm"`, or oversized fonts for glyphs (the latter
+   caused giant masks →
+   `DecompressionBombWarning` + blank keys). Configured-key glyph centering uses
+   `textbbox` + ink-bbox recenter; the startup title centers each character from
+   its text bounding box within one hardware-key cell.
 
 2. **Rendering is not thread-safe → `RENDER_LOCK`.** Pillow/FreeType is not
    thread-safe. The deck renders on a worker thread while the icon picker/preview
    render on the main thread; concurrent use produced blank (and blank-cached)
    glyphs. A shared reentrant `RENDER_LOCK` (defined in `core/icons.py`, imported
-   by `device/renderer.py`) serializes all text drawing. It is reentrant so
-   `compose()` can call `library.render` without deadlocking. The glyph cache is
-   manual and **never caches failures** (safety net).
+   by `device/renderer.py` and `device/startup_animation.py`) serializes all text
+   drawing. It is reentrant so `compose()` can call `library.render` without
+   deadlocking. The glyph cache is manual and **never caches failures** (safety
+   net).
 
 3. **OBS requests must be fully serialized.** `obsws_python.ReqClient` uses a
    single websocket that is **not** thread-safe. In `obs/client.py` the `_lock`
@@ -405,6 +431,14 @@ hard-to-diagnose failures.
    compatibility while exporting v2. Bundle only supported `sys.audio` files,
    deduplicate content, enforce per-file/total limits, validate archive paths
    before extraction and restore only below `CONFIG_DIR/imported-audio`.
+
+11. **Physical startup must remain exclusive and cancellable.** Generate frames
+   offscreen under `RENDER_LOCK`, keep their brightness at or below the configured
+   target and restore that target in `finally`. Play them directly on the
+   provisional device before assigning `self.deck`, installing its callback or
+   emitting `deck.connected`. Check the monitor stop event during writes and
+   waits; only a completed or safely skipped animation may proceed to connection
+   publication and the configured-key refresh.
 
 ---
 

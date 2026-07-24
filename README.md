@@ -54,6 +54,9 @@ implemented actions, no guessing. It runs, and it's useful.
   right-click → Copy/Paste (or `Ctrl+C`/`Ctrl+V`). Works with any key type.
 - 🖥️ **Virtual deck** — the on-screen grid mirrors the physical device, so you can
   configure and test everything **without the hardware even connected**.
+- ✨ **Physical deck startup animation** — a newly connected 15-key deck wakes
+  with a short full-deck sequence and spells `LinuxStreamDeck` across its keys
+  before loading your configured page.
 - 🔌 **Auto-reconnect & hotplug** — connects to OBS on its own and picks up the deck when
   you plug it in.
 - 💾 **Portable configuration backups** — export or import profiles, pages, keys,
@@ -208,6 +211,20 @@ editing**, because saving immediately before overwriting it would have no effect
 Your non-secret configuration lives in `~/.config/linuxstreamdeck/config.json` (with an
 automatic backup in `config.json.bak`). Point `LSD_CONFIG_DIR` somewhere else to relocate it.
 
+### ✨ Physical deck startup
+
+When LinuxStreamDeck opens a physical 15-key deck, it plays a short 33-frame
+wake, energy burst, title, hold and fade sequence. The 15 letters of
+`LinuxStreamDeck` appear one per key, from left to right and top to bottom:
+`Linux` / `Strea` / `mDeck`. The animation ends on black, then your configured
+keys replace it.
+
+The sequence never raises the hardware above your configured brightness and
+restores that setting when it finishes. Closing the application cancels startup
+promptly. A disconnect, rendering problem or device I/O failure is handled safely
+without leaving a partially initialized deck. This startup sequence runs only on
+the physical Stream Deck; the virtual deck always shows the configured keys.
+
 ### 🔊 Play a local audio file
 
 Choose **System → Play audio file**, then select a local WAV (`.wav` or `.wave`),
@@ -295,7 +312,7 @@ packaging/         # build-deb.sh, .desktop, icon, AppStream metainfo, scripts �
 linuxstreamdeck/
 ├── ai/            # OpenAI/Claude requests, bounded context and proposal validation
 ├── core/          # events, config, secrets, actions, controller, audio playback, icons
-├── device/        # physical Stream Deck (hidapi) and key rendering (Pillow)
+├── device/        # physical Stream Deck, startup animation and key rendering
 ├── obs/           # obs-websocket v5 client + full catalogue of OBS actions
 ├── ui/            # GTK4/Libadwaita: window, editor, AI assistant, OBS settings
 └── assets/icons/  # icon library (Material Design Icons font + index)

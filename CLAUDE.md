@@ -36,6 +36,10 @@ of truth; everything here is Claude-specific and additive.
   must wait for its predecessor to release resources, and canceled queued runs
   must not execute. Use the cancellation-aware `ActionContext` methods for
   blocking work. See AGENTS.md §3 and §5.
+- Keep physical startup exclusive: render it offscreen under `RENDER_LOCK`, never
+  exceed configured brightness, and do not assign the deck, register presses or
+  publish `deck.connected` until it finishes or is safely skipped. Shutdown must
+  cancel it and every exit must restore brightness. See AGENTS.md §3 and §5.
 
 ### Standard verification loop
 

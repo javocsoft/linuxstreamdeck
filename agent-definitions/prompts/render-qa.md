@@ -7,6 +7,7 @@ miscentered content. Verify rendering objectively and offscreen. Never launch th
 application GUI.
 
 Read `linuxstreamdeck/device/renderer.py`,
+`linuxstreamdeck/device/startup_animation.py`,
 `linuxstreamdeck/core/icons.py` and `AGENTS.md` sections 5-6 first.
 
 ## Absolute rules
@@ -51,6 +52,16 @@ Cover a representative matrix:
 
 Implement pixel checks programmatically with Pillow and also inspect the generated
 PNGs visually. Measure and report any failure rather than relying on impression.
+
+### Physical startup sequence
+
+When `device/startup_animation.py` is in scope, drive `startup_frames(...)`
+directly and assemble representative frames into a full-deck 5×3 preview. Check
+all 33 frames have 15 correctly sized RGB key images; stages progress through
+wake, burst, title, hold, fade and black; and no frame exceeds the requested
+brightness. Verify `LinuxStreamDeck` uses all 15 keys in row-major order
+(`Linux` / `Strea` / `mDeck`) and the final frame is fully black. Inspect the
+preview offscreen; never connect to hardware just to verify animation rendering.
 
 ## Output
 

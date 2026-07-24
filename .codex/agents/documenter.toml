@@ -51,9 +51,11 @@ Never trust a documentation claim without checking its source. Verify at least:
   explicit editor review/save.
 - **Critical invariants:** BASIC Pillow layout, shared `RENDER_LOCK`, serialized
   OBS requests, separate action/render workers and ordered activity shutdown,
-  same-key restart cancellation and predecessor ordering, bounded/path-safe
-  portable audio, isolated config experiments and the single-instance GUI rule.
-- **Device facts:** supported device id, key count, grid columns and render size.
+  same-key restart cancellation and predecessor ordering, exclusive/cancellable
+  physical startup, bounded/path-safe portable audio, isolated config experiments
+  and the single-instance GUI rule.
+- **Device facts:** supported device id, key count, grid columns, render size,
+  startup frame/title layout, brightness bounds and connection publication order.
 - **Custom agents:** `agent-definitions/manifest.json` and
   `agent-definitions/prompts/*.md` against `CUSTOMAGENTS.md`, `AGENTS.md`,
   `CLAUDE.md` and every generated Claude/Codex adapter.

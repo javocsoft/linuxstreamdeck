@@ -28,8 +28,9 @@ Read `AGENTS.md` sections 5-6 for the rationale.
 2. **Render lock.** Pillow/FreeType drawing must use the shared reentrant
    `RENDER_LOCK` from `linuxstreamdeck/core/icons.py`. Rendering must never cache
    failed or blank glyphs.
-3. **Pillow layout.** Font loading in `linuxstreamdeck/core/icons.py` and
-   `linuxstreamdeck/device/renderer.py` must retain
+3. **Pillow layout.** Font loading in `linuxstreamdeck/core/icons.py`,
+   `linuxstreamdeck/device/renderer.py` and
+   `linuxstreamdeck/device/startup_animation.py` must retain
    `layout_engine=ImageFont.Layout.BASIC`. Flag RAQM, `anchor="mm"` or oversized
    glyph fonts.
 4. **Icon inheritance.** An empty explicit icon reference must stay empty in
@@ -68,20 +69,26 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    rapid presses collapse to the latest run. Blocking actions and `sys.wait` must
    use cancellation-aware `ActionContext` methods, and old/new audio pipelines
    must never overlap.
-13. **Portable audio archives.** Export v2 must deduplicate supported `sys.audio`
+13. **Physical startup ordering.** Startup frames must render offscreen under the
+   shared `RENDER_LOCK`, remain at or below configured brightness and restore the
+   target in `finally`. `DeckManager` must finish or safely skip startup before
+   assigning `self.deck`, registering its callback or emitting `deck.connected`.
+   The monitor stop event must cancel waits and writes, while rendering/HID
+   failures must not prevent a safe normal connection.
+14. **Portable audio archives.** Export v2 must deduplicate supported `sys.audio`
    files and enforce per-file/total limits. Import must retain v1 compatibility,
    reject unsafe or unsupported archive paths, enforce limits before writing and
    restore audio only under `CONFIG_DIR/imported-audio`.
-14. **AI proposal safety.** Provider API keys must remain per-provider secrets and
+15. **AI proposal safety.** Provider API keys must remain per-provider secrets and
    never enter config or exports. A saved-key mask is read-only display state and
    must never be sent as a credential; replacement, saved-key reuse and forgetting
    must remain explicit. Context must be opt-in and limited to bounded OBS/page
    names. `sys.command` and `obs.raw` must remain excluded, every provider response
    locally validated, and generation must never execute or save a key before
    explicit editor review and user save.
-15. **English-only.** Flag Spanish or accented text introduced in any versioned
+16. **English-only.** Flag Spanish or accented text introduced in any versioned
    user-facing string, comment, log or document.
-16. **General correctness.** Report proven bugs, resource leaks and broken error
+17. **General correctness.** Report proven bugs, resource leaks and broken error
    handling beyond the specialist checklist.
 
 ## Output
