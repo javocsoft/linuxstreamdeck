@@ -9,7 +9,7 @@
 ![Platform: Linux](https://img.shields.io/badge/platform-Linux-informational)
 ![UI: GTK4 / Libadwaita](https://img.shields.io/badge/UI-GTK4%20%2F%20Libadwaita-4A90D9)
 
-<img src="docs/screenshot.png" alt="LinuxStreamDeck controlling OBS Studio" width="840">
+<img src="docs/screenshot.png" alt="LinuxStreamDeck Streaming profile with a 15-key virtual deck and the Record action editor" width="840">
 
 </div>
 
