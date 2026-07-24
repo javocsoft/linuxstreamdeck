@@ -85,11 +85,12 @@ linuxstreamdeck/
 │   ├── events.py      EventBus (pub/sub). Emitters may run on any thread; a
 │   │                  `dispatcher` (GLib.idle_add) marshals callbacks to the UI thread.
 │   ├── config.py      Data model + JSON persistence: Config → Profile → Page →
-│   │                  KeyConfig (+ ObsSettings, ActionStep). Migration + backup.
+│   │                  KeyConfig (+ ObsSettings, ActionStep). Migration, backup,
+│   │                  and portable `.lsdconfig` import/export with custom icons.
 │   ├── actions.py     Action framework: `Action` base, declarative `Param`,
 │   │                  `ActionContext`, global `REGISTRY`, `@register`, `by_category`.
 │   ├── controller.py  DeckController: handles presses, runs action steps, renders
-│   │                  every key, and owns page/profile/key operations.
+│   │                  every key, owns page/profile/key operations, and applies imports.
 │   └── icons.py       Built-in icon library (Material Design Icons glyphs via
 │                      Pillow, recolorable, cached). `RENDER_LOCK`.
 ├── device/
@@ -103,7 +104,8 @@ linuxstreamdeck/
 │                      audio, sources/filters, media, advanced + raw request).
 ├── ui/
 │   ├── window.py      MainWindow: key grid (virtual deck), header (profiles,
-│   │                  pages, brightness, OBS settings, About), DnD move, copy/paste, status bar.
+│   │                  configuration import/export, pages, brightness, OBS settings,
+│   │                  About), DnD move, copy/paste, status bar.
 │   ├── editor.py      EditorPanel: right-hand key editor; key-type selector.
 │   ├── steps.py       StepEditor / StepList / AppearanceBox — reused by the editor
 │   │                  for single, multi and toggle key types.
@@ -162,7 +164,12 @@ Actions are declarative and self-registering:
 
 Persistence is JSON at `~/.config/linuxstreamdeck/config.json` with a
 `config.json.bak` backup written on every save, and migration from the old
-single-profile format on load.
+single-profile format on load. The profiles menu can export a portable
+`.lsdconfig` ZIP archive containing the full JSON configuration and available
+custom key icons. Built-in `mdi:` icons stay as references. Import validates the
+archive, restores bundled custom icons below `CONFIG_DIR/imported-icons`, replaces
+the complete configuration and writes the prior configuration to `config.json.bak`.
+An export includes the OBS password, so it must be handled as private data.
 
 ---
 
@@ -235,6 +242,8 @@ unless `LSD_CONFIG_DIR` is set. Any script that exercises code calling `save()`
 (e.g. `set_page`, `set_profile`, `add_profile`, `add_page`, `rename_page`,
 `paste_key`, `clear_key`, brightness changes, saving a key) will **overwrite the
 user's real config** — this has happened and lost real keys and the OBS password.
+`Config.import_bundle()` also saves a replacement configuration and writes imported
+icons below the config directory, so it must always be isolated too.
 
 **Always redirect the config directory before importing the package:**
 

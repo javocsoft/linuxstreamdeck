@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from . import actions as action_registry
 from .actions import ActionContext
@@ -20,6 +21,7 @@ from .config import (
     KIND_TOGGLE,
     ActionStep,
     Config,
+    ImportResult,
     KeyConfig,
 )
 from .events import EventBus
@@ -150,6 +152,31 @@ class DeckController:
         self.config.save()
         self.bus.emit("page.changed", index=self.current_page, name=self.page.name)
         self.refresh()
+
+    # ---------- configuration import ----------
+
+    def import_configuration(self, source: Path) -> ImportResult:
+        """Replace the configuration and apply its runtime settings."""
+        result = self.config.import_bundle(source)
+        self._toggle.clear()
+        self.deck.set_brightness(self.config.brightness)
+        cfg = self.config.obs
+        self.obs.configure(cfg.host, cfg.port, cfg.password)
+        self.obs.reconnect_now()
+        profile = self.config.profile
+        self.bus.emit(
+            "profile.changed",
+            index=self.current_profile,
+            name=profile.name,
+            description=profile.description,
+        )
+        self.bus.emit(
+            "page.changed",
+            index=self.current_page,
+            name=self.page.name,
+        )
+        self.refresh()
+        return result
 
     # ---------- key editing (move / copy / paste / clear) ----------
 

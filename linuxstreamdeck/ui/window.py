@@ -4,6 +4,7 @@ to test without hardware) + key editor + status bar."""
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import gi
 
@@ -71,8 +72,16 @@ class MainWindow(Adw.ApplicationWindow):
         profile_menu.append("New profile…", "win.profile-new")
         profile_menu.append("Edit profile…", "win.profile-edit")
         profile_menu.append("Delete profile", "win.profile-delete")
+        configuration_menu = Gio.Menu()
+        configuration_menu.append(
+            "Export configuration…", "win.config-export"
+        )
+        configuration_menu.append(
+            "Import configuration…", "win.config-import"
+        )
+        profile_menu.append_section(None, configuration_menu)
         menu_btn = Gtk.MenuButton(icon_name="view-more-symbolic",
-                                  tooltip_text="Manage profiles",
+                                  tooltip_text="Manage profiles and configuration",
                                   menu_model=profile_menu)
         header.pack_start(menu_btn)
 
@@ -101,13 +110,13 @@ class MainWindow(Adw.ApplicationWindow):
         about_btn.set_tooltip_text("About LinuxStreamDeck")
         about_btn.connect("clicked", self._on_about)
         header.pack_end(about_btn)
-        brightness = Gtk.ScaleButton.new(
+        self.brightness = Gtk.ScaleButton.new(
             10, 100, 10, ["display-brightness-symbolic"]
         )
-        brightness.set_tooltip_text("Adjust Stream Deck brightness")
-        brightness.set_value(self.app.config.brightness)
-        brightness.connect("value-changed", self._on_brightness)
-        header.pack_end(brightness)
+        self.brightness.set_tooltip_text("Adjust Stream Deck brightness")
+        self.brightness.set_value(self.app.config.brightness)
+        self.brightness.connect("value-changed", self._on_brightness)
+        header.pack_end(self.brightness)
 
         view.add_top_bar(header)
 
@@ -211,7 +220,9 @@ class MainWindow(Adw.ApplicationWindow):
                          ("profile-delete", self._delete_profile),
                          ("page-new", self._new_page),
                          ("page-rename", self._rename_page),
-                         ("page-delete", self._delete_page)):
+                         ("page-delete", self._delete_page),
+                         ("config-export", self._export_configuration),
+                         ("config-import", self._import_configuration)):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda a, p, cb=cb: cb())
             self.add_action(act)
@@ -276,6 +287,136 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_delete_response(self, dialog, response) -> None:
         if response == "delete":
             self.app.controller.delete_profile(self.app.config.current_profile)
+
+    # --- configuration import / export ---
+
+    def _export_configuration(self) -> None:
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Export configuration",
+            body=(
+                "The exported file includes all profiles, pages, keys, custom "
+                "icons, OBS settings and the OBS password. Keep it private."
+            ),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("export", "Choose destination")
+        dialog.set_response_appearance(
+            "export", Adw.ResponseAppearance.SUGGESTED
+        )
+        dialog.connect("response", self._on_export_warning_response)
+        dialog.present()
+
+    def _on_export_warning_response(self, _dialog, response: str) -> None:
+        if response != "export":
+            return
+        chooser = Gtk.FileDialog(title="Export configuration")
+        chooser.set_initial_name("linuxstreamdeck-config.lsdconfig")
+        chooser.set_default_filter(self._configuration_file_filter())
+        chooser.save(self, None, self._on_export_file_chosen)
+
+    def _on_export_file_chosen(self, chooser, result) -> None:
+        try:
+            file = chooser.save_finish(result)
+        except Exception:
+            return
+        path = file.get_path() if file is not None else None
+        if not path:
+            self._show_configuration_error(
+                "Export failed", "Choose a local destination for the export."
+            )
+            return
+        destination = Path(path)
+        if destination.suffix.lower() != ".lsdconfig":
+            destination = Path(f"{destination}.lsdconfig")
+        try:
+            exported = self.app.config.export_bundle(destination)
+        except Exception as error:
+            log.exception("Could not export the configuration")
+            self._show_configuration_error("Export failed", str(error))
+            return
+        if exported.missing_icons:
+            self._show_configuration_error(
+                "Configuration exported with warnings",
+                (
+                    f"Saved to {destination}.\n\n"
+                    f"{exported.missing_icons} custom icon file(s) could not "
+                    "be found and were not included."
+                ),
+            )
+        else:
+            self._flash_status(
+                f"Configuration exported to {destination.name}"
+            )
+
+    def _import_configuration(self) -> None:
+        chooser = Gtk.FileDialog(title="Import configuration")
+        chooser.set_default_filter(self._configuration_file_filter())
+        chooser.open(self, None, self._on_import_file_chosen)
+
+    def _on_import_file_chosen(self, chooser, result) -> None:
+        try:
+            file = chooser.open_finish(result)
+        except Exception:
+            return
+        path = file.get_path() if file is not None else None
+        if not path:
+            self._show_configuration_error(
+                "Import failed", "Choose a local LinuxStreamDeck export."
+            )
+            return
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Replace current configuration?",
+            body=(
+                f"Import {Path(path).name} and replace all current profiles, "
+                "pages, keys and settings?\n\nThe current configuration will "
+                "be saved as config.json.bak."
+            ),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("import", "Import")
+        dialog.set_response_appearance(
+            "import", Adw.ResponseAppearance.DESTRUCTIVE
+        )
+        dialog.connect(
+            "response", self._on_import_confirmation_response, Path(path)
+        )
+        dialog.present()
+
+    def _on_import_confirmation_response(
+        self, _dialog, response: str, source: Path
+    ) -> None:
+        if response != "import":
+            return
+        try:
+            imported = self.app.controller.import_configuration(source)
+        except Exception as error:
+            log.exception("Could not import the configuration")
+            self._show_configuration_error("Import failed", str(error))
+            return
+        self.brightness.set_value(self.app.config.brightness)
+        text = (
+            f"Imported {imported.profiles} profile(s), {imported.pages} "
+            f"page(s) and {imported.keys} configured key(s)"
+        )
+        GLib.idle_add(lambda: (self._flash_status(text), False)[1])
+
+    @staticmethod
+    def _configuration_file_filter() -> Gtk.FileFilter:
+        file_filter = Gtk.FileFilter()
+        file_filter.set_name("LinuxStreamDeck configuration")
+        file_filter.add_pattern("*.lsdconfig")
+        return file_filter
+
+    def _show_configuration_error(self, heading: str, body: str) -> None:
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading=heading,
+            body=body,
+        )
+        dialog.add_response("close", "Close")
+        dialog.present()
 
     # --- pages ---
 
@@ -462,9 +603,12 @@ class MainWindow(Adw.ApplicationWindow):
         self._updating_pages = False
 
     def _on_brightness(self, _btn, value: float) -> None:
-        self.app.config.brightness = int(value)
+        brightness = int(value)
+        if self.app.config.brightness == brightness:
+            return
+        self.app.config.brightness = brightness
         self.app.config.save()
-        self.app.deck.set_brightness(int(value))
+        self.app.deck.set_brightness(brightness)
 
     def _on_obs_settings(self, _btn) -> None:
         ObsSettingsDialog(self, self.app).present()

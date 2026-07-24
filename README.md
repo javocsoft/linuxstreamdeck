@@ -52,6 +52,8 @@ implemented actions, no guessing. It runs, and it's useful.
   configure and test everything **without the hardware even connected**.
 - 🔌 **Auto-reconnect & hotplug** — connects to OBS on its own and picks up the deck when
   you plug it in.
+- 💾 **Portable configuration backups** — export or import profiles, pages, keys,
+  settings and custom key icons in one file.
 
 ### 🎬 What you can do with OBS
 
@@ -172,6 +174,22 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
 
 Your configuration lives in `~/.config/linuxstreamdeck/config.json` (with an automatic
 backup in `config.json.bak`). Point `LSD_CONFIG_DIR` somewhere else to relocate it.
+
+## 💾 Import and export configuration
+
+Use the profiles menu (⋮) in the header to choose **Export configuration** or
+**Import configuration**.
+
+- **Export** creates a portable `.lsdconfig` ZIP archive. It contains the full
+  JSON configuration, custom key icon files, OBS settings and the OBS password.
+  **Keep this file private.** Built-in Material Design Icons remain lightweight
+  `mdi:` references because they are bundled with LinuxStreamDeck. If a custom
+  icon file can no longer be found, it is not included and the app shows a warning.
+- **Import** replaces all current profiles, pages, keys and settings after you
+  confirm the warning. The previous configuration is saved as
+  `~/.config/linuxstreamdeck/config.json.bak`. Bundled custom icons are restored
+  under `~/.config/linuxstreamdeck/imported-icons/`; brightness and OBS settings
+  are applied immediately, and OBS reconnects with the imported settings.
 
 ## 🗂️ Project structure
 
