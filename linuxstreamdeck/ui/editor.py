@@ -137,7 +137,7 @@ class EditorPanel(Gtk.Box):
                 "They run in order when pressed. Add a «Wait» action for pauses."
             ))
             self.multi_list = StepList(self.app)
-            self.multi_list.load(kc.steps or [ActionStep()])
+            self.multi_list.load(kc.steps)
             self.body.append(self.multi_list)
             self.body.append(Gtk.Separator())
             self.app_main = AppearanceBox("Appearance")
@@ -149,13 +149,13 @@ class EditorPanel(Gtk.Box):
                 "Each press toggles the state and runs its action list."
             ))
             self.on_list = StepList(self.app)
-            self.on_list.load(kc.steps_on or [ActionStep()])
+            self.on_list.load(kc.steps_on)
             self.app_main = AppearanceBox("ON state appearance")
             self.app_main.load(kc.label, kc.icon, kc.bg_color)
             self.body.append(self._frame("▶ ON state", [self.on_list, self.app_main]))
 
             self.off_list = StepList(self.app)
-            self.off_list.load(kc.steps_off or [ActionStep()])
+            self.off_list.load(kc.steps_off)
             self.app_off = AppearanceBox("OFF state appearance")
             self.app_off.load(kc.label_off, kc.icon_off, kc.bg_color_off)
             self.body.append(self._frame("■ OFF state", [self.off_list, self.app_off]))
