@@ -34,10 +34,11 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    through the serialized `OBSClient` path.
 2. **Render lock.** Pillow/FreeType drawing must use the shared reentrant
    `RENDER_LOCK` from `linuxstreamdeck/core/icons.py`. Rendering must never cache
-   failed or blank glyphs.
+   failed or blank glyphs; full-deck screen-saver rendering uses the same lock.
 3. **Pillow layout.** Font loading in `linuxstreamdeck/core/icons.py`,
    `linuxstreamdeck/device/renderer.py` and
-   `linuxstreamdeck/device/startup_animation.py` must retain
+   `linuxstreamdeck/device/startup_animation.py` and
+   `linuxstreamdeck/device/screensaver.py` must retain
    `layout_engine=ImageFont.Layout.BASIC`. Flag RAQM, `anchor="mm"` or oversized
    glyph fonts.
 4. **Icon inheritance.** An empty explicit icon reference must stay empty in
@@ -119,9 +120,20 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    a valid destination in either direction. Reject malformed, foreign and stale
    payloads, preserve subtle source/destination feedback and unsaved-change
    confirmation, and move toggle/clock state with the key during moves/swaps.
-19. **English-only.** Flag Spanish or accented text introduced in any versioned
+19. **Screen-saver lifecycle.** Persist and import only installed styles with
+   bounded idle delay/intensity, and keep intensity independent of normal
+   brightness. Render coordinated full-deck frames under `RENDER_LOCK`/BASIC;
+   suppress normal renders while active. Physical key handling and deliberate
+   virtual-deck paths must call `record_activity()`. Never use a broad/global
+   `Gtk.EventControllerLegacy` or window-wide activity hook: nullable events can
+   cause exception storms, high CPU use and application freezes. Consume the
+   first physical wake press and release, restore normal brightness and key
+   images, and support preview while disabled or without hardware. Temporary
+   dialog callbacks must unsubscribe on close. `DeckManager.stop()` must wake and
+   join the saver thread before joining the monitor and closing HID.
+20. **English-only.** Flag Spanish or accented text introduced in any versioned
    user-facing string, comment, log or document.
-20. **General correctness.** Report proven bugs, resource leaks and broken error
+21. **General correctness.** Report proven bugs, resource leaks and broken error
    handling beyond the specialist checklist.
 
 ## Output

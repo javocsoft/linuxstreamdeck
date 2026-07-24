@@ -38,8 +38,8 @@ Never trust a documentation claim without checking its source. Verify at least:
 - **Packaging / dependencies / versions:** `pyproject.toml` and Debian packaging,
   including Python requirements, entry points and package data.
 - **Module map and structure:** the actual `linuxstreamdeck/` tree.
-- **EventBus topics:** `bus.emit(` and `subscribe(` calls against the documented
-  topics and payloads.
+- **EventBus topics:** `bus.emit(`, `subscribe(` and `unsubscribe(` calls against
+  the documented topics, payloads and temporary-subscriber lifecycle.
 - **Action catalogue:** `linuxstreamdeck/obs/actions.py` and
   `linuxstreamdeck/basic_actions.py` against the user-facing action tables.
 - **Key types and config:** `linuxstreamdeck/core/config.py`, config paths,
@@ -49,6 +49,12 @@ Never trust a documentation claim without checking its source. Verify at least:
 - **Stateful clocks:** `linuxstreamdeck/core/clocks.py`, key identity propagation,
   immediate execution, second-change rendering, view-independent runtime state,
   timer completion audio and reset/clear/move/shutdown lifecycle.
+- **Animated screen saver:** `linuxstreamdeck/device/screensaver.py`,
+  `device/manager.py`, `ui/screensaver_settings.py` and `ui/window.py`, including
+  installed styles, persisted/imported settings, virtual/physical preview,
+  explicit physical/virtual activity entry points without a global legacy GTK
+  hook, consumed physical wake presses, brightness/key restoration and
+  thread/HID shutdown order.
 - **AI-assisted creation:** `linuxstreamdeck/ai/`,
   `linuxstreamdeck/ui/ai_assistant.py` and provider key storage, including
   bounded opt-in context, blocked dangerous actions, local validation and
@@ -57,10 +63,12 @@ Never trust a documentation claim without checking its source. Verify at least:
   OBS requests, separate action/render workers and ordered activity shutdown,
   same-key restart cancellation and predecessor ordering, exclusive/cancellable
   physical startup, unambiguous/migrated page navigation, bounded/path-safe
-  portable audio, key-scoped clock lifecycle, grid-level validated DnD, isolated
-  config experiments and the single-instance GUI rule.
+  portable audio, key-scoped clock lifecycle, screen-saver rendering/wake/thread
+  lifecycle, grid-level validated DnD, isolated config experiments and the
+  single-instance GUI rule.
 - **Device facts:** supported device id, key count, grid columns, render size,
-  startup frame/title layout, brightness bounds and connection publication order.
+  startup/screen-saver frame layouts, brightness bounds, connection publication
+  order and device-worker shutdown ordering.
 - **Custom agents:** `agent-definitions/manifest.json` and
   `agent-definitions/prompts/*.md` against `CUSTOMAGENTS.md`, `AGENTS.md`,
   `CLAUDE.md` and every generated Claude/Codex adapter.

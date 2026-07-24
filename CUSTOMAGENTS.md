@@ -56,9 +56,11 @@ maintenance contract.
   and ordering, physical startup exclusivity/cancellation/brightness restoration,
   page-navigation migration/reference integrity, portable-archive limits/path
   safety and audio deduplication, stateful clock identity/ticking/reset/completion
-  lifecycle, grid-DnD gesture/payload validation, AI credential/context/proposal
-  safety, reusing feedback color constants, and English-only with no accents.
-  It only reports; it does not edit code.
+  lifecycle, screen-saver rendering/explicit activity/wake/brightness/thread
+  shutdown with no global legacy GTK activity hook,
+  grid-DnD gesture/payload validation, AI credential/context/proposal safety,
+  reusing feedback color constants, and English-only with no accents. It only
+  reports; it does not edit code.
 
 ## `obs-action-author` — action scaffolder
 
@@ -76,8 +78,9 @@ maintenance contract.
 
 ## `render-qa` — offscreen render verifier
 
-- **Automatic:** after touching `device/renderer.py`, `core/icons.py`, the icon
-  assets, or the active-state logic.
+- **Automatic:** after touching `device/renderer.py`, `device/screensaver.py`,
+  `device/startup_animation.py`, `core/icons.py`, the icon assets, or active-state
+  logic.
 - **Manual:** *"verify how the keys look"*, *"check there are no blank glyphs"*.
 - **What it does:** composes key PNGs **without launching the GUI** (with an
   isolated `LSD_CONFIG_DIR`) and objectively checks that glyphs are not blank, are
@@ -86,9 +89,11 @@ maintenance contract.
   subtle breathing halo and `RUN` badge remain visible without obscuring key art.
   Dynamic centered values such as `HH:MM:SS` clocks are checked with and without
   labels to ensure they replace the icon cleanly and remain legible.
-  For the physical startup sequence, it can also inspect the complete offscreen
-  5×3 frame grid, title mapping, brightness bounds and fade to black. It eyeballs
-  the images itself, and reports without fixing unless asked.
+  It also verifies all six screen-saver styles as animated full-deck frames,
+  including per-key size/mode, intensity bounds and the LinuxStreamDeck-on-black
+  layout. For the physical startup sequence, it can inspect the complete
+  offscreen 5×3 frame grid, title mapping, brightness bounds and fade to black.
+  It eyeballs the images itself, and reports without fixing unless asked.
 
 ## `documenter` — documentation keeper
 

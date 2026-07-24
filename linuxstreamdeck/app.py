@@ -13,7 +13,11 @@ from gi.repository import Adw, GLib  # noqa: E402
 
 from . import APP_ID  # noqa: E402
 from .ai.service import AIService  # noqa: E402
-from .core.config import Config  # noqa: E402
+from .core.config import (  # noqa: E402
+    DEFAULT_SCREENSAVER,
+    SCREENSAVER_IDS,
+    Config,
+)
 from .core.controller import DeckController  # noqa: E402
 from .core.events import EventBus  # noqa: E402
 from .core.secrets import ApiKeyStore, SecretStore  # noqa: E402
@@ -46,7 +50,15 @@ class LinuxStreamDeckApp:
         self.bus = EventBus()
         self.bus.dispatcher = GLib.idle_add
         self.obs = OBSClient(self.bus)
-        self.deck = DeckManager(self.bus, brightness=self.config.brightness)
+        screen = self.config.screensaver
+        self.deck = DeckManager(
+            self.bus,
+            brightness=self.config.brightness,
+            screensaver_enabled=screen.enabled,
+            screensaver_style=screen.style,
+            screensaver_idle_minutes=screen.idle_minutes,
+            screensaver_intensity=screen.intensity,
+        )
         self.controller = DeckController(self.config, self.bus, self.obs, self.deck)
 
     def run(self, argv) -> int:
@@ -159,6 +171,34 @@ class LinuxStreamDeckApp:
             password,
             lambda stored, error: self._on_obs_password_stored(
                 host, port, password, callback, stored, error
+            ),
+        )
+
+    def update_screensaver_settings(
+        self,
+        enabled: bool,
+        style: str,
+        idle_minutes: int,
+        intensity: int,
+    ) -> None:
+        cfg = self.config.screensaver
+        cfg.enabled = bool(enabled)
+        cfg.style = style if style in SCREENSAVER_IDS else DEFAULT_SCREENSAVER
+        cfg.idle_minutes = max(1, min(1440, int(idle_minutes)))
+        cfg.intensity = max(5, min(100, int(intensity)))
+        self.config.save()
+        self.deck.configure_screensaver(
+            cfg.enabled,
+            cfg.style,
+            cfg.idle_minutes,
+            cfg.intensity,
+        )
+        self.bus.emit(
+            "status",
+            text=(
+                "Screen saver enabled"
+                if cfg.enabled
+                else "Screen saver disabled"
             ),
         )
 

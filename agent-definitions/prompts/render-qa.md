@@ -8,6 +8,7 @@ application GUI.
 
 Read `linuxstreamdeck/device/renderer.py`,
 `linuxstreamdeck/device/startup_animation.py`,
+`linuxstreamdeck/device/screensaver.py`,
 `linuxstreamdeck/core/icons.py` and `AGENTS.md` sections 5-6 first.
 
 ## Absolute rules
@@ -65,6 +66,25 @@ wake, burst, title, hold, fade and black; and no frame exceeds the requested
 brightness. Verify `LinuxStreamDeck` uses all 15 keys in row-major order
 (`Linux` / `Strea` / `mDeck`) and the final frame is fully black. Inspect the
 preview offscreen; never connect to hardware just to verify animation rendering.
+
+### Animated screen saver
+
+When `device/screensaver.py` is in scope, drive
+`screensaver_frame(style, elapsed, key_count, key_size, intensity)` directly for
+every ID in `SCREENSAVER_CHOICES`. Compare at least two elapsed times per style
+and assemble full-deck 5×3 previews. Check that every result:
+
+- contains 15 correctly sized RGB images for the standard 72×72 deck;
+- changes visibly over time;
+- uses a brightness from 1 through the requested independent intensity;
+- renders under the shared `RENDER_LOCK`; and
+- keeps `ImageFont.Layout.BASIC` for the `LinuxStreamDeck` title.
+
+Verify an unknown style falls back to Neon Pipes. For the `linuxstreamdeck`
+style, confirm all 15 title characters occupy the full grid over a predominantly
+black background. This is a pure-Pillow check and must not open HID or launch the
+application. Preview the selected frames offscreen and report both objective
+measurements and visual coherence across key boundaries.
 
 ## Output
 

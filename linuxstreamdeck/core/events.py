@@ -17,11 +17,13 @@ log = logging.getLogger(__name__)
 #   deck.key          index:int, pressed:bool   — key press on the physical deck
 #   deck.connected    model:str, keys:int
 #   deck.disconnected
+#   deck.screensaver  active:bool, preview:bool, style:str
 #   obs.connected
 #   obs.disconnected
 #   obs.state         what:str                  — any OBS state change
 #   page.changed      index:int, name:str
 #   ui.key_image      index:int, png:bytes      — rendered image for the UI
+#   ui.screensaver_frame images:tuple[bytes, ...]
 #   status            text:str                  — messages for the status bar
 
 
@@ -36,6 +38,20 @@ class EventBus:
         """callback(topic, data:dict). The '*' topic receives every event."""
         with self._lock:
             self._subs.setdefault(topic, []).append(callback)
+
+    def unsubscribe(self, topic: str, callback: Callable) -> None:
+        """Remove one callback previously registered for a topic."""
+        with self._lock:
+            callbacks = self._subs.get(topic)
+            if callbacks is None:
+                return
+            self._subs[topic] = [
+                registered
+                for registered in callbacks
+                if registered != callback
+            ]
+            if not self._subs[topic]:
+                self._subs.pop(topic, None)
 
     def emit(self, topic: str, **data) -> None:
         with self._lock:

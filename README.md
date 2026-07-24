@@ -60,6 +60,9 @@ implemented actions, no guessing. It runs, and it's useful.
   Duplicate any key with right-click → Copy/Paste (or `Ctrl+C`/`Ctrl+V`).
 - 🖥️ **Virtual deck** — the on-screen grid mirrors the physical device, so you can
   configure and test everything **without the hardware even connected**.
+- 🌌 **Animated full-deck screen saver** — choose from six coordinated effects,
+  set the idle delay and independent light intensity, and preview them on both
+  the virtual and physical decks.
 - ✨ **Physical deck startup animation** — a newly connected 15-key deck wakes
   with a short full-deck sequence and spells `LinuxStreamDeck` across its keys
   before loading your configured page.
@@ -205,7 +208,9 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
    delete the current one. Page names must be unique within their profile.
 7. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or
    delete a profile. Each profile has its own pages and keys.
-8. **About** — click the About button in the header for application details,
+8. **Screen saver** — use the screen saver button in the header to choose an
+   animation, idle delay and light intensity, or preview it immediately.
+9. **About** — click the About button in the header for application details,
    licensing and the GitHub link.
 
 If the selected key has unsaved edits, LinuxStreamDeck protects them before you
@@ -234,6 +239,29 @@ restores that setting when it finishes. Closing the application cancels startup
 promptly. A disconnect, rendering problem or device I/O failure is handled safely
 without leaving a partially initialized deck. This startup sequence runs only on
 the physical Stream Deck; the virtual deck always shows the configured keys.
+
+### 🌌 Configure the animated screen saver
+
+Click the screen saver button in the header to enable an animation after the
+selected idle period. Choose **Neon Pipes**,
+**Digital Rain**, **Aurora Flow**, **Orbital Core**, **Circuit Pulse** or
+**LinuxStreamDeck**, which breathes softly across a black full-deck background.
+The idle delay accepts 1 to 1440 minutes. **Light intensity** ranges from 5 to
+100% and is independent of the normal deck brightness.
+
+**Preview now** starts the selected effect immediately on the physical and
+virtual decks, even when automatic activation is disabled. It also works without
+physical hardware, so every style can be checked on screen. Changing the
+animation or intensity updates a running preview. Stop the preview, close the
+dialog or press **Save** to return to the configured keys; only **Save** persists
+the enable switch, style, delay and intensity.
+
+Physical Stream Deck key activity and explicit virtual-deck interactions, such
+as selecting or testing a key or opening the screen-saver controls, restart the
+idle countdown. When the screen saver wakes, the normal brightness and
+configured key images return. The first physical key press only wakes the deck
+and is consumed together with its release, so it cannot accidentally run the
+assigned action; press the key again to run it.
 
 ### 🗂️ Navigate between pages from a key
 
@@ -333,24 +361,25 @@ Use the profiles menu (⋮) in the header to choose **Export configuration** or
 
 - **Export** creates a portable `.lsdconfig` ZIP archive. Format v2 contains the
   full JSON configuration, custom key icons, supported audio referenced by
-  **Play audio file** or a countdown timer's completion sound, and non-secret OBS
-  settings, but never the OBS password or provider API keys. Identical audio
-  files are stored once, even when both actions reference the same content. Each
-  audio file is limited to 200 MiB and bundled audio to 500 MiB total. Built-in
-  Material Design Icons remain lightweight `mdi:` references because they ship
-  with LinuxStreamDeck. Missing or oversized files, and audio with an
-  unsupported extension, keep their original local reference and produce an
-  export warning.
+  **Play audio file** or a countdown timer's completion sound, screen saver
+  settings and non-secret OBS settings, but never the OBS password or provider
+  API keys.
+  Identical audio files are stored once, even when both actions reference the
+  same content. Each audio file is limited to 200 MiB and bundled audio to
+  500 MiB total. Built-in Material Design Icons remain lightweight `mdi:`
+  references because they ship with LinuxStreamDeck. Missing or oversized files,
+  and audio with an unsupported extension, keep their original local reference
+  and produce an export warning.
 - **Import** replaces all current profiles, pages, keys and settings after you
   confirm the warning. The previous configuration is saved as
   `~/.config/linuxstreamdeck/config.json.bak`. Bundled custom icons and audio are
   restored under `~/.config/linuxstreamdeck/imported-icons/` and
   `~/.config/linuxstreamdeck/imported-audio/` after validating their archive
-  paths. Brightness and OBS settings are applied immediately, and OBS reconnects
-  with the imported settings. Current v2 and older v1 exports are accepted. The
-  import keeps this computer's keyring credentials and ignores password fields in
-  older exports. When moving to another computer, enter the OBS password and any
-  provider API keys again.
+  paths. Brightness, screen saver and OBS settings are applied immediately, and
+  OBS reconnects with the imported settings. Current v2 and older v1 exports are
+  accepted. The import keeps this computer's keyring credentials and ignores
+  password fields in older exports. When moving to another computer, enter the
+  OBS password and any provider API keys again.
 
 ## 🗂️ Project structure
 
@@ -360,9 +389,9 @@ packaging/         # build-deb.sh, .desktop, icon, AppStream metainfo, scripts �
 linuxstreamdeck/
 ├── ai/            # OpenAI/Claude requests, bounded context and proposal validation
 ├── core/          # events, config, actions, controller, clocks, audio, secrets, icons
-├── device/        # physical Stream Deck, startup animation and key rendering
+├── device/        # physical deck, startup/screen-saver animation and key rendering
 ├── obs/           # obs-websocket v5 client + full catalogue of OBS actions
-├── ui/            # GTK4/Libadwaita: window, editor, AI assistant, OBS settings
+├── ui/            # GTK4/Libadwaita: window, editor, AI, OBS/screen-saver settings
 └── assets/icons/  # icon library (Material Design Icons font + index)
 data/udev/         # udev rule for device access
 ```

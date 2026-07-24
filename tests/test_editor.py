@@ -106,6 +106,25 @@ class UnsavedResponseTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+class ScreenSaverActivityTests(unittest.TestCase):
+    def test_virtual_key_interaction_records_activity_before_selection(
+        self,
+    ) -> None:
+        calls = []
+        window = SimpleNamespace(
+            app=SimpleNamespace(
+                deck=SimpleNamespace(
+                    record_activity=lambda: calls.append("activity")
+                )
+            ),
+            _select=lambda index: calls.append(("select", index)),
+        )
+
+        MainWindow._on_key_clicked(window, None, 6)
+
+        self.assertEqual(calls, ["activity", ("select", 6)])
+
+
 class KeyDragTests(unittest.TestCase):
     def test_grid_point_resolves_a_button_through_its_child(self) -> None:
         class Widget:

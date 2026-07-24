@@ -37,6 +37,41 @@ BACKUP_FILE = CONFIG_DIR / "config.json.bak"
 
 DEFAULT_KEY_BG = "#1e1e28"
 
+SCREENSAVER_CHOICES = (
+    (
+        "neon_pipes",
+        "Neon Pipes",
+        "Retro glowing pipes grow and turn across the whole deck.",
+    ),
+    (
+        "digital_rain",
+        "Digital Rain",
+        "Elegant cyan data trails fall through a dark digital grid.",
+    ),
+    (
+        "aurora_flow",
+        "Aurora Flow",
+        "Layered blue, violet and teal light waves drift slowly.",
+    ),
+    (
+        "orbital_core",
+        "Orbital Core",
+        "A futuristic core with rotating rings and orbiting particles.",
+    ),
+    (
+        "circuit_pulse",
+        "Circuit Pulse",
+        "Energy pulses travel through a refined circuit-board network.",
+    ),
+    (
+        "linuxstreamdeck",
+        "LinuxStreamDeck",
+        "A black screen with the LinuxStreamDeck name breathing softly.",
+    ),
+)
+SCREENSAVER_IDS = frozenset(choice[0] for choice in SCREENSAVER_CHOICES)
+DEFAULT_SCREENSAVER = SCREENSAVER_CHOICES[0][0]
+
 EXPORT_FORMAT = "linuxstreamdeck-configuration"
 EXPORT_VERSION = 2
 EXPORT_CONFIG_FILE = "config.json"
@@ -255,11 +290,20 @@ class AISettings:
 
 
 @dataclass
+class ScreenSaverSettings:
+    enabled: bool = False
+    style: str = DEFAULT_SCREENSAVER
+    idle_minutes: int = 5
+    intensity: int = 35
+
+
+@dataclass
 class Config:
     profiles: list[Profile] = field(default_factory=lambda: [Profile()])
     current_profile: int = 0
     obs: ObsSettings = field(default_factory=ObsSettings)
     ai: AISettings = field(default_factory=AISettings)
+    screensaver: ScreenSaverSettings = field(default_factory=ScreenSaverSettings)
     brightness: int = 80
     obs_password_needs_migration: bool = field(
         default=False, repr=False, compare=False
@@ -332,6 +376,9 @@ class Config:
         raw_ai = raw.get("ai", {})
         if not isinstance(raw_ai, dict):
             raise ValueError("The AI settings must be a JSON object")
+        raw_screensaver = raw.get("screensaver", {})
+        if not isinstance(raw_screensaver, dict):
+            raise ValueError("The screen saver settings must be a JSON object")
         try:
             legacy_password = str(raw_obs.get("password", ""))
             obs = ObsSettings(
@@ -356,6 +403,27 @@ class Config:
                     else False
                 ),
             )
+            screen_style = str(
+                raw_screensaver.get("style", DEFAULT_SCREENSAVER)
+            )
+            if screen_style not in SCREENSAVER_IDS:
+                screen_style = DEFAULT_SCREENSAVER
+            screensaver = ScreenSaverSettings(
+                enabled=(
+                    raw_screensaver.get("enabled", False)
+                    if isinstance(raw_screensaver.get("enabled", False), bool)
+                    else False
+                ),
+                style=screen_style,
+                idle_minutes=max(
+                    1,
+                    min(1440, int(raw_screensaver.get("idle_minutes", 5))),
+                ),
+                intensity=max(
+                    5,
+                    min(100, int(raw_screensaver.get("intensity", 35))),
+                ),
+            )
             brightness = max(10, min(100, int(raw.get("brightness", 80))))
         except (TypeError, ValueError) as error:
             raise ValueError("The configuration contains an invalid number") from error
@@ -364,6 +432,7 @@ class Config:
             current_profile=current,
             obs=obs,
             ai=ai,
+            screensaver=screensaver,
             brightness=brightness,
             obs_password_needs_migration="password" in raw_obs,
         )
@@ -634,6 +703,7 @@ class Config:
         self.current_profile = replacement.current_profile
         self.obs = replacement.obs
         self.ai = replacement.ai
+        self.screensaver = replacement.screensaver
         self.brightness = replacement.brightness
         self.obs_password_needs_migration = (
             replacement.obs_password_needs_migration

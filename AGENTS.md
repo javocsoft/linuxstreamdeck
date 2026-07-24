@@ -87,7 +87,9 @@ Composition root is `app.py::LinuxStreamDeckApp`, which wires everything togethe
 and wraps a single-instance `Adw.Application`. Components communicate through a
 thread-safe **pub/sub `EventBus`**; UI never talks to the device or OBS directly.
 `LinuxStreamDeckApp` also owns shutdown: it stops controller workers before the
-HID manager and OBS client, so no background work outlives application teardown.
+HID manager and OBS client. `DeckManager.stop()` joins the screen-saver thread,
+then the monitor thread, before closing HID, so no background work outlives
+application teardown.
 
 ```
 linuxstreamdeck/
@@ -102,7 +104,7 @@ linuxstreamdeck/
 │   ├── events.py      EventBus (pub/sub). Emitters may run on any thread; a
 │   │                  `dispatcher` (GLib.idle_add) marshals callbacks to the UI thread.
 │   ├── config.py      Data model + atomic user-only JSON persistence: Config →
-│   │                  Profile → Page → KeyConfig (+ ObsSettings, AISettings, ActionStep).
+│   │                  Profile → Page → KeyConfig (+ OBS/AI/screen-saver settings).
 │   │                  Legacy action/profile migration, backup and `.lsdconfig` I/O.
 │   ├── actions.py     Action framework: `Action` base, declarative `Param`,
 │   │                  `ActionContext`, global `REGISTRY`, `@register`, `by_category`.
@@ -114,7 +116,8 @@ linuxstreamdeck/
 │   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
 │   └── secrets.py     Async Secret Service storage for OBS and per-provider API keys.
 ├── device/
-│   ├── manager.py     DeckManager: HID hotplug, exclusive startup, key callbacks.
+│   ├── manager.py     DeckManager: HID hotplug, startup/screen-saver threads, key I/O.
+│   ├── screensaver.py Pure-Pillow coordinated full-deck animation renderer.
 │   ├── startup_animation.py 33-frame offscreen physical-deck wake/title sequence.
 │   └── renderer.py    `compose()` — builds each configured key PNG with Pillow
 │                      (bg, icon or centered value, label, badge, lighting, running halo).
@@ -125,8 +128,8 @@ linuxstreamdeck/
 │                      audio, sources/filters, media, advanced + raw request).
 ├── ui/
 │   ├── window.py      MainWindow: key grid (virtual deck), header (profiles,
-│   │                  configuration import/export, pages, brightness, OBS settings,
-│   │                  About), grid-level DnD, copy/paste, unsaved guard, status bar.
+│   │                  import/export, pages, screen saver, brightness, OBS, About),
+│   │                  explicit saver activity, DnD, copy/paste, unsaved guard, status bar.
 │   ├── editor.py      EditorPanel: key editor, canonical draft/baseline and key type.
 │   ├── ai_assistant.py OpenAI/Claude proposal dialog and explicit editor handoff.
 │   ├── steps.py       StepEditor / StepList / AppearanceBox — reused by the editor
@@ -134,6 +137,7 @@ linuxstreamdeck/
 │   ├── icon_picker.py Searchable grid to pick a library icon.
 │   ├── about.py       About dialog: application identity, credits, license and source link.
 │   ├── obs_settings.py OBS connection dialog (host/port/password).
+│   ├── screensaver_settings.py Screen saver selection, delay, intensity and preview.
 │   └── profile_dialog.py New/edit profile dialog (name + description).
 └── assets/icons/      MDI font (TTF) + icons.json index (bundled, Apache-2.0).
 ```
@@ -145,11 +149,13 @@ linuxstreamdeck/
 | `deck.key` | `index:int, pressed:bool` | Physical key pressed/released. |
 | `deck.connected` | `model:str, keys:int` | Physical device ready after startup. |
 | `deck.disconnected` | — | Device removed. |
+| `deck.screensaver` | `active:bool, preview:bool, style:str` | Screen saver started/stopped; controller restores keys on stop. |
 | `obs.connected` / `obs.disconnected` | — | OBS websocket state. |
 | `obs.state` | `what:str` | Any OBS state change (drives key feedback). |
 | `page.changed` | `index:int, name:str` | Active page changed. |
 | `profile.changed` | `name, description, …` | Active profile changed. |
 | `ui.key_image` | `index:int, png:bytes` | A key was rendered; UI paints it. |
+| `ui.screensaver_frame` | `images:tuple[bytes, ...]` | One animated full-deck frame for the virtual deck. |
 | `status` | `text:str` | Transient status-bar message. |
 
 The `*` topic receives every event. `EventBus.dispatcher` is `GLib.idle_add` in
@@ -177,6 +183,50 @@ cancels startup promptly and closes the provisional device without publishing a
 connection. Rendering or HID I/O failure skips the remainder safely so connection
 can continue when the device remains available, and `DeckManager` restores the
 current configured brightness in `finally` on every exit path.
+
+### Animated screen saver
+
+`ScreenSaverSettings` persists four top-level configuration values:
+
+| Field | Range/default | Meaning |
+| --- | --- | --- |
+| `enabled` | `False` | Start automatically after inactivity. |
+| `style` | `neon_pipes` | One of the six installed animation IDs. |
+| `idle_minutes` | 1-1440, default 5 | Delay since the last tracked physical or virtual-deck activity. |
+| `intensity` | 5-100, default 35 | Screen-saver brightness, independent of normal deck brightness. |
+
+The available ID/display-name pairs are `neon_pipes` / **Neon Pipes**,
+`digital_rain` / **Digital Rain**, `aurora_flow` / **Aurora Flow**,
+`orbital_core` / **Orbital Core**, `circuit_pulse` / **Circuit Pulse** and
+`linuxstreamdeck` / **LinuxStreamDeck**. An unknown persisted ID falls back to
+Neon Pipes. The settings dialog can start any selection immediately as a preview,
+even while automatic activation is disabled and without physical hardware.
+Closing or saving stops the preview; only Save persists the four values. The
+dialog must unsubscribe its temporary `deck.screensaver` callback on close.
+
+`device/screensaver.py::screensaver_frame()` builds one coordinated canvas for
+the complete deck, splits it into per-key RGB images and supplies a frame delay
+and brightness. Rendering is pure Pillow under the shared `RENDER_LOCK`; its
+title font must use `ImageFont.Layout.BASIC`. Every animated brightness is at
+least 1 and no greater than the configured screen-saver intensity. That intensity
+does not modify `Config.brightness`.
+
+`DeckManager` owns a dedicated `deck-screensaver` thread and tracks monotonic
+idle time. Physical key handling and deliberate virtual-deck entry points call
+`record_activity()`; these include selecting or testing a key and opening the
+screen-saver controls. Do not infer activity from every window event or attach a
+broad `Gtk.EventControllerLegacy` hook. While the saver is active, normal
+controller/HID key renders are suppressed and frames are sent to both the
+physical deck and the virtual grid. A physical wake press and its matching
+release are consumed; a later press executes normally. Waking clears preview
+state, restores normal brightness, emits inactive `deck.screensaver`, and the
+controller refreshes configured key images.
+
+Screen-saver settings are part of normal JSON serialization and `.lsdconfig`
+import/export. Import applies them immediately through
+`DeckManager.configure_screensaver()` and restarts idle tracking. Shutdown sets
+the shared deck stop/wakeup signals, joins the screen-saver thread before the
+monitor thread, and closes HID only after both have exited.
 
 ### Action framework
 
@@ -417,19 +467,22 @@ in Secret Service, under separate provider identities; AI preferences in config
 never contain either key.
 
 The profiles menu exports `.lsdconfig` ZIP format v2 with the full JSON
-configuration, available custom key icons and supported files referenced by
-`sys.audio` or the `sound` parameter of `sys.timer`; identical audio content is
-deduplicated even across both actions. Audio is limited to 200 MiB per file and
-500 MiB total. Built-in `mdi:` icons stay as references, and OBS passwords and
-provider API keys are never exported. Missing, unreadable, unsupported or
-oversized audio remains a local reference and produces an export warning.
+configuration, including screen-saver settings, available custom key icons and
+supported files referenced by `sys.audio` or the `sound` parameter of
+`sys.timer`; identical audio content is deduplicated even across both actions.
+Audio is limited to 200 MiB per file and 500 MiB total. Built-in `mdi:` icons
+stay as references, and OBS passwords and provider API keys are never exported.
+Missing, unreadable, unsupported or oversized audio remains a local reference
+and produces an export warning.
 
 Import accepts format v1 and v2, validates archive member paths and size limits,
 restores bundled icons below `CONFIG_DIR/imported-icons` and audio below
 `CONFIG_DIR/imported-audio`, replaces the complete configuration and writes the
 prior configuration to `config.json.bak`. It keeps the destination computer's
 keyring credentials and ignores password fields in old exports, so an OBS password
-must be entered once after moving to a new computer.
+must be entered once after moving to a new computer. The controller applies
+imported normal brightness and screen-saver settings immediately before
+reconnecting OBS.
 
 ---
 
@@ -457,21 +510,22 @@ hard-to-diagnose failures.
    **blank glyphs** (random per process — some launches all icons fine, others all
    blank). The fix, which must stay in place, is
    `ImageFont.truetype(path, size, layout_engine=ImageFont.Layout.BASIC)` in
-   `core/icons.py`, `device/renderer.py` and `device/startup_animation.py`. Do
-   **not** use raqm, `anchor="mm"`, or oversized fonts for glyphs (the latter
-   caused giant masks →
+   `core/icons.py`, `device/renderer.py`, `device/startup_animation.py` and
+   `device/screensaver.py`. Do **not** use raqm, `anchor="mm"`, or oversized
+   fonts for glyphs (the latter caused giant masks →
    `DecompressionBombWarning` + blank keys). Configured-key glyph centering uses
    `textbbox` + ink-bbox recenter; the startup title centers each character from
-   its text bounding box within one hardware-key cell.
+   its text bounding box within one hardware-key cell, and the screen-saver title
+   uses the same BASIC-only discipline.
 
 2. **Rendering is not thread-safe → `RENDER_LOCK`.** Pillow/FreeType is not
-   thread-safe. The deck renders on a worker thread while the icon picker/preview
-   render on the main thread; concurrent use produced blank (and blank-cached)
-   glyphs. A shared reentrant `RENDER_LOCK` (defined in `core/icons.py`, imported
-   by `device/renderer.py` and `device/startup_animation.py`) serializes all text
-   drawing. It is reentrant so `compose()` can call `library.render` without
-   deadlocking. The glyph cache is manual and **never caches failures** (safety
-   net).
+   thread-safe. Configured keys render on a worker, the screen saver renders on
+   its own thread, and the icon picker/preview render on the main thread;
+   concurrent use produced blank (and blank-cached) glyphs. A shared reentrant
+   `RENDER_LOCK` (defined in `core/icons.py`, imported by `device/renderer.py`,
+   `device/startup_animation.py` and `device/screensaver.py`) serializes drawing.
+   It is reentrant so `compose()` can call `library.render` without deadlocking.
+   The glyph cache is manual and **never caches failures** (safety net).
 
 3. **OBS requests must be fully serialized.** `obsws_python.ReqClient` uses a
    single websocket that is **not** thread-safe. In `obs/client.py` the `_lock`
@@ -562,6 +616,20 @@ hard-to-diagnose failures.
    are replaced, and emit each timer completion once. Completion audio must stay
    on its separate executor and stop on reset or shutdown.
 
+15. **The screen saver must own the deck without stealing actions.** Render every
+   style as a coordinated full-deck frame under `RENDER_LOCK` and BASIC text
+   layout, with frame brightness capped by its independent intensity. While
+   active, suppress normal controller/HID renders. Track physical key activity
+   and deliberate virtual-deck interactions through explicit
+   `record_activity()` calls. Never attach a broad/global
+   `Gtk.EventControllerLegacy` activity hook: nullable events previously caused
+   `AttributeError` log storms, near-100% CPU use and application freezes on
+   Pop!_OS. Consume both edges of the first physical wake press, then restore
+   normal brightness and configured keys. Preview must work while disabled and
+   without hardware, and temporary dialog subscribers must unsubscribe on close.
+   On shutdown, signal the saver wakeup, join its thread before the monitor
+   thread, and close HID only after both exit.
+
 ---
 
 ## 6. Safe local experimentation
@@ -569,8 +637,9 @@ hard-to-diagnose failures.
 `Config.save()` **always** writes to `~/.config/linuxstreamdeck/config.json`
 unless `LSD_CONFIG_DIR` is set. Any script that exercises code calling `save()`
 (e.g. `set_page`, `set_profile`, `add_profile`, `add_page`, `rename_page`,
-`paste_key`, `clear_key`, brightness changes, saving a key) will **overwrite the
-user's real config** — this has happened and lost real keys and settings.
+`paste_key`, `clear_key`, brightness or screen-saver changes, saving a key) will
+**overwrite the user's real config** — this has happened and lost real keys and
+settings.
 `Config.import_bundle()` also saves a replacement configuration and writes imported
 icons and audio below the config directory, so it must always be isolated too.
 

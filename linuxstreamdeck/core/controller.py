@@ -96,6 +96,7 @@ class DeckController:
 
         bus.subscribe("deck.key", self._on_deck_key)
         bus.subscribe("deck.connected", lambda t, d: self.refresh())
+        bus.subscribe("deck.screensaver", self._on_screensaver)
         bus.subscribe("obs.state", lambda t, d: self.refresh())
 
     # ---------- pages ----------
@@ -240,6 +241,13 @@ class DeckController:
         self._toggle.clear()
         self._clear_time_actions()
         self.deck.set_brightness(self.config.brightness)
+        screen = self.config.screensaver
+        self.deck.configure_screensaver(
+            screen.enabled,
+            screen.style,
+            screen.idle_minutes,
+            screen.intensity,
+        )
         cfg = self.config.obs
         self.obs.configure(cfg.host, cfg.port, cfg.password)
         self.obs.reconnect_now()
@@ -309,13 +317,17 @@ class DeckController:
         if data.get("pressed"):
             self.press(data["index"])
 
+    def _on_screensaver(self, topic: str, data: dict) -> None:
+        if not data.get("active"):
+            self.refresh()
+
     def toggle_state(self, index: int) -> bool:
         """ON/OFF state of a toggle key on the current page/profile."""
         return self._toggle.get(self._tkey(index), False)
 
     def press(self, index: int) -> None:
         """Run the key (physical or virtual press) according to its type."""
-        if self._stopping.is_set():
+        if self._stopping.is_set() or self.deck.record_activity():
             return
         kc = self.page.key(index)
         if kc is None or kc.is_empty():
@@ -645,7 +657,11 @@ class DeckController:
 
     def refresh(self) -> None:
         """Re-render the active page (coalesces bursts of events)."""
-        if self._stopping.is_set() or self._render_pending.is_set():
+        if (
+            self._stopping.is_set()
+            or self.deck.screensaver_active
+            or self._render_pending.is_set()
+        ):
             return
         self._render_pending.set()
         try:
@@ -661,16 +677,22 @@ class DeckController:
         self._render_keys(range(self.deck.key_count), view)
 
     def _render_keys(self, indices, view: tuple[int, int]) -> None:
-        if view != (self.current_profile, self.current_page):
+        if (
+            view != (self.current_profile, self.current_page)
+            or self.deck.screensaver_active
+        ):
             return
         page = self.page
         size = self.deck.image_size
         for index in indices:
-            if self._stopping.is_set():
+            if self._stopping.is_set() or self.deck.screensaver_active:
                 return
             spec = self._key_spec(index, page.key(index), size)
             image = renderer.compose(**spec)
-            if view != (self.current_profile, self.current_page):
+            if (
+                view != (self.current_profile, self.current_page)
+                or self.deck.screensaver_active
+            ):
                 return
             self.deck.set_key_image(index, image)
             self.bus.emit("ui.key_image", index=index, png=renderer.to_png_bytes(image))

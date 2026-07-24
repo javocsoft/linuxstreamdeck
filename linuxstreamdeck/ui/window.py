@@ -18,6 +18,7 @@ from .. import APP_NAME  # noqa: E402
 from .about import AboutDialog  # noqa: E402
 from .editor import EditorPanel  # noqa: E402
 from .obs_settings import ObsSettingsDialog  # noqa: E402
+from .screensaver_settings import ScreenSaverSettingsDialog  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ class MainWindow(Adw.ApplicationWindow):
                                        menu_model=page_menu)
         header.pack_start(page_menu_btn)
 
-        # brightness + OBS settings + about
+        # screen saver + brightness + OBS settings + about
         self.obs_btn = Gtk.Button.new_from_icon_name("network-offline-symbolic")
         self.obs_btn.set_tooltip_text("OBS connection settings")
         self.obs_btn.set_sensitive(self.app.obs_password_ready)
@@ -133,6 +134,12 @@ class MainWindow(Adw.ApplicationWindow):
         self.brightness.set_value(self.app.config.brightness)
         self.brightness.connect("value-changed", self._on_brightness)
         header.pack_end(self.brightness)
+        screensaver_btn = Gtk.Button.new_from_icon_name(
+            "preferences-desktop-screensaver-symbolic"
+        )
+        screensaver_btn.set_tooltip_text("Configure Stream Deck screen saver")
+        screensaver_btn.connect("clicked", self._on_screensaver_settings)
+        header.pack_end(screensaver_btn)
 
         view.add_top_bar(header)
 
@@ -189,6 +196,7 @@ class MainWindow(Adw.ApplicationWindow):
     def _connect_bus(self) -> None:
         bus = self.app.bus
         bus.subscribe("ui.key_image", self._on_key_image)
+        bus.subscribe("ui.screensaver_frame", self._on_screensaver_frame)
         bus.subscribe("profile.changed", self._on_profile_changed)
         bus.subscribe("page.changed", lambda t, d: self._on_page_changed())
         for topic in ("deck.connected", "deck.disconnected",
@@ -205,7 +213,15 @@ class MainWindow(Adw.ApplicationWindow):
             self._key_pictures[index].set_paintable(texture)
 
     def _on_key_clicked(self, btn, index: int) -> None:
+        self.app.deck.record_activity()
         self._select(index)
+
+    def _on_screensaver_frame(self, _topic: str, data: dict) -> None:
+        for index, png in enumerate(data.get("images", ())):
+            if index >= len(self._key_pictures):
+                break
+            texture = Gdk.Texture.new_from_bytes(GLib.Bytes.new(png))
+            self._key_pictures[index].set_paintable(texture)
 
     def _on_about(self, _button) -> None:
         AboutDialog().present(self)
@@ -868,6 +884,10 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_obs_settings(self, _btn) -> None:
         ObsSettingsDialog(self, self.app).present()
+
+    def _on_screensaver_settings(self, _btn) -> None:
+        self.app.deck.record_activity()
+        ScreenSaverSettingsDialog(self, self.app).present()
 
     # ---------- state ----------
 

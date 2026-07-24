@@ -51,6 +51,13 @@ of truth; everything here is Claude-specific and additive.
   presses must stay off action workers, ticks must repaint only changed seconds
   in the visible view, DnD must move runtime state, and edits/import/shutdown
   must reset it and stop completion audio. See AGENTS.md §3 and §5.
+- Keep the screen saver exclusive and wake-safe: render its full-deck canvas
+  under `RENDER_LOCK`/BASIC, cap brightness by its independent intensity, pause
+  normal key renders, consume the first physical wake press, restore configured
+  brightness/images, and join its thread before HID closes. Dialog subscribers
+  must unsubscribe on close. Track idle activity only at physical-key and
+  explicit virtual-deck entry points; never add a broad/global
+  `Gtk.EventControllerLegacy` activity hook. See AGENTS.md §3 and §5.
 
 ### Standard verification loop
 
@@ -63,9 +70,9 @@ LSD_CONFIG_DIR="$TEST_CONFIG_DIR" .venv/bin/python -m unittest discover -s tests
 ```
 
 For rendering changes, compose the relevant key PNG(s) offscreen and read the
-image back, using a temp `LSD_CONFIG_DIR` if the path touches config. For a live
-GUI check, hand it to the user with `./run.sh` (they must close any old window
-first — single instance).
+image back, using `screensaver_frame()` for screen-saver changes and a temp
+`LSD_CONFIG_DIR` if the path touches config. For a live GUI check, hand it to the
+user with `./run.sh` (they must close any old window first — single instance).
 
 ### Working style
 

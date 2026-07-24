@@ -28,9 +28,21 @@ class FakeDeck:
 
     def __init__(self) -> None:
         self.images = {}
+        self.screensaver_active = False
+        self.activity = 0
 
     def set_key_image(self, index, image) -> None:
         self.images[index] = image
+
+    def record_activity(self) -> bool:
+        self.activity += 1
+        return self.screensaver_active
+
+    def set_brightness(self, _value) -> None:
+        pass
+
+    def configure_screensaver(self, *_args) -> None:
+        pass
 
 
 class ControllerActivityTests(unittest.TestCase):
@@ -157,6 +169,25 @@ class ControllerActivityTests(unittest.TestCase):
         reset = self.controller.countdown_snapshot((0, 0, 0), 10)
         self.assertEqual(reset.display, "00:00:10")
         self.assertFalse(reset.running)
+
+    def test_waking_the_screen_saver_does_not_run_the_key_action(self) -> None:
+        timer = KeyConfig(
+            kind=KIND_SINGLE,
+            action="sys.timer",
+            params={"duration": "00:10", "sound": "", "volume": 100},
+        )
+        self.config.pages[0].set_key(0, timer)
+        self.deck.screensaver_active = True
+
+        self.controller.press(0)
+
+        snapshot = self.controller.countdown_snapshot((0, 0, 0), 10)
+        self.assertFalse(snapshot.running)
+        self.deck.screensaver_active = False
+        self.controller.press(0)
+        self.assertTrue(
+            self.controller.countdown_snapshot((0, 0, 0), 10).running
+        )
 
     def test_resetting_a_finished_timer_stops_its_sound(self) -> None:
         started = threading.Event()
