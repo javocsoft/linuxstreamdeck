@@ -1,48 +1,77 @@
-# LinuxStreamDeck
+<div align="center">
 
-Software for the **Elgato Stream Deck** on Linux with **full OBS Studio integration**
-(obs-websocket v5) and real-time state feedback on the keys.
+# 🎛️ LinuxStreamDeck
 
-## Features
+### Your Elgato Stream Deck, finally at home on Linux — with deep OBS Studio integration.
 
-- **Virtual deck in the UI**: the window grid mirrors the physical deck and lets you
-  configure and test actions without the device connected.
-- **Profiles**: each profile stores its own set of pages and keys (with a name and a
-  short description). Switch profiles from the header selector to alternate between
-  configurations as you need (e.g. "Work", "Streaming").
-- **Easy organization**: move keys with **drag & drop** (swaps positions) and
-  **copy/paste** any key to duplicate it (right-click → Copy/Paste, or `Ctrl+C`/`Ctrl+V`;
-  `Delete` clears it). Works with any key type.
-- **Three key types**:
-  - *Single action* — one action, with state feedback on the key.
-  - *Multiple actions* — ordered list of actions run in sequence when pressed
-    (with an optional delay between steps).
-  - *Toggle (ON/OFF)* — two action lists; each press toggles the state and runs the
-    matching list, with its own appearance per state.
-- **Deep OBS integration**, more complete than most alternatives on Linux:
-  - Scenes: switch program/preview, studio mode, transitions (type and duration)
-  - Recording: start/stop/pause · Streaming: start/stop · Virtual camera
-  - Replay buffer: enable and save · Source screenshots to PNG
-  - Audio: mute (with feedback), raise/lower volume, set volume in dB
-  - Sources: show/hide per scene · Filters: enable/disable
-  - Media: play/pause/restart/stop/next/previous
-  - Scene collections and profiles · Internal OBS hotkeys
-  - **Raw request**: any obs-websocket protocol request → 100% coverage
-- **Real-time feedback**: active scene highlighted, recording key in red, muted
-  microphone marked… via obs-websocket events.
-- **Built-in icon library** (~7,400 Material Design Icons, categorized and
-  searchable): every action comes with a default icon, you can pick another from the
-  library, or use your own image. Nothing to upload by hand.
-- System actions (run command, open URL) and navigation between pages.
-- Automatic reconnection to OBS and device hotplug.
+![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+![Platform: Linux](https://img.shields.io/badge/platform-Linux-informational)
+![UI: GTK4 / Libadwaita](https://img.shields.io/badge/UI-GTK4%20%2F%20Libadwaita-4A90D9)
 
-## Requirements
+<img src="docs/screenshot.png" alt="LinuxStreamDeck controlling OBS Studio" width="840">
 
-- Pop!_OS / Ubuntu 24.04 or similar, Python ≥ 3.10
-- OBS Studio 28+ with the WebSocket server enabled
-  (*Tools → WebSocket Server Settings*)
+</div>
 
-## Installation
+---
+
+Point-and-click control of your **Elgato Stream Deck** on Linux, built around **full OBS
+Studio integration** (obs-websocket v5) with **live feedback right on the keys** — the
+recording key turns red, the go-live key glows green, a muted mic is marked, the active
+scene lights up. Configure everything from a clean GTK4 app, with a **built-in library of
+~7,400 icons** so you never have to hunt for images.
+
+## ✨ Why LinuxStreamDeck?
+
+The Stream Deck is a fantastic little device — but Elgato only ships software for macOS
+and Windows. The Linux community has built some genuinely great open-source projects to
+fill that gap, and they deserve credit. In my own testing, though, I kept hitting tools
+that were either fiddly to set up or missing the OBS features I actually reach for day to
+day.
+
+So this is my take on the problem: something that **just works out of the box**, is
+**genuinely easy to configure**, and **covers OBS deeply** — including a "raw request"
+escape hatch that exposes 100% of the obs-websocket protocol when you need it. No half-
+implemented actions, no guessing. It runs, and it's useful.
+
+## 🚀 Features
+
+- 🎬 **Deep OBS integration** — more complete than most Linux alternatives (see below).
+- 🔴 **Real-time feedback on the keys** — active scene highlighted, recording in red,
+  streaming in green, muted mic marked… straight from obs-websocket events.
+- 🗂️ **Profiles & pages** — each profile keeps its own set of pages and keys; switch
+  between "Streaming", "Work", "Gaming" in one click. Rename, delete, describe.
+- 🧩 **Three key types** — *single action*, *multiple actions* (run in sequence, with
+  optional delays), and *toggle (ON/OFF)* with two action lists and its own look per state.
+- 🎨 **Built-in icon library** — ~7,400 Material Design Icons, categorized and searchable.
+  Every action ships with a sensible default icon; pick another, or use your own image.
+- ✋ **Drag & drop and copy/paste** — reorder keys by dragging, duplicate any key with
+  right-click → Copy/Paste (or `Ctrl+C`/`Ctrl+V`). Works with any key type.
+- 🖥️ **Virtual deck** — the on-screen grid mirrors the physical device, so you can
+  configure and test everything **without the hardware even connected**.
+- 🔌 **Auto-reconnect & hotplug** — connects to OBS on its own and picks up the deck when
+  you plug it in.
+
+### 🎬 What you can do with OBS
+
+| Area | Actions |
+| --- | --- |
+| **Scenes** | Switch program / preview · studio mode · transitions (type & duration) |
+| **Recording & streaming** | Record start/stop/pause · stream start/stop · virtual camera |
+| **Replay & capture** | Enable & save replay buffer · source screenshots to PNG |
+| **Audio** | Mute (with feedback) · raise/lower volume · set volume in dB |
+| **Sources & filters** | Show/hide sources per scene · enable/disable filters |
+| **Media** | Play / pause / restart / stop / next / previous |
+| **Advanced** | Scene collections & profiles · internal hotkeys · **raw request** (100% of the API) |
+
+Plus system actions (run a command, open a URL) and navigation between pages.
+
+## 📦 Requirements
+
+- Linux desktop (Pop!_OS / Ubuntu 24.04 or similar), Python ≥ 3.10
+- OBS Studio 28+ with the WebSocket server enabled (*Tools → WebSocket Server Settings*)
+
+## ⚙️ Installation
 
 Quick way with the included scripts:
 
@@ -71,37 +100,34 @@ sudo ./install-udev.sh
 ```
 </details>
 
-## Usage
+## 🕹️ Usage
 
 ```bash
 ./run.sh                 # starts the app
 LSD_DEBUG=1 ./run.sh     # with debug logging
 ```
 
-(equivalent to `.venv/bin/linuxstreamdeck`)
+*(equivalent to `.venv/bin/linuxstreamdeck`)*
 
-1. Click the network button in the header and set the obs-websocket host/port/password.
-2. Click a key in the grid, choose the **key type** (single, multiple or toggle), the
-   category and the action, fill in the parameters (the dropdowns are filled live from
-   OBS) and press **Save**.
+1. Click the network button in the header and set your obs-websocket host / port / password.
+2. Click a key in the grid, choose the **key type**, the category and the action, fill in
+   the parameters (dropdowns are populated **live from OBS**) and press **Save**.
 3. Under **Icon**, pick one from the built-in library, use your own image, or keep the
    action's default. Add a **Label** only if you want text on the key.
 4. **Test** runs the action without needing the physical deck.
-5. **Reorder** keys by dragging them from one position to another, and **duplicate** a
-   key with right-click → Copy and then Paste onto another (or `Ctrl+C`/`Ctrl+V`).
-6. **Pages**: use the `+` button to add a page and the menu button (⋮) next to the page
-   selector to **rename** or **delete** the current page.
-7. **Profiles**: use the header selector to switch profiles. With the menu button (⋮)
-   you can **create** a new profile (with a name and description), **edit** it or
-   **delete** it. Each profile has its own pages and keys.
+5. **Reorder** keys by dragging them, and **duplicate** a key with right-click → Copy, then
+   Paste onto another (or `Ctrl+C`/`Ctrl+V`).
+6. **Pages** — use `+` to add a page and the menu (⋮) next to the page selector to rename
+   or delete the current one.
+7. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or
+   delete a profile. Each profile has its own pages and keys.
 
-> The app is **single-instance**: close any previous window before opening another.
+> 💡 The app is **single-instance**: close any previous window before opening another.
 
-The configuration is saved to `~/.config/linuxstreamdeck/config.json` (with a backup in
-`config.json.bak`). You can change the path with the `LSD_CONFIG_DIR` environment
-variable.
+Your configuration lives in `~/.config/linuxstreamdeck/config.json` (with an automatic
+backup in `config.json.bak`). Point `LSD_CONFIG_DIR` somewhere else to relocate it.
 
-## Structure
+## 🗂️ Project structure
 
 ```
 build.sh · run.sh · install-udev.sh    # prepare / launch / USB permissions
@@ -114,6 +140,14 @@ linuxstreamdeck/
 data/udev/         # udev rule for device access
 ```
 
-## License
+## 🙌 Acknowledgements
+
+- The Linux Stream Deck community and the open-source projects that paved the way.
+- [python-elgato-streamdeck](https://github.com/abcminiuser/python-elgato-streamdeck) and
+  [obsws-python](https://github.com/aatikturk/obsws-python) — the libraries this stands on.
+- [Material Design Icons](https://pictogrammers.com/library/mdi/) (Apache-2.0), bundled as
+  the built-in icon library.
+
+## 📄 License
 
 GPL-3.0-or-later — © JavocSoft
