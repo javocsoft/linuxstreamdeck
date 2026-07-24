@@ -19,4 +19,5 @@ python3 agent-definitions/sync.py --check
 
 Both commands use only the Python standard library. Keep `CUSTOMAGENTS.md` in
 sync with the manifest whenever an agent is added, removed or its public
-purpose changes.
+purpose changes. `./build.sh` runs the check before dependency setup and stops
+if any generated adapter is stale or unmanaged.

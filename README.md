@@ -122,6 +122,9 @@ python3 agent-definitions/sync.py --check
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install -e .
 
+# Compile check
+.venv/bin/python -m compileall -q linuxstreamdeck
+
 # USB permissions
 sudo ./install-udev.sh
 ```
@@ -141,7 +144,8 @@ sudo ./install-udev.sh
 The build keeps the version in sync across `pyproject.toml` and
 `linuxstreamdeck/__init__.py`, so passing an explicit `X.Y.Z` bumps both. The
 package is architecture-independent: it vendors the two pip-only Python
-dependencies and pulls GTK4/Libadwaita, Pillow and hidapi through apt.
+dependencies and pulls GTK4/Libadwaita, Secret Service, GNOME Keyring, Pillow,
+hidapi and websocket-client through apt.
 
 After installing or upgrading the package, refresh the system AppStream cache
 so software centres show the current application metadata:
