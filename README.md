@@ -54,6 +54,8 @@ implemented actions, no guessing. It runs, and it's useful.
   you plug it in.
 - 💾 **Portable configuration backups** — export or import profiles, pages, keys,
   settings and custom key icons in one file.
+- 🔐 **Secure OBS password storage** — the password stays in your desktop keyring,
+  never in the configuration file or an export.
 
 ### 🎬 What you can do with OBS
 
@@ -74,6 +76,7 @@ between pages.
 
 - Linux desktop (Pop!_OS / Ubuntu 24.04 or similar), Python ≥ 3.10
 - OBS Studio 28+ with the WebSocket server enabled (*Tools → WebSocket Server Settings*)
+- Secret Service through GNOME Keyring (installed by the `.deb` or `./build.sh --apt`)
 
 ## ⚙️ Installation
 
@@ -109,7 +112,7 @@ sudo ./install-udev.sh
 
 ```bash
 # System dependencies
-sudo apt install gir1.2-gtk-4.0 gir1.2-adw-1 libhidapi-libusb0 python3-gi python3-gi-cairo
+sudo apt install gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-secret-1 gnome-keyring libhidapi-libusb0 python3-gi python3-gi-cairo
 
 # Python environment (with access to the system GTK/PyGObject)
 python3 -m venv --system-site-packages .venv
@@ -172,8 +175,20 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
 
 > 💡 The app is **single-instance**: close any previous window before opening another.
 
-Your configuration lives in `~/.config/linuxstreamdeck/config.json` (with an automatic
-backup in `config.json.bak`). Point `LSD_CONFIG_DIR` somewhere else to relocate it.
+Your non-secret configuration lives in `~/.config/linuxstreamdeck/config.json` (with an
+automatic backup in `config.json.bak`). Point `LSD_CONFIG_DIR` somewhere else to relocate it.
+
+### 🔐 OBS password storage
+
+Your OBS password is stored asynchronously in the desktop Secret Service (GNOME
+Keyring), never in `config.json`, `config.json.bak` or an export. On its first
+run after upgrading, LinuxStreamDeck automatically moves any existing plaintext
+password to the keyring and removes it from both configuration files. Configuration
+files are atomically written with user-only (`0600`) permissions.
+
+If secure storage is unavailable, any plaintext password is still removed. The
+password then lasts only for the current session, so enter it again after restarting
+the app.
 
 ## 💾 Import and export configuration
 
@@ -181,15 +196,18 @@ Use the profiles menu (⋮) in the header to choose **Export configuration** or
 **Import configuration**.
 
 - **Export** creates a portable `.lsdconfig` ZIP archive. It contains the full
-  JSON configuration, custom key icon files, OBS settings and the OBS password.
-  **Keep this file private.** Built-in Material Design Icons remain lightweight
-  `mdi:` references because they are bundled with LinuxStreamDeck. If a custom
-  icon file can no longer be found, it is not included and the app shows a warning.
+  JSON configuration, custom key icon files and non-secret OBS settings, but
+  never the OBS password. Built-in Material Design Icons remain lightweight `mdi:`
+  references because they are bundled with LinuxStreamDeck. If a custom icon file
+  can no longer be found, it is not included and the app shows a warning.
 - **Import** replaces all current profiles, pages, keys and settings after you
   confirm the warning. The previous configuration is saved as
   `~/.config/linuxstreamdeck/config.json.bak`. Bundled custom icons are restored
   under `~/.config/linuxstreamdeck/imported-icons/`; brightness and OBS settings
-  are applied immediately, and OBS reconnects with the imported settings.
+  are applied immediately, and OBS reconnects with the imported settings. The
+  import keeps this computer's keyring credential and ignores password fields in
+  older exports. When moving to another computer, enter the OBS password once in
+  its OBS settings.
 
 ## 🗂️ Project structure
 

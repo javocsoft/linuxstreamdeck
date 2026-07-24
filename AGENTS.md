@@ -38,8 +38,8 @@ sudo ./install-udev.sh  # one-time USB permissions for the Stream Deck
 LSD_DEBUG=1 ./run.sh    # launch with debug logging
 ```
 
-System packages required: `gir1.2-gtk-4.0 gir1.2-adw-1 libhidapi-libusb0
-python3-gi python3-gi-cairo`.
+System packages required: `gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-secret-1
+gnome-keyring libhidapi-libusb0 python3-gi python3-gi-cairo`.
 
 **Compile check (use after any code change):**
 
@@ -54,9 +54,10 @@ offscreen. Do **not** rely on launching the GUI to "see" a change (see §5).
 **Debian package:** `./packaging/build-deb.sh [X.Y.Z]` produces
 `dist/linux-stream-deck-<version>.deb`. It is `Architecture: all`: the pure-Python
 app plus the two pip-only deps (`StreamDeck`, `obsws_python`) are vendored under
-`/usr/lib/linuxstreamdeck/_vendor`, while GTK4/Adw (PyGObject), Pillow, hidapi and
-websocket-client come from apt `Depends`. The launcher `/usr/bin/linuxstreamdeck`
-runs the system `python3` with those paths on `sys.path`. It also installs a
+`/usr/lib/linuxstreamdeck/_vendor`, while GTK4/Adw (PyGObject), Secret Service,
+GNOME Keyring, Pillow, hidapi and websocket-client come from apt `Depends`. The
+launcher `/usr/bin/linuxstreamdeck` runs the system `python3` with those paths on
+`sys.path`. It also installs a
 desktop entry, the app icon, an **AppStream metainfo** (so installed software
 catalogues can discover its icon, description and screenshot), and the udev rule
 (reloaded by the `postinst`). Version defaults to `pyproject.toml`; the build
@@ -78,21 +79,22 @@ HID manager and OBS client, so no background work outlives application teardown.
 ```
 linuxstreamdeck/
 ├── __main__.py        Entry point; logging setup; `linuxstreamdeck` console script.
-├── app.py             LinuxStreamDeckApp: builds Config, EventBus, OBSClient,
-│                      DeckManager, DeckController, MainWindow; app lifecycle.
+├── app.py             LinuxStreamDeckApp: builds Config, SecretStore, EventBus,
+│                      OBSClient, DeckManager, DeckController, MainWindow; app lifecycle.
 ├── basic_actions.py   System/navigation actions (run command, open URL, wait, go to page…).
 ├── core/
 │   ├── events.py      EventBus (pub/sub). Emitters may run on any thread; a
 │   │                  `dispatcher` (GLib.idle_add) marshals callbacks to the UI thread.
-│   ├── config.py      Data model + JSON persistence: Config → Profile → Page →
-│   │                  KeyConfig (+ ObsSettings, ActionStep). Migration, backup,
-│   │                  and portable `.lsdconfig` import/export with custom icons.
+│   ├── config.py      Data model + atomic user-only JSON persistence: Config →
+│   │                  Profile → Page → KeyConfig (+ ObsSettings, ActionStep).
+│   │                  Migration, backup and portable `.lsdconfig` import/export.
 │   ├── actions.py     Action framework: `Action` base, declarative `Param`,
 │   │                  `ActionContext`, global `REGISTRY`, `@register`, `by_category`.
 │   ├── controller.py  DeckController: handles presses, runs action steps, renders
 │   │                  every key, owns page/profile/key operations, and applies imports.
-│   └── icons.py       Built-in icon library (Material Design Icons glyphs via
-│                      Pillow, recolorable, cached). `RENDER_LOCK`.
+│   ├── icons.py       Built-in icon library (Material Design Icons glyphs via
+│   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
+│   └── secrets.py     Async Secret Service / GNOME Keyring OBS credential storage.
 ├── device/
 │   ├── manager.py     DeckManager: physical device via HID, hotplug, key callbacks.
 │   └── renderer.py    `compose()` — builds each key PNG with Pillow (bg, icon,
@@ -162,14 +164,21 @@ Actions are declarative and self-registering:
 - `multi_toggle` (`KIND_TOGGLE`) — two lists (`steps_on` / `steps_off`) with an
   ON/OFF state; the state is keyed by (profile, page, key) in the controller.
 
-Persistence is JSON at `~/.config/linuxstreamdeck/config.json` with a
-`config.json.bak` backup written on every save, and migration from the old
-single-profile format on load. The profiles menu can export a portable
-`.lsdconfig` ZIP archive containing the full JSON configuration and available
-custom key icons. Built-in `mdi:` icons stay as references. Import validates the
+Persistence is atomic JSON with user-only (`0600`) permissions at
+`~/.config/linuxstreamdeck/config.json`, with a `config.json.bak` backup written
+on every save and migration from the old single-profile format on load. The OBS
+password is stored asynchronously in Secret Service / GNOME Keyring, never in
+either JSON file. On first run, legacy plaintext password fields are migrated and
+removed from both files; if Secret Service is unavailable, they are still removed
+and the password is session-only.
+
+The profiles menu can export a portable `.lsdconfig` ZIP archive containing the
+full JSON configuration and available custom key icons. Built-in `mdi:` icons
+stay as references, and OBS password is never exported. Import validates the
 archive, restores bundled custom icons below `CONFIG_DIR/imported-icons`, replaces
 the complete configuration and writes the prior configuration to `config.json.bak`.
-An export includes the OBS password, so it must be handled as private data.
+It keeps the destination computer's keyring credential and ignores password fields
+in old exports, so a password must be entered once after moving to a new computer.
 
 ---
 
@@ -241,7 +250,7 @@ hard-to-diagnose failures.
 unless `LSD_CONFIG_DIR` is set. Any script that exercises code calling `save()`
 (e.g. `set_page`, `set_profile`, `add_profile`, `add_page`, `rename_page`,
 `paste_key`, `clear_key`, brightness changes, saving a key) will **overwrite the
-user's real config** — this has happened and lost real keys and the OBS password.
+user's real config** — this has happened and lost real keys and settings.
 `Config.import_bundle()` also saves a replacement configuration and writes imported
 icons below the config directory, so it must always be isolated too.
 

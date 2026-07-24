@@ -17,7 +17,15 @@ cd "$DIR"
 
 VENV="$DIR/.venv"
 PY="${PYTHON:-python3}"
-SYSTEM_PKGS=(gir1.2-gtk-4.0 gir1.2-adw-1 libhidapi-libusb0 python3-gi python3-gi-cairo)
+SYSTEM_PKGS=(
+    gir1.2-gtk-4.0
+    gir1.2-adw-1
+    gir1.2-secret-1
+    gnome-keyring
+    libhidapi-libusb0
+    python3-gi
+    python3-gi-cairo
+)
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
@@ -35,8 +43,9 @@ command -v "$PY" >/dev/null 2>&1 || { err "$PY not found. Install Python 3.10+."
 
 # ---- system dependency check ----
 missing=()
-"$PY" -c "import gi; gi.require_version('Gtk','4.0'); gi.require_version('Adw','1')" 2>/dev/null \
-    || missing+=(gir1.2-gtk-4.0 gir1.2-adw-1 python3-gi)
+"$PY" -c "import gi; gi.require_version('Gtk','4.0'); gi.require_version('Adw','1'); gi.require_version('Secret','1')" 2>/dev/null \
+    || missing+=(gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-secret-1 python3-gi)
+command -v gnome-keyring-daemon >/dev/null 2>&1 || missing+=(gnome-keyring)
 ldconfig -p 2>/dev/null | grep -q "libhidapi" || missing+=(libhidapi-libusb0)
 
 if ((${#missing[@]})); then

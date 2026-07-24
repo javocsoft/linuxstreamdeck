@@ -213,6 +213,9 @@ class Config:
     current_profile: int = 0
     obs: ObsSettings = field(default_factory=ObsSettings)
     brightness: int = 80
+    obs_password_needs_migration: bool = field(
+        default=False, repr=False, compare=False
+    )
 
     # ---------- access to the active profile ----------
     # `pages` and `current_page` delegate to the active profile so the rest of the
@@ -279,10 +282,11 @@ class Config:
         if not isinstance(raw_obs, dict):
             raise ValueError("The OBS settings must be a JSON object")
         try:
+            legacy_password = str(raw_obs.get("password", ""))
             obs = ObsSettings(
                 host=str(raw_obs.get("host", "localhost")),
                 port=int(raw_obs.get("port", 4455)),
-                password=str(raw_obs.get("password", "")),
+                password=legacy_password,
             )
             brightness = max(10, min(100, int(raw.get("brightness", 80))))
         except (TypeError, ValueError) as error:
@@ -292,6 +296,7 @@ class Config:
             current_profile=current,
             obs=obs,
             brightness=brightness,
+            obs_password_needs_migration="password" in raw_obs,
         )
 
     @staticmethod
@@ -311,17 +316,54 @@ class Config:
                 shutil.copy2(CONFIG_FILE, BACKUP_FILE)
             except Exception:
                 log.debug("Could not back up the configuration", exc_info=True)
-        CONFIG_FILE.write_text(
-            json.dumps(asdict(self), indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        self._write_json_file(
+            CONFIG_FILE,
+            self._serializable_dict(include_legacy_password=True),
         )
         log.debug("Configuration saved to %s", CONFIG_FILE)
+
+    def finish_password_migration(self) -> None:
+        """Persist without the legacy password and scrub it from both JSON files."""
+        self.obs_password_needs_migration = False
+        self.save()
+        if not self.scrub_plaintext_password_files():
+            raise OSError("A legacy configuration file could not be sanitized")
+
+    def scrub_plaintext_password_files(self) -> bool:
+        """Remove a legacy OBS password field from current and backup JSON files."""
+        success = True
+        for path in (CONFIG_FILE, BACKUP_FILE):
+            if not path.exists():
+                continue
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                obs = raw.get("obs")
+                if isinstance(obs, dict) and "password" in obs:
+                    obs.pop("password")
+                    self._write_json_file(path, raw)
+            except Exception:
+                log.warning(
+                    "Could not remove a legacy password from %s",
+                    path,
+                    exc_info=True,
+                )
+                success = False
+        return success
+
+    def _serializable_dict(self, include_legacy_password: bool = False) -> dict:
+        raw = asdict(self)
+        raw.pop("obs_password_needs_migration", None)
+        if not (
+            include_legacy_password and self.obs_password_needs_migration
+        ):
+            raw["obs"].pop("password", None)
+        return raw
 
     # ---------- portable import / export ----------
 
     def export_bundle(self, destination: Path) -> ExportResult:
         """Write a portable configuration archive, including custom key icons."""
-        raw = asdict(self)
+        raw = self._serializable_dict()
         icon_files: dict[str, bytes] = {}
         missing_icons: set[str] = set()
 
@@ -403,7 +445,11 @@ class Config:
             raw = self._read_bundle_json(
                 archive, EXPORT_CONFIG_FILE, MAX_CONFIG_BYTES
             )
+            current_password = self.obs.password
+            password_needs_migration = self.obs_password_needs_migration
             replacement = Config.from_dict(raw)
+            replacement.obs.password = current_password
+            replacement.obs_password_needs_migration = password_needs_migration
             icon_payloads: dict[Path, bytes] = {}
             restored_members: dict[str, Path] = {}
             total_icon_bytes = 0
@@ -442,6 +488,9 @@ class Config:
         self.current_profile = replacement.current_profile
         self.obs = replacement.obs
         self.brightness = replacement.brightness
+        self.obs_password_needs_migration = (
+            replacement.obs_password_needs_migration
+        )
         return ImportResult(
             profiles=len(self.profiles),
             pages=sum(len(profile.pages) for profile in self.profiles),
@@ -482,6 +531,25 @@ class Config:
             temporary.write(data)
             temporary.close()
             temporary_path.replace(target)
+        finally:
+            temporary.close()
+            temporary_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _write_json_file(path: Path, value: dict) -> None:
+        payload = json.dumps(value, indent=2, ensure_ascii=False).encode("utf-8")
+        temporary = tempfile.NamedTemporaryFile(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
+        )
+        temporary_path = Path(temporary.name)
+        try:
+            temporary.write(payload)
+            temporary.close()
+            os.chmod(temporary_path, 0o600)
+            temporary_path.replace(path)
         finally:
             temporary.close()
             temporary_path.unlink(missing_ok=True)

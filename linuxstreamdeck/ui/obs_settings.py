@@ -25,7 +25,8 @@ class ObsSettingsDialog(Adw.Window):
             title="obs-websocket",
             description=(
                 "In OBS: Tools → WebSocket Server Settings.\n"
-                "Enable the server and copy the port and password here."
+                "Enable the server and copy the port and password here.\n"
+                "The password is stored securely in your desktop keyring."
             ),
         )
 
@@ -40,10 +41,10 @@ class ObsSettingsDialog(Adw.Window):
         page.add(group)
 
         actions = Adw.PreferencesGroup()
-        connect = Gtk.Button(label="Save and connect", margin_top=6)
-        connect.add_css_class("suggested-action")
-        connect.connect("clicked", self._connect)
-        actions.add(connect)
+        self.connect = Gtk.Button(label="Save and connect", margin_top=6)
+        self.connect.add_css_class("suggested-action")
+        self.connect.connect("clicked", self._connect)
+        actions.add(self.connect)
         self.status = Gtk.Label(margin_top=10)
         self.status.add_css_class("dim-label")
         actions.add(self.status)
@@ -57,14 +58,26 @@ class ObsSettingsDialog(Adw.Window):
         app.bus.subscribe("obs.disconnected", lambda t, d: self._update_status())
 
     def _connect(self, _btn) -> None:
-        cfg = self.app.config.obs
-        cfg.host = self.host.get_text().strip() or "localhost"
-        cfg.port = int(self.port.get_value())
-        cfg.password = self.password.get_text()
-        self.app.config.save()
-        self.app.obs.configure(cfg.host, cfg.port, cfg.password)
-        self.app.obs.reconnect_now()
-        self.status.set_label("Connecting…")
+        self.connect.set_sensitive(False)
+        self.status.set_label("Saving credentials securely…")
+        self.app.update_obs_settings(
+            self.host.get_text().strip() or "localhost",
+            int(self.port.get_value()),
+            self.password.get_text(),
+            self._settings_saved,
+        )
+
+    def _settings_saved(
+        self, persisted: bool, _error: Exception | None
+    ) -> None:
+        self.connect.set_sensitive(True)
+        if persisted:
+            self.status.set_label("Connecting…")
+            return
+        self.status.set_label(
+            "Connected for this session, but the credentials could not be "
+            "stored securely"
+        )
 
     def _update_status(self) -> None:
         if not self.get_visible():

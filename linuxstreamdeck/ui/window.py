@@ -104,6 +104,7 @@ class MainWindow(Adw.ApplicationWindow):
         # brightness + OBS settings + about
         self.obs_btn = Gtk.Button.new_from_icon_name("network-offline-symbolic")
         self.obs_btn.set_tooltip_text("OBS connection settings")
+        self.obs_btn.set_sensitive(self.app.obs_password_ready)
         self.obs_btn.connect("clicked", self._on_obs_settings)
         header.pack_end(self.obs_btn)
         about_btn = Gtk.Button.new_from_icon_name("help-about-symbolic")
@@ -291,25 +292,6 @@ class MainWindow(Adw.ApplicationWindow):
     # --- configuration import / export ---
 
     def _export_configuration(self) -> None:
-        dialog = Adw.MessageDialog(
-            transient_for=self,
-            heading="Export configuration",
-            body=(
-                "The exported file includes all profiles, pages, keys, custom "
-                "icons, OBS settings and the OBS password. Keep it private."
-            ),
-        )
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("export", "Choose destination")
-        dialog.set_response_appearance(
-            "export", Adw.ResponseAppearance.SUGGESTED
-        )
-        dialog.connect("response", self._on_export_warning_response)
-        dialog.present()
-
-    def _on_export_warning_response(self, _dialog, response: str) -> None:
-        if response != "export":
-            return
         chooser = Gtk.FileDialog(title="Export configuration")
         chooser.set_initial_name("linuxstreamdeck-config.lsdconfig")
         chooser.set_default_filter(self._configuration_file_filter())
