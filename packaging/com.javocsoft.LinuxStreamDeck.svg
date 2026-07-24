@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a4150"/>
+      <stop offset="1" stop-color="#242833"/>
+    </linearGradient>
+  </defs>
+  <!-- device body -->
+  <rect x="12" y="24" width="104" height="80" rx="14" fill="url(#body)"
+        stroke="#11141b" stroke-width="2"/>
+  <!-- keys: 3 columns x 2 rows -->
+  <g>
+    <!-- row 1 -->
+    <rect x="24" y="36" width="22" height="22" rx="5" fill="#4c5464"/>
+    <rect x="53" y="36" width="22" height="22" rx="5" fill="#62a0ea"/>
+    <rect x="82" y="36" width="22" height="22" rx="5" fill="#4c5464"/>
+    <!-- row 2 -->
+    <rect x="24" y="64" width="22" height="22" rx="5" fill="#4c5464"/>
+    <rect x="53" y="64" width="22" height="22" rx="5" fill="#4c5464"/>
+    <rect x="82" y="64" width="22" height="22" rx="5" fill="#4c5464"/>
+  </g>
+  <!-- soft glow on the active key -->
+  <rect x="53" y="36" width="22" height="22" rx="5" fill="#ffffff" opacity="0.12"/>
+</svg>

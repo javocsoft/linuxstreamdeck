@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=LinuxStreamDeck
+GenericName=Stream Deck Controller
+Comment=Control your Elgato Stream Deck with deep OBS Studio integration
+Exec=linuxstreamdeck
+Icon=com.javocsoft.LinuxStreamDeck
+Terminal=false
+Categories=AudioVideo;GTK;
+Keywords=streamdeck;elgato;obs;deck;macro;
+StartupNotify=true
+StartupWMClass=com.javocsoft.LinuxStreamDeck

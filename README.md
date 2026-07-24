@@ -75,6 +75,22 @@ between pages.
 
 ## ⚙️ Installation
 
+### Option A — Install the `.deb` (recommended)
+
+On Debian/Ubuntu/Pop!_OS, grab `linux-stream-deck-<version>.deb` and let apt pull
+the dependencies:
+
+```bash
+sudo apt install ./linux-stream-deck-<version>.deb
+```
+
+That's it — **LinuxStreamDeck** shows up in your app menu, the `linuxstreamdeck`
+command is on your `PATH`, and the USB access rule is installed and reloaded for
+you (unplug and reconnect the deck once after installing). To remove it later:
+`sudo apt remove linux-stream-deck`.
+
+### Option B — From source
+
 Quick way with the included scripts:
 
 ```bash
@@ -102,6 +118,23 @@ sudo ./install-udev.sh
 ```
 </details>
 
+<details>
+<summary>Build the <code>.deb</code> yourself</summary>
+
+```bash
+./build.sh                       # once, to create the .venv it reads deps from
+./packaging/build-deb.sh         # version from pyproject.toml
+./packaging/build-deb.sh 1.2.3   # …or an explicit X.Y.Z (also bumps the version)
+
+# → dist/linux-stream-deck-<version>.deb  (Architecture: all)
+```
+
+The build keeps the version in sync across `pyproject.toml` and
+`linuxstreamdeck/__init__.py`, so passing an explicit `X.Y.Z` bumps both. The
+package is architecture-independent: it vendors the two pip-only Python
+dependencies and pulls GTK4/Libadwaita, Pillow and hidapi through apt.
+</details>
+
 ## 🕹️ Usage
 
 ```bash
@@ -119,8 +152,8 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
 4. **Test** runs the action without needing the physical deck.
 5. **Reorder** keys by dragging them, and **duplicate** a key with right-click → Copy, then
    Paste onto another (or `Ctrl+C`/`Ctrl+V`).
-6. **Pages** — use `+` to add a page and the menu (⋮) next to the page selector to rename
-   or delete the current one.
+6. **Pages** — use the menu (⋮) next to the page selector to add a new page, rename or
+   delete the current one.
 7. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or
    delete a profile. Each profile has its own pages and keys.
 
@@ -133,6 +166,7 @@ backup in `config.json.bak`). Point `LSD_CONFIG_DIR` somewhere else to relocate 
 
 ```
 build.sh · run.sh · install-udev.sh    # prepare / launch / USB permissions
+packaging/         # build-deb.sh, .desktop, icon, maintainer scripts → .deb
 linuxstreamdeck/
 ├── core/          # event bus, config, action registry, controller, icons
 ├── device/        # physical Stream Deck (hidapi) and key rendering (Pillow)
