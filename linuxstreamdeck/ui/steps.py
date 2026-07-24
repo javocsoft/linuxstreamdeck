@@ -18,7 +18,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 from ..core import actions as registry  # noqa: E402
-from ..core.actions import Action, Param  # noqa: E402
+from ..core.actions import Action, Param, format_duration, parse_duration  # noqa: E402
 from ..core.config import DEFAULT_KEY_BG, ActionStep  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -77,10 +77,6 @@ class StepEditor(Gtk.Box):
         self.append(self.desc)
         self.params_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.append(self.params_box)
-        self.delay_spin = Gtk.SpinButton(
-            adjustment=Gtk.Adjustment(value=0, lower=0, upper=600000, step_increment=100)
-        )
-        self.append(_row("Delay after (ms)", self.delay_spin))
 
         self.cat_dd.connect("notify::selected", self._on_category_changed)
         self.action_dd.connect("notify::selected", self._on_action_changed)
@@ -94,7 +90,6 @@ class StepEditor(Gtk.Box):
             self.cat_dd.set_selected(self._cat_names.index(action.category))
         else:
             self.cat_dd.set_selected(0)
-        self.delay_spin.set_value(step.delay_ms)
         self._building = False
         self._populate_actions(preselect=step.action, params=step.params)
 
@@ -106,9 +101,7 @@ class StepEditor(Gtk.Box):
             name: self._widget_value(param, widget)
             for name, (param, widget) in self._param_widgets.items()
         }
-        return ActionStep(
-            action=action.id, params=params, delay_ms=int(self.delay_spin.get_value())
-        )
+        return ActionStep(action=action.id, params=params)
 
     def action_name(self) -> str:
         a = self._current_action()
@@ -166,6 +159,8 @@ class StepEditor(Gtk.Box):
     def _param_widget(self, param: Param, value) -> Gtk.Widget:
         if param.kind == "choice":
             return self._choice_dd(param.choices, value or param.default)
+        if param.kind == "duration":
+            return self._duration_entry(value if value is not None else param.default)
         if param.kind in ("int", "float"):
             digits = 0 if param.kind == "int" else 1
             adj = Gtk.Adjustment(
@@ -274,6 +269,8 @@ class StepEditor(Gtk.Box):
 
     @staticmethod
     def _widget_value(param: Param, widget: Gtk.Widget):
+        if param.kind == "duration":
+            return format_duration(parse_duration(widget.get_text()))
         if isinstance(widget, Gtk.SpinButton):
             return int(widget.get_value()) if param.kind == "int" else widget.get_value()
         if isinstance(widget, Gtk.DropDown):
@@ -289,6 +286,25 @@ class StepEditor(Gtk.Box):
         if value in options:
             dd.set_selected(options.index(value))
         return dd
+
+    @staticmethod
+    def _duration_entry(value) -> Gtk.Entry:
+        """Small 'MM:SS' time field that normalizes itself when edited."""
+        entry = Gtk.Entry(
+            text=format_duration(parse_duration(value)),
+            placeholder_text="MM:SS",
+            max_width_chars=6, width_chars=6,
+            xalign=0.5, halign=Gtk.Align.START,
+        )
+
+        def _normalize(*_a):
+            entry.set_text(format_duration(parse_duration(entry.get_text())))
+
+        entry.connect("activate", _normalize)
+        focus = Gtk.EventControllerFocus()
+        focus.connect("leave", _normalize)
+        entry.add_controller(focus)
+        return entry
 
 
 # ============================ step list =============================

@@ -64,7 +64,7 @@ linuxstreamdeck/
 ├── __main__.py        Entry point; logging setup; `linuxstreamdeck` console script.
 ├── app.py             LinuxStreamDeckApp: builds Config, EventBus, OBSClient,
 │                      DeckManager, DeckController, MainWindow; app lifecycle.
-├── basic_actions.py   System/navigation actions (run command, open URL, go to page…).
+├── basic_actions.py   System/navigation actions (run command, open URL, wait, go to page…).
 ├── core/
 │   ├── events.py      EventBus (pub/sub). Emitters may run on any thread; a
 │   │                  `dispatcher` (GLib.idle_add) marshals callbacks to the UI thread.
@@ -121,7 +121,8 @@ Actions are declarative and self-registering:
 
 - Subclass `Action`, set `id`, `name`, `category`, `params`, optional
   `default_icon` (`"mdi:name"`), and decorate with `@register`.
-- Each `Param` has a `kind` (`string | int | float | choice`) and may set
+- Each `Param` has a `kind` (`string | int | float | choice | duration`, the last
+  a `MM:SS` time field — see `parse_duration`/`format_duration`) and may set
   `choices_source` so the editor fills the dropdown **live from OBS**
   (`scenes`, `inputs`, `media_inputs`, `transitions`, `scene_collections`,
   `profiles`, `sources_in_scene`, `filters_of_source`, `hotkeys`, `pages`).
@@ -136,8 +137,9 @@ Actions are declarative and self-registering:
 `Profile`. Each `KeyConfig.kind` is one of:
 
 - `single` (`KIND_SINGLE`) — one action, with state feedback.
-- `multi` (`KIND_MULTI`) — an ordered list of `ActionStep`s run in sequence
-  (with optional `delay_ms`).
+- `multi` (`KIND_MULTI`) — an ordered list of `ActionStep`s run in sequence;
+  pauses are an explicit `Wait` action (`sys.wait`, a `duration` param), not a
+  per-step delay.
 - `multi_toggle` (`KIND_TOGGLE`) — two lists (`steps_on` / `steps_off`) with an
   ON/OFF state; the state is keyed by (profile, page, key) in the controller.
 

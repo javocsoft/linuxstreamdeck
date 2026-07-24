@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
 import webbrowser
 
-from .core.actions import Action, Param, apply_default_icons, register
+from .core.actions import Action, Param, apply_default_icons, parse_duration, register
 
 log = logging.getLogger(__name__)
 
 CAT_SYSTEM = "System"
 CAT_NAV = "Navigation"
+
+# Upper bound for a single Wait step. It runs on a shared worker thread, so an
+# unbounded sleep could starve rendering; one hour is far beyond any real use.
+MAX_WAIT_SECONDS = 3600
 
 
 @register
@@ -42,6 +47,21 @@ class OpenUrl(Action):
 
 
 @register
+class Wait(Action):
+    id = "sys.wait"
+    name = "Wait"
+    category = CAT_SYSTEM
+    description = ("Pause for the given time (MM:SS) before the next action. "
+                  "Meant for multiple / toggle keys, between two actions.")
+    params = [Param("duration", "Wait time (MM:SS)", kind="duration", default="00:05")]
+
+    def execute(self, ctx, p):
+        seconds = parse_duration(p.get("duration"))
+        if seconds > 0:
+            time.sleep(min(seconds, MAX_WAIT_SECONDS))
+
+
+@register
 class PageGo(Action):
     id = "nav.page"
     name = "Go to page"
@@ -67,5 +87,6 @@ class PageGo(Action):
 apply_default_icons({
     "sys.command": "mdi:console",
     "sys.url": "mdi:web",
+    "sys.wait": "mdi:timer-sand",
     "nav.page": "mdi:book-open-page-variant",
 })

@@ -41,8 +41,9 @@ implemented actions, no guessing. It runs, and it's useful.
   streaming in green, muted mic marked… straight from obs-websocket events.
 - 🗂️ **Profiles & pages** — each profile keeps its own set of pages and keys; switch
   between "Streaming", "Work", "Gaming" in one click. Rename, delete, describe.
-- 🧩 **Three key types** — *single action*, *multiple actions* (run in sequence, with
-  optional delays), and *toggle (ON/OFF)* with two action lists and its own look per state.
+- 🧩 **Three key types** — *single action*, *multiple actions* (run in sequence, with an
+  optional **Wait** action to pause between them), and *toggle (ON/OFF)* with two action
+  lists and its own look per state.
 - 🎨 **Built-in icon library** — ~7,400 Material Design Icons, categorized and searchable.
   Every action ships with a sensible default icon; pick another, or use your own image.
 - ✋ **Drag & drop and copy/paste** — reorder keys by dragging, duplicate any key with
@@ -64,7 +65,8 @@ implemented actions, no guessing. It runs, and it's useful.
 | **Media** | Play / pause / restart / stop / next / previous |
 | **Advanced** | Scene collections & profiles · internal hotkeys · **raw request** (100% of the API) |
 
-Plus system actions (run a command, open a URL) and navigation between pages.
+Plus system actions (run a command, open a URL, wait a set time) and navigation
+between pages.
 
 ## 📦 Requirements
 

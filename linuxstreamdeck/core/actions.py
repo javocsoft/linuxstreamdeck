@@ -18,13 +18,44 @@ log = logging.getLogger(__name__)
 class Param:
     name: str
     label: str
-    kind: str = "string"          # string | int | float | choice
+    kind: str = "string"          # string | int | float | choice | duration
     default: Any = None
     choices: list[str] = field(default_factory=list)   # for kind == "choice"
     # Dynamic source of options that the editor fills in live:
     #   scenes | inputs | media_inputs | transitions | scene_collections
     #   profiles | sources_in_scene | filters_of_source | hotkeys | pages
     choices_source: str = ""
+
+
+# --- duration parameters (kind == "duration") ---
+# Stored and shown as a "MM:SS" string; the editor renders a small time field.
+
+def parse_duration(text) -> int:
+    """Parse a duration into whole seconds. Accepts 'MM:SS' (or 'H:MM:SS'), a
+    plain number of seconds, or empty. Tolerant of blanks and bad input → 0."""
+    if text is None:
+        return 0
+    s = str(text).strip()
+    if not s:
+        return 0
+    try:
+        if ":" in s:
+            total = 0
+            for part in s.split(":"):        # left→right, each part is 60× the next
+                total = total * 60 + max(0, int(part.strip() or 0))
+            return total
+        return max(0, int(float(s)))
+    except (ValueError, TypeError):
+        return 0
+
+
+def format_duration(seconds) -> str:
+    """Format whole seconds as 'MM:SS' (minutes grow past 99 if needed)."""
+    try:
+        total = max(0, int(seconds))
+    except (ValueError, TypeError):
+        total = 0
+    return f"{total // 60:02d}:{total % 60:02d}"
 
 
 class ActionContext:

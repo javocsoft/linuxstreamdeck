@@ -13,6 +13,8 @@ import shutil
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from .actions import format_duration
+
 log = logging.getLogger(__name__)
 
 # The path can be redirected with LSD_CONFIG_DIR (useful for tests, so the user's
@@ -33,10 +35,10 @@ KIND_TOGGLE = "multi_toggle"    # toggle: two action lists (ON/OFF state)
 
 @dataclass
 class ActionStep:
-    """A step inside a multi-action key."""
+    """A step inside a multi-action key. Pauses between steps are expressed as an
+    explicit Wait action (sys.wait), not a per-step delay."""
     action: str = ""                      # id of a registered action
     params: dict = field(default_factory=dict)
-    delay_ms: int = 0                     # wait after running this step
 
 
 @dataclass
@@ -80,14 +82,17 @@ class KeyConfig:
     @classmethod
     def from_dict(cls, d: dict) -> "KeyConfig":
         def steps(name: str) -> list[ActionStep]:
-            return [
-                ActionStep(
-                    action=s.get("action", ""),
-                    params=s.get("params", {}),
-                    delay_ms=s.get("delay_ms", 0),
-                )
-                for s in d.get(name, [])
-            ]
+            out: list[ActionStep] = []
+            for s in d.get(name, []):
+                out.append(ActionStep(action=s.get("action", ""),
+                                      params=s.get("params", {})))
+                # legacy: a per-step "delay after (ms)" becomes an explicit Wait
+                # action (whole seconds), so old configs keep their pauses.
+                secs = round(s.get("delay_ms", 0) / 1000)
+                if secs > 0:
+                    out.append(ActionStep(action="sys.wait",
+                                          params={"duration": format_duration(secs)}))
+            return out
 
         return cls(
             kind=d.get("kind", KIND_SINGLE),

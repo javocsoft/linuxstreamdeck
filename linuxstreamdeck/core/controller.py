@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import actions as action_registry
@@ -228,8 +227,6 @@ class DeckController:
             except Exception as e:
                 log.exception("Error running %s", action.id)
                 self.bus.emit("status", text=f"Error in «{action.name}»: {e}")
-            if step.delay_ms > 0:
-                time.sleep(step.delay_ms / 1000)
 
     # ---------- rendering ----------
 

@@ -134,7 +134,7 @@ class EditorPanel(Gtk.Box):
 
         elif kind == KIND_MULTI:
             self.body.append(self._hint(
-                "They run in order when pressed. Use «Delay after» for pauses."
+                "They run in order when pressed. Add a «Wait» action for pauses."
             ))
             self.multi_list = StepList(self.app)
             self.multi_list.load(kc.steps or [ActionStep()])
