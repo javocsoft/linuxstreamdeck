@@ -429,6 +429,13 @@ data/udev/         # udev rule for device access
 - [Material Design Icons](https://pictogrammers.com/library/mdi/) (Apache-2.0), bundled as
   the built-in icon library.
 
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before
+submitting a change and follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+Report suspected vulnerabilities privately according to
+[SECURITY.md](SECURITY.md).
+
 ## 📄 License
 
-GPL-3.0-or-later — © JavocSoft
+[GPL-3.0-or-later](LICENSE) — © JavocSoft
