@@ -61,7 +61,9 @@ desktop entry, the app icon, an **AppStream metainfo** (so software centres show
 it as an app with icon/screenshot, not a generic package), and the udev rule
 (reloaded by the `postinst`). Version defaults to `pyproject.toml`; the build
 **syncs it into both** `pyproject.toml` and `linuxstreamdeck/__init__.py::VERSION`,
-so passing `X.Y.Z` also bumps those sources.
+so passing `X.Y.Z` also bumps those sources. After installing or upgrading the
+package, run `sudo ./packaging/refresh-appstream.sh` to refresh the system
+AppStream cache for software centres, then reopen the software centre.
 
 ---
 

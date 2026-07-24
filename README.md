@@ -133,6 +133,15 @@ The build keeps the version in sync across `pyproject.toml` and
 `linuxstreamdeck/__init__.py`, so passing an explicit `X.Y.Z` bumps both. The
 package is architecture-independent: it vendors the two pip-only Python
 dependencies and pulls GTK4/Libadwaita, Pillow and hidapi through apt.
+
+After installing or upgrading the package, refresh the system AppStream cache
+so software centres show the current application metadata:
+
+```bash
+sudo ./packaging/refresh-appstream.sh
+```
+
+Close and reopen the software centre afterwards to load the refreshed cache.
 </details>
 
 ## 🕹️ Usage
