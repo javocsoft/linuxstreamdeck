@@ -168,29 +168,24 @@ class DeckController:
     def _render_page(self) -> None:
         self._render_pending.clear()
         size = self.deck.image_size
-        t0 = time.time()
         for index in range(self.deck.key_count):
-            kc = self.page.key(index)
-            image = self._render_key(index, kc, size)
+            spec = self._key_spec(index, self.page.key(index), size)
+            image = renderer.compose(**spec)
             self.deck.set_key_image(index, image)
             self.bus.emit("ui.key_image", index=index, png=renderer.to_png_bytes(image))
-        log.debug(
-            "[render] página redibujada en %.0f ms [hilo %s]",
-            (time.time() - t0) * 1000, threading.current_thread().name,
-        )
 
-    def _render_key(self, index: int, kc: KeyConfig | None, size):
+    # ---------- specs de tecla (feedback + parámetros de composición) ----------
+
+    def _key_spec(self, index: int, kc: KeyConfig | None, size) -> dict:
         if kc is None or kc.is_empty():
-            return renderer.compose(size=size)
+            return {"size": size}
         if kc.kind == KIND_TOGGLE:
-            return self._render_toggle(index, kc, size)
+            return self._toggle_spec(index, kc, size)
         if kc.kind == KIND_MULTI:
-            # icono propio, o el de la primera acción de la lista, o uno genérico
             icon = kc.icon or self._first_step_icon(kc.steps) or "mdi:playlist-play"
-            return renderer.compose(
-                size=size, label=kc.label, icon_path=icon, bg=kc.bg_color, badge="⋯"
-            )
-        return self._render_single(kc, size)
+            return {"size": size, "label": kc.label, "icon_path": icon,
+                    "bg": kc.bg_color, "badge": "⋯"}
+        return self._single_spec(kc, size)
 
     @staticmethod
     def _first_step_icon(steps) -> str:
@@ -200,7 +195,7 @@ class DeckController:
                 return action.default_icon
         return ""
 
-    def _render_single(self, kc: KeyConfig, size):
+    def _single_spec(self, kc: KeyConfig, size) -> dict:
         fb = None
         action = action_registry.get(kc.action)
         if action is not None:
@@ -209,37 +204,28 @@ class DeckController:
             except Exception:
                 log.debug("feedback de %s falló", kc.action, exc_info=True)
         fb = fb or {}
-        # icono propio de la tecla, o el icono por defecto de la acción
+        # icono propio de la tecla, o el icono por defecto de la acción. Solo se
+        # muestra la etiqueta que el usuario haya puesto (sin ella el icono queda
+        # centrado; no se mete el nombre de la acción, que lo desplazaba arriba).
         icon = kc.icon or (action.default_icon if action else "")
-        # solo se muestra la etiqueta que el usuario haya puesto explícitamente;
-        # así, sin etiqueta, el icono queda centrado (no se mete el nombre de la
-        # acción, que reservaba espacio abajo y desplazaba el icono hacia arriba)
-        return renderer.compose(
-            size=size,
-            label=kc.label,
-            icon_path=icon,
-            bg=fb.get("color") or kc.bg_color,
-            active=fb.get("active", False),
-            badge=fb.get("badge", ""),
-        )
+        return {
+            "size": size,
+            "label": kc.label,
+            "icon_path": icon,
+            "bg": fb.get("color") or kc.bg_color,
+            "active": fb.get("active", False),
+            "badge": fb.get("badge", ""),
+        }
 
-    def _render_toggle(self, index: int, kc: KeyConfig, size):
-        on = self.toggle_state(index)
-        if on:
+    def _toggle_spec(self, index: int, kc: KeyConfig, size) -> dict:
+        if self.toggle_state(index):
             icon = kc.icon or self._first_step_icon(kc.steps_on) or "mdi:toggle-switch"
-            return renderer.compose(
-                size=size, label=kc.label, icon_path=icon,
-                bg=kc.bg_color, active=True, badge="ON",
-            )
+            return {"size": size, "label": kc.label, "icon_path": icon,
+                    "bg": kc.bg_color, "active": True, "badge": "ON"}
         icon = (kc.icon_off or kc.icon
                 or self._first_step_icon(kc.steps_off) or "mdi:toggle-switch-off-outline")
-        return renderer.compose(
-            size=size,
-            label=kc.label_off or kc.label,
-            icon_path=icon,
-            bg=kc.bg_color_off,
-            badge="OFF",
-        )
+        return {"size": size, "label": kc.label_off or kc.label, "icon_path": icon,
+                "bg": kc.bg_color_off, "badge": "OFF"}
 
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)

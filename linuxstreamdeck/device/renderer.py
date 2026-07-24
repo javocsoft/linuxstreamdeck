@@ -35,7 +35,8 @@ def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     for path in _FONT_CANDIDATES:
         if Path(path).exists():
             try:
-                return ImageFont.truetype(path, size)
+                # layout BASIC: evita el harfbuzz de Pillow (choca con el de GTK)
+                return ImageFont.truetype(path, size, layout_engine=ImageFont.Layout.BASIC)
             except Exception:
                 continue
     return ImageFont.load_default()

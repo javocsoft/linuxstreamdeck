@@ -141,47 +141,66 @@ class IconLibrary:
 
 @lru_cache(maxsize=32)
 def _font(size: int) -> ImageFont.FreeTypeFont:
-    return ImageFont.truetype(str(FONT_FILE), size)
+    # layout BASIC: evita el motor raqm/harfbuzz de Pillow, cuyo estado global
+    # choca con el harfbuzz del sistema (GTK/Pango) y corrompía el render.
+    return ImageFont.truetype(str(FONT_FILE), size, layout_engine=ImageFont.Layout.BASIC)
 
 
-@lru_cache(maxsize=512)
-def _render_glyph_cached(font_file: str, codepoint: int, box: int, color: str) -> Image.Image | None:
-    """Renderiza un glifo centrado en una caja `box`×`box`.
+# Caché manual: SOLO se guardan los renders correctos. Un fallo transitorio
+# (glifo vacío) NO se cachea, para que no quede en blanco toda la sesión.
+_glyph_cache: dict = {}
 
-    Las métricas de la fuente dejan un sesgo (el glifo sale ~3px alto), así que
-    en vez de fiarse de ellas se dibuja el glifo a tamaño normal en un lienzo
-    con un poco de margen, se recorta a su tinta REAL y se centra. Ligero (sin
-    supermuestreo grande) para no cargar el render concurrente ni disparar el
-    control de "decompression bomb" de Pillow.
+
+def _draw_glyph(codepoint: int, box: int, color: str) -> Image.Image | None:
+    """Dibuja el glifo centrado. Devuelve None si FreeType dibujó vacío.
+
+    Se dibuja a tamaño normal con textbbox (sin anchor="mm" ni supermuestreo),
+    se mide la tinta REAL y se desplaza al centro exacto (las métricas de la
+    fuente dejan un sesgo de ~3px).
     """
-    try:
-        with RENDER_LOCK:   # FreeType no es seguro entre hilos (ver RENDER_LOCK)
-            # Dibujo simple con textbbox (fuente a tamaño normal, sin anchor="mm"
-            # ni supermuestreo): es la vía robusta que no dispara máscaras enormes
-            # en FreeType bajo carga.
-            font = _font(max(8, int(box * 0.86)))
-            img = Image.new("RGBA", (box, box), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(img)
-            ch = chr(codepoint)
-            bbox = draw.textbbox((0, 0), ch, font=font)
-            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            draw.text(((box - w) / 2 - bbox[0], (box - h) / 2 - bbox[1]),
-                      ch, font=font, fill=color)
-            # Recentrado fino: las métricas de la fuente dejan un sesgo, así que
-            # medimos la tinta REAL ya dibujada y la desplazamos al centro exacto.
-            ink = img.getbbox()
-            if ink is None:
-                return None
-            dx = round(box / 2 - (ink[0] + ink[2]) / 2)
-            dy = round(box / 2 - (ink[1] + ink[3]) / 2)
-            if dx or dy:
-                centered = Image.new("RGBA", (box, box), (0, 0, 0, 0))
-                centered.paste(img, (dx, dy))
-                img = centered
+    font = _font(max(8, int(box * 0.86)))
+    img = Image.new("RGBA", (box, box), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    ch = chr(codepoint)
+    bbox = draw.textbbox((0, 0), ch, font=font)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(((box - w) / 2 - bbox[0], (box - h) / 2 - bbox[1]),
+              ch, font=font, fill=color)
+    ink = img.getbbox()
+    if ink is None:
+        return None                       # el glifo no dibujó nada (no debería)
+    dx = round(box / 2 - (ink[0] + ink[2]) / 2)
+    dy = round(box / 2 - (ink[1] + ink[3]) / 2)
+    if dx or dy:
+        centered = Image.new("RGBA", (box, box), (0, 0, 0, 0))
+        centered.paste(img, (dx, dy))
+        img = centered
+    return img
+
+
+def _render_glyph_cached(font_file: str, codepoint: int, box: int, color: str) -> Image.Image | None:
+    """Renderiza (y cachea) un glifo de la fuente de iconos.
+
+    Caché manual: SOLO se guardan los renders correctos (red de seguridad por si
+    alguna vez saliera vacío, para que no quede en blanco toda la sesión).
+    """
+    key = (font_file, codepoint, box, color)
+    with RENDER_LOCK:                     # serializa el render PIL entre nuestros hilos
+        cached = _glyph_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            img = _draw_glyph(codepoint, box, color)
+        except Exception:
+            log.debug("Error dibujando glifo %#x", codepoint, exc_info=True)
+            img = None
+        if img is not None:
+            _glyph_cache[key] = img
         return img
-    except Exception:
-        log.debug("No se pudo renderizar el glifo %#x", codepoint, exc_info=True)
-        return None
+
+
+def clear_glyph_cache() -> None:
+    _glyph_cache.clear()
 
 
 @lru_cache(maxsize=128)
