@@ -189,7 +189,7 @@ sudo ./install-udev.sh
 ```bash
 ./build.sh                       # once, to check agents and create the .venv it reads deps from
 ./packaging/build-deb.sh         # version from pyproject.toml
-./packaging/build-deb.sh 1.2.3   # …or an explicit X.Y.Z (also bumps the version)
+./packaging/build-deb.sh X.Y.Z   # …or an explicit version (also bumps the sources)
 
 # → dist/linux-stream-deck-<version>.deb  (Architecture: all)
 ```

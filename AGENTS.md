@@ -78,7 +78,16 @@ desktop entry, the app icon, an **AppStream metainfo** (so installed software
 catalogues can discover its icon, description and screenshot), and the udev rule
 (reloaded by the `postinst`). Version defaults to `pyproject.toml`; the build
 **syncs it into both** `pyproject.toml` and `linuxstreamdeck/__init__.py::VERSION`,
-so passing `X.Y.Z` also bumps those sources. After installing or upgrading the
+so passing `X.Y.Z` also bumps those sources.
+
+Before that sync, `check_hardcoded_versions()` scans every tracked file and fails
+the build when one still names a different version of this application — the way
+an issue template or a document silently goes stale after a release. Dependency
+constraints (`streamdeck>=0.9.5`) and lines marked `version-check: ignore` are
+exempt, and the two version sources are skipped because `sync_version` owns them.
+It deliberately runs **before** any file is rewritten, so a failed build leaves
+the working tree untouched. Keep documentation examples as literal `X.Y.Z` rather
+than a plausible number, or they trip the scan. After installing or upgrading the
 package, run `sudo ./packaging/refresh-appstream.sh` to refresh the system
 AppStream cache for software centres, then reopen the software centre.
 

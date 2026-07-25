@@ -9,8 +9,8 @@
 #
 # Usage:
 #   ./packaging/build-deb.sh            # version taken from pyproject.toml
-#   ./packaging/build-deb.sh 1.2.3      # explicit version
-#   VERSION=1.2.3 ./packaging/build-deb.sh
+#   ./packaging/build-deb.sh X.Y.Z      # explicit version
+#   VERSION=X.Y.Z ./packaging/build-deb.sh
 #
 set -euo pipefail
 
@@ -43,6 +43,42 @@ sync_version() {
     fi
 }
 
+# Fail when a tracked file still hardcodes a different version of this app, the
+# way an issue template or a document silently goes stale after a release.
+# Exempt: dependency constraints (">=1.2.3"), which are somebody else's version,
+# and any line marked "version-check: ignore".
+check_hardcoded_versions() {
+    local target="$1" stale=0 entry file line content found
+    if ! command -v git >/dev/null 2>&1 || ! git rev-parse --git-dir >/dev/null 2>&1; then
+        info "  not a git checkout; skipping the stale-version scan"
+        return 0
+    fi
+    while IFS= read -r entry; do
+        file="${entry%%:*}"; entry="${entry#*:}"
+        line="${entry%%:*}"; content="${entry#*:}"
+        # The two version sources are sync_version's job, and it runs after this.
+        [[ "$file" == "pyproject.toml" || "$file" == "linuxstreamdeck/__init__.py" ]] \
+            && continue
+        [[ "$content" == *"version-check: ignore"* ]] && continue
+        [[ "$content" =~ (\>=|\<=|==|~=) ]] && continue
+        while IFS= read -r found; do
+            [[ -z "$found" || "$found" == "$target" ]] && continue
+            err "$file:$line hardcodes version $found (building $target)"
+            err "    $(printf '%s' "$content" | sed 's/^[[:space:]]*//')"
+            stale=1
+        done < <(printf '%s' "$content" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+    done < <(
+        git ls-files -z \
+            | xargs -0 grep -IHnE '[0-9]+\.[0-9]+\.[0-9]+' 2>/dev/null || true
+    )
+    if (( stale )); then
+        err "Update those files, or mark the line with 'version-check: ignore'."
+        return 1
+    fi
+    info "  no stale versions in tracked files"
+    return 0
+}
+
 command -v dpkg-deb >/dev/null 2>&1 || { err "dpkg-deb not found (install 'dpkg-dev')."; exit 1; }
 
 # ---- version: arg > env > pyproject.toml ----
@@ -54,6 +90,7 @@ info "Building $PKG $VERSION (Architecture: all)"
 
 # ---- keep the two version sources in sync with what we build ----
 info "Syncing version to $VERSION…"
+check_hardcoded_versions "$VERSION" || exit 1
 sync_version "pyproject.toml" "version" "$VERSION"
 sync_version "linuxstreamdeck/__init__.py" "VERSION" "$VERSION"
 
