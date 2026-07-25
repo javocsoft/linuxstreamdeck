@@ -50,6 +50,26 @@ KEY_FONT_SIZE_CHOICES = (
 )
 KEY_FONT_SIZES = frozenset(choice[0] for choice in KEY_FONT_SIZE_CHOICES)
 
+# What closing the window does. "tray" keeps the application running behind its
+# status icon; it falls back to quitting when no status area is available, so the
+# window can never disappear without a way back.
+CLOSE_ACTION_QUIT = "quit"
+CLOSE_ACTION_TRAY = "tray"
+CLOSE_ACTION_CHOICES = (
+    (
+        CLOSE_ACTION_TRAY,
+        "Keep running in the status area",
+        "Hide the window and leave the Stream Deck working in the background.",
+    ),
+    (
+        CLOSE_ACTION_QUIT,
+        "Quit LinuxStreamDeck",
+        "Stop the application and release the Stream Deck.",
+    ),
+)
+CLOSE_ACTIONS = frozenset(choice[0] for choice in CLOSE_ACTION_CHOICES)
+DEFAULT_CLOSE_ACTION = CLOSE_ACTION_TRAY
+
 SCREENSAVER_CHOICES = (
     (
         "neon_pipes",
@@ -138,6 +158,19 @@ _ACTION_AUDIO_PARAMETERS = {
 KIND_SINGLE = "single"          # a single action (with state feedback)
 KIND_MULTI = "multi"            # ordered list of actions run in sequence
 KIND_TOGGLE = "multi_toggle"    # toggle: two action lists (ON/OFF state)
+KIND_RANDOM = "random"          # one action picked at random from the list
+KIND_PRESS = "press"            # separate lists for single/double/long press
+
+# Every field of KeyConfig that holds a list of ActionStep. Anything walking a
+# key's actions (portable bundles, migrations) must cover all of them.
+STEP_FIELDS = (
+    "steps",
+    "steps_on",
+    "steps_off",
+    "steps_single",
+    "steps_double",
+    "steps_long",
+)
 
 
 def _migrate_page_action(action, params) -> tuple[str, dict]:
@@ -211,12 +244,17 @@ class KeyConfig:
     action: str = ""                      # id of a registered action, e.g. "obs.scene_switch"
     params: dict = field(default_factory=dict)
 
-    # kind == multi
+    # kind == multi (run in order) and kind == random (one picked at random)
     steps: list[ActionStep] = field(default_factory=list)
 
     # kind == multi_toggle (steps_on runs when turning ON; steps_off when turning OFF)
     steps_on: list[ActionStep] = field(default_factory=list)
     steps_off: list[ActionStep] = field(default_factory=list)
+
+    # kind == press: one list per press gesture
+    steps_single: list[ActionStep] = field(default_factory=list)
+    steps_double: list[ActionStep] = field(default_factory=list)
+    steps_long: list[ActionStep] = field(default_factory=list)
 
     # appearance (main state / ON state on toggles)
     label: str = ""
@@ -233,10 +271,12 @@ class KeyConfig:
     def is_empty(self) -> bool:
         if self.kind == KIND_SINGLE:
             return not self.action
-        if self.kind == KIND_MULTI:
+        if self.kind in (KIND_MULTI, KIND_RANDOM):
             return not self.steps
         if self.kind == KIND_TOGGLE:
             return not (self.steps_on or self.steps_off)
+        if self.kind == KIND_PRESS:
+            return not (self.steps_single or self.steps_double or self.steps_long)
         return True
 
     def clone(self) -> "KeyConfig":
@@ -280,6 +320,9 @@ class KeyConfig:
             steps=steps("steps"),
             steps_on=steps("steps_on"),
             steps_off=steps("steps_off"),
+            steps_single=steps("steps_single"),
+            steps_double=steps("steps_double"),
+            steps_long=steps("steps_long"),
             label=d.get("label", ""),
             icon=d.get("icon", ""),
             bg_color=d.get("bg_color", DEFAULT_KEY_BG),
@@ -385,6 +428,7 @@ class Config:
     screensaver: ScreenSaverSettings = field(default_factory=ScreenSaverSettings)
     exit_display: ExitDisplaySettings = field(default_factory=ExitDisplaySettings)
     brightness: int = 80
+    close_action: str = DEFAULT_CLOSE_ACTION
     obs_password_needs_migration: bool = field(
         default=False, repr=False, compare=False
     )
@@ -519,6 +563,9 @@ class Config:
             brightness = max(10, min(100, int(raw.get("brightness", 80))))
         except (TypeError, ValueError) as error:
             raise ValueError("The configuration contains an invalid number") from error
+        close_action = str(raw.get("close_action", DEFAULT_CLOSE_ACTION) or "")
+        if close_action not in CLOSE_ACTIONS:
+            close_action = DEFAULT_CLOSE_ACTION
         return cls(
             profiles=profiles,
             current_profile=current,
@@ -527,6 +574,7 @@ class Config:
             screensaver=screensaver,
             exit_display=exit_display,
             brightness=brightness,
+            close_action=close_action,
             obs_password_needs_migration="password" in raw_obs,
         )
 
@@ -834,6 +882,7 @@ class Config:
         self.screensaver = replacement.screensaver
         self.exit_display = replacement.exit_display
         self.brightness = replacement.brightness
+        self.close_action = replacement.close_action
         self.obs_password_needs_migration = (
             replacement.obs_password_needs_migration
         )
@@ -1027,7 +1076,7 @@ class Config:
         params = key.get("params", {})
         if isinstance(params, dict):
             yield action, params
-        for field_name in ("steps", "steps_on", "steps_off"):
+        for field_name in STEP_FIELDS:
             for step in key.get(field_name, []):
                 if isinstance(step, dict) and isinstance(step.get("params"), dict):
                     yield step.get("action", ""), step["params"]
@@ -1036,9 +1085,10 @@ class Config:
     def _action_params(key: KeyConfig):
         if isinstance(key.params, dict):
             yield key.action, key.params
-        for step in (*key.steps, *key.steps_on, *key.steps_off):
-            if isinstance(step.params, dict):
-                yield step.action, step.params
+        for field_name in STEP_FIELDS:
+            for step in getattr(key, field_name, []):
+                if isinstance(step.params, dict):
+                    yield step.action, step.params
 
     @staticmethod
     def _safe_icon_suffix(suffix: str) -> str:

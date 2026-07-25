@@ -59,6 +59,13 @@ of truth; everything here is Claude-specific and additive.
   must unsubscribe on close. Track idle activity only at physical-key and
   explicit virtual-deck entry points; never add a broad/global
   `Gtk.EventControllerLegacy` activity hook. See AGENTS.md §3 and §5.
+- Keep hiding to the status area reversible: `hides_on_close()` is the only
+  decision point and must still require an explicit-quit check, the configured
+  action and a registered icon. Hide by returning `True` from `close-request`
+  without destroying the window, route icon-driven quit/profile changes through
+  the unsaved-change guard, and keep autostart state in the XDG entry rather than
+  in `config.json`. Never nest a built `GLib.Variant` inside a format string when
+  replying to dbusmenu. See AGENTS.md §3 and §5.
 - Preserve the physical clean-exit display contract: firmware reset for
   **Device default**, black keys plus brightness 0 for **Off**, and one validated
   full-grid image at normal brightness for **Custom**. Apply it after device

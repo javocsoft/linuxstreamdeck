@@ -20,6 +20,7 @@ from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 from ..core import actions as registry  # noqa: E402
 from ..core.actions import Action, Param, format_duration, parse_duration  # noqa: E402
+from ..obs.client import hotkey_display_name  # noqa: E402
 from ..core.config import (  # noqa: E402
     DEFAULT_KEY_BG,
     KEY_FONT_SIZE_AUTO,
@@ -49,6 +50,37 @@ def _row(label: str, widget: Gtk.Widget) -> Gtk.Box:
     box.append(lbl)
     box.append(widget)
     return box
+
+
+def _display_options(source: str, options: list[str]) -> tuple[list[str], dict[str, str]]:
+    """Labels to show for a dynamic dropdown, plus their stored values.
+
+    Only OBS hotkeys need this: their identifiers ("OBSBasic.StartStreaming")
+    are what the protocol takes but not what anyone wants to read. Everything
+    else already lists real names, so it maps to itself.
+    """
+    if source != "hotkeys":
+        return list(options), {}
+    labels: list[str] = []
+    values: dict[str, str] = {}
+    for option in options:
+        label = hotkey_display_name(option) or option
+        if label in values and values[label] != option:
+            # Two different hotkeys reading the same: keep them distinguishable.
+            label = f"{label} ({option})"
+        if label in values:
+            continue
+        labels.append(label)
+        values[label] = option
+    return labels, values
+
+
+def _label_for(values: dict[str, str], value) -> str:
+    """The label a stored value is shown as."""
+    text = str(value or "")
+    if not values:
+        return text
+    return next((label for label, stored in values.items() if stored == text), text)
 
 
 def _clear(box: Gtk.Box) -> None:
@@ -211,7 +243,14 @@ class StepEditor(Gtk.Box):
 
     def _param_widget(self, param: Param, value) -> Gtk.Widget:
         if param.kind == "choice":
-            return self._choice_dd(param.choices, value or param.default)
+            dd = self._choice_dd(param.choices, value or param.default)
+            if param.name == "preset":
+                # Picking a preset writes its shortcut into the editable field,
+                # which the user is then free to change.
+                self._dep_handlers["preset"] = dd.connect(
+                    "notify::selected", self._on_preset_changed
+                )
+            return dd
         if param.kind in ("duration", "optional_duration"):
             return self._duration_entry(
                 value if value is not None else param.default,
@@ -236,7 +275,11 @@ class StepEditor(Gtk.Box):
             if options:
                 if value and value not in options:
                     options.insert(0, value)
-                dd = self._choice_dd(options, value)
+                labels, values = _display_options(param.choices_source, options)
+                dd = self._choice_dd(labels, _label_for(values, value))
+                # What the user reads is not always what OBS needs; remember the
+                # mapping so _widget_value can give back the stored value.
+                dd._value_map = values
                 if param.name == "scene":
                     self._dep_handlers["scene"] = dd.connect(
                         "notify::selected", self._on_scene_changed
@@ -262,6 +305,23 @@ class StepEditor(Gtk.Box):
         if self._on_change:
             self._on_change()
 
+    def _on_preset_changed(self, *_a) -> None:
+        """Fill the shortcut field from the chosen preset."""
+        if self._building:
+            return
+        from ..core.keystrokes import PRESET_SHORTCUTS
+
+        entry = self._param_widgets.get("shortcut")
+        preset = self._param_widgets.get("preset")
+        if entry is None or preset is None:
+            return
+        label = self._widget_value(preset[0], preset[1])
+        shortcut = PRESET_SHORTCUTS.get(str(label or ""), "")
+        if shortcut and isinstance(entry[1], Gtk.Entry):
+            entry[1].set_text(shortcut)
+        if self._on_change:
+            self._on_change()
+
     def _on_source_changed(self, *_a) -> None:
         if self._building:
             return
@@ -276,12 +336,15 @@ class StepEditor(Gtk.Box):
                 continue
             options = self._fetch_choices(choices_source)
             current = self._widget_value(param, widget)
+            labels, values = _display_options(choices_source, options)
             hid = self._dep_handlers.get(name)
             if hid is not None:
                 widget.handler_block(hid)          # avoids reentry via notify::selected
-            widget.set_model(Gtk.StringList.new(options))
-            if current in options:
-                widget.set_selected(options.index(current))
+            widget.set_model(Gtk.StringList.new(labels))
+            widget._value_map = values
+            selected = _label_for(values, current)
+            if selected in labels:
+                widget.set_selected(labels.index(selected))
             if hid is not None:
                 widget.handler_unblock(hid)
 
@@ -293,6 +356,12 @@ class StepEditor(Gtk.Box):
         try:
             if source == "pages":
                 return [p.name for p in self.app.config.pages]
+            if source == "deck_profiles":
+                return [p.name for p in self.app.config.profiles]
+            if source == "applications":
+                from ..core.apps import application_choices
+
+                return application_choices()
             if not obs.connected:
                 log.debug("[editor] _fetch_choices(%s): OBS disconnected", source)
                 return []
@@ -342,7 +411,9 @@ class StepEditor(Gtk.Box):
             return int(widget.get_value()) if param.kind == "int" else widget.get_value()
         if isinstance(widget, Gtk.DropDown):
             item = widget.get_selected_item()
-            return item.get_string() if item is not None else ""
+            label = item.get_string() if item is not None else ""
+            # Sources with readable labels store the underlying value instead.
+            return getattr(widget, "_value_map", {}).get(label, label)
         if isinstance(widget, Gtk.Entry):
             return widget.get_text()
         return ""

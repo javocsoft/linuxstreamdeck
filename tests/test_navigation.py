@@ -50,13 +50,17 @@ class PageNavigationActionTests(unittest.TestCase):
             bus=self.bus,
         )
 
-    def test_navigation_category_exposes_three_explicit_actions(self) -> None:
-        actions = action_registry.by_category()["Navigation"]
+    def test_navigation_category_exposes_the_explicit_page_actions(self) -> None:
+        identifiers = [
+            action.id for action in action_registry.by_category()["Navigation"]
+        ]
 
         self.assertEqual(
-            [action.id for action in actions],
+            identifiers[:3],
             ["nav.page.next", "nav.page.previous", "nav.page.go"],
         )
+        # The legacy combined action must never come back into the catalogue.
+        self.assertNotIn("nav.page", identifiers)
         go_to = action_registry.get("nav.page.go")
         self.assertEqual(go_to.params[0].choices_source, "pages")
         self.assertEqual(go_to.params[0].label, "Destination page")

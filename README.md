@@ -43,11 +43,13 @@ implemented actions, no guessing. It runs, and it's useful.
 - 🗂️ **Profiles & pages** — each profile keeps its own set of pages and keys; switch
   between "Streaming", "Work", "Gaming" in one click. Rename, delete, describe,
   or assign keys to move directly, forward or backward through that profile.
-- 🧩 **Three key types** — *single action*, *multiple actions* (run in sequence, with an
-  optional **Wait** action to pause between them), and *toggle (ON/OFF)* with two action
-  lists and its own look per state. Multi and toggle keys show **RUN** with a subtle
-  slow blue breathing halo while their actions are queued or running; blocking
-  single **Wait** and **Play audio file** actions use the same feedback.
+- 🧩 **Five key types** — *single action*; *multiple actions* (run in sequence, with an
+  optional **Wait** action to pause between them); *toggle (ON/OFF)* with two action
+  lists and its own look per state; *random action*, which picks one of its actions
+  at each press; and *single / double / long press*, with a separate action list per
+  gesture. Multi-action keys show **RUN** with a subtle slow blue breathing halo
+  while their actions are queued or running; blocking single **Wait** and **Play
+  audio file** actions use the same feedback.
 - 🔊 **Local audio playback** — play WAV, MP3, OGG, FLAC or Opus files at a chosen
   volume, for the full file or an optional maximum duration.
 - ⏱️ **On-key timer and stopwatch** — show a live `HH:MM:SS` value in the
@@ -72,6 +74,11 @@ implemented actions, no guessing. It runs, and it's useful.
   before loading your configured page.
 - 🔌 **Auto-reconnect & hotplug** — connects to OBS on its own and picks up the deck when
   you plug it in.
+- 🫥 **Keeps running in the status area** — closing the window can leave the deck
+  working in the background. Its status icon switches profiles, reopens the
+  window and quits.
+- 🚀 **Start with your session** — an optional startup entry launches
+  LinuxStreamDeck at login, straight into its status icon.
 - 💾 **Portable configuration backups** — export or import profiles, pages, keys,
   settings, custom key icons, the custom exit image and referenced playback or
   timer audio in one file.
@@ -99,9 +106,20 @@ implemented actions, no guessing. It runs, and it's useful.
 | **Media** | Play / pause / restart / stop / next / previous |
 | **Advanced** | Scene collections & profiles · internal hotkeys · **raw request** (100% of the API) |
 
-Plus system actions (run a command, open a URL, wait, play local audio, count
-down or run a stopwatch). The **Navigation** category provides separate
-**Next page**, **Previous page** and **Go to page** actions.
+### 🖥️ System and navigation actions
+
+| Category | What you get |
+| --- | --- |
+| **Run & open** | Run a command · open a URL · **Open** a file, folder or program · **Open application** from the installed list · **Close application** (politely or forced) |
+| **Media** | **Media action**: previous track, play/pause, next track, stop, mute, volume up and volume down |
+| **Keyboard** | **Keyboard shortcut** with editable presets · **Shortcut switch** alternating between two shortcuts |
+| **Timing** | Wait · countdown timer · stopwatch · play a local audio file |
+| **Navigation** | Next page · previous page · go to page · **Page indicator** · **Change profile** |
+
+Media control goes through **MPRIS** (`playerctl`) and the session mixer
+(`wpctl` or `pactl`), so it works the same on Wayland and X11 without simulating
+media keys. **Open application** can also close the app on a long press, and
+shows a lit key while it is running.
 
 ## 📦 Requirements
 
@@ -360,6 +378,79 @@ files are atomically written with user-only (`0600`) permissions.
 If secure storage is unavailable, any plaintext password is still removed. The
 password then lasts only for the current session, so enter it again after restarting
 the app.
+
+### Sending keyboard shortcuts
+
+Wayland deliberately blocks applications from injecting key events, so the
+**Keyboard shortcut** and **Shortcut switch** actions need a helper that works
+below the compositor.
+
+**The `.deb` pulls it in for you**: `ydotool` is listed under `Recommends`, so
+`sudo apt install ./linux-stream-deck-<version>.deb` installs it along with
+`playerctl` for media control. Both stay optional — the package still installs
+if your distribution does not carry them.
+
+Running from source? Install it once yourself:
+
+```bash
+sudo apt install ydotool          # works on Wayland and X11, any compositor
+```
+
+`wtype` (wlroots) and `xdotool` (X11) are used instead when they are what you
+have installed. Both major ydotool versions are supported: the 0.x that Debian
+and Ubuntu ship and the newer 1.x, whose command syntax differs. Nothing else in
+LinuxStreamDeck depends on any of them — without a backend these two actions
+simply report what to install, and everything else keeps working.
+
+Pick a **preset** to fill the shortcut field — Cut, Copy, Paste, Undo, Save,
+snap window left/right, screenshots and more — then edit it, because desktops do
+rebind these. Shortcuts are written as `ctrl+shift+s`, `super+left` or `print`.
+
+> **Note:** ydotool writes to `/dev/uinput`. If a shortcut reports a permission
+> error, either give your user access to that device or run the `ydotoold`
+> service.
+
+### Running in the status area
+
+Open the profiles menu (⋮) → **Preferences…** to choose what closing the window
+does and whether LinuxStreamDeck starts with your session.
+
+- **Keep running in the status area** (default) hides the window and leaves the
+  Stream Deck fully working. Nothing is lost: an unfinished key edit is still
+  there when you reopen the window, so nothing is asked when you close it.
+- **Quit LinuxStreamDeck** closes the application and releases the deck, asking
+  first if a key has unsaved changes.
+
+Clicking the status icon opens a menu to **switch profile**, **open the window**
+and **quit**. Switching a profile from there still asks about unsaved key
+changes, reopening the window if needed.
+
+#### Desktop support
+
+The icon uses the *StatusNotifierItem* standard, so no extra package is needed
+where the desktop already speaks it:
+
+| Desktop | Status icon |
+| --- | --- |
+| KDE Plasma, COSMIC, Budgie, Cinnamon, LXQt | ✅ Works out of the box |
+| Ubuntu (GNOME session) | ✅ Ships the AppIndicator extension enabled |
+| GNOME (Fedora, Debian, Arch…) | ⚠️ Needs the **AppIndicator and KStatusNotifierItem Support** extension |
+| XFCE / MATE | ⚠️ Needs the panel's *Status Notifier* plugin (`xfce4-statusnotifier-plugin`) |
+| Sway, Hyprland, i3 with Waybar | ✅ Waybar's `tray` module |
+| Bare XEmbed trays (`stalonetray`, `trayer`, polybar) | ❌ XEmbed only, no StatusNotifierItem |
+
+The icon is also published when no status area is running yet, so a panel that
+starts after LinuxStreamDeck — the usual case at session login — still picks it
+up without restarting the app.
+
+Where the standard is unavailable, nothing breaks: the preferences dialog says
+so and closing the window quits as usual. The window can never disappear with no
+way back.
+
+**Start automatically on login** writes a normal startup entry to
+`~/.config/autostart/`, launching LinuxStreamDeck straight into its status icon.
+It applies to this computer only and is never part of an exported configuration,
+and your desktop's own *Startup Applications* tool can disable it too.
 
 ## ✨ Create a key with AI
 

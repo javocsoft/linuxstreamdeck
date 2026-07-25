@@ -16,8 +16,13 @@ def main() -> int:
     logging.getLogger("obsws_python").setLevel(logging.WARNING)
 
     from .app import LinuxStreamDeckApp
+    from .core.autostart import strip_hidden_flag
 
-    return LinuxStreamDeckApp().run(sys.argv)
+    # The autostart entry adds a flag so a session login goes straight to the
+    # status icon, without opening the window.
+    argv, start_hidden = strip_hidden_flag(sys.argv)
+
+    return LinuxStreamDeckApp(start_hidden=start_hidden).run(argv)
 
 
 if __name__ == "__main__":

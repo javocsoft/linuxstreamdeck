@@ -121,9 +121,16 @@ class Action:
     running_feedback: bool = False
     restart_on_repress: bool = False
     immediate: bool = False      # press-thread execution; must never block
+    # Set when holding a single-action key should do something other than
+    # execute(); the controller then waits for the release to tell them apart.
+    supports_long_press: bool = False
 
     def execute(self, ctx: ActionContext, params: dict) -> None:
         raise NotImplementedError
+
+    def long_press(self, ctx: ActionContext, params: dict) -> bool:
+        """Handle a held press. Return False to run the normal action instead."""
+        return False
 
     def feedback(self, ctx: ActionContext, params: dict) -> dict | None:
         """Visual state: active, color, badge and/or centered display text.

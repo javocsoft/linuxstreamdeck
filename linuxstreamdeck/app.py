@@ -13,7 +13,11 @@ from gi.repository import Adw, GLib  # noqa: E402
 
 from . import APP_ID  # noqa: E402
 from .ai.service import AIService  # noqa: E402
+from .core import autostart  # noqa: E402
 from .core.config import (  # noqa: E402
+    CLOSE_ACTION_TRAY,
+    CLOSE_ACTIONS,
+    DEFAULT_CLOSE_ACTION,
     DEFAULT_SCREENSAVER,
     EXIT_DISPLAY_DEFAULT,
     EXIT_DISPLAY_MODES,
@@ -32,17 +36,24 @@ from .obs import actions as _obs_actions  # noqa: E402,F401
 
 log = logging.getLogger(__name__)
 
+# How long a hidden start waits for the status area to accept the icon before
+# falling back to showing the window.
+HIDDEN_START_GRACE_SECONDS = 5
+
 
 class LinuxStreamDeckApp:
     """Container for the components; wraps GTK's Adw.Application."""
 
-    def __init__(self) -> None:
+    def __init__(self, start_hidden: bool = False) -> None:
         self.gtk_app = Adw.Application(application_id=APP_ID)
         self.gtk_app.connect("activate", self._on_activate)
         self.gtk_app.connect("shutdown", self._on_shutdown)
         self.window = None
+        self.tray = None
         self._shutting_down = False
         self._obs_started = False
+        self._start_hidden = start_hidden
+        self._quitting = False
         self.obs_password_ready = False
 
         self.config = Config.load()
@@ -74,18 +85,129 @@ class LinuxStreamDeckApp:
             from .ui.window import MainWindow
 
             self.window = MainWindow(self)
+            self._start_tray()
             self.deck.start()
             self.controller.refresh()
             self._load_obs_password()
-        self.window.present()
+            # Only a session-login start may stay hidden, and only when the
+            # status icon is really there to bring the window back.
+            if self._start_hidden and self.tray is not None:
+                log.info("Started hidden in the status area")
+                # Registration completes asynchronously; show the window after
+                # all if the status area never took the icon, so a hidden start
+                # can never leave the application with no way in.
+                GLib.timeout_add_seconds(
+                    HIDDEN_START_GRACE_SECONDS, self._verify_hidden_start
+                )
+                return
+        self.present_window()
+
+    def _verify_hidden_start(self) -> bool:
+        if not self.tray_available and not self._shutting_down:
+            log.warning(
+                "The status icon was not accepted; showing the window instead"
+            )
+            self.present_window()
+        return False
 
     def _on_shutdown(self, _app) -> None:
         self._shutting_down = True
         log.info("Shutting down…")
+        if self.tray is not None:
+            self.tray.stop()
+            self.tray = None
         self.controller.shutdown()
         self.deck.stop()
         self.obs.stop()
         log.info("Shutdown complete")
+
+    # ---------- status icon and window lifetime ----------
+
+    def _start_tray(self) -> None:
+        from .ui.tray import TrayIcon, is_supported
+
+        if not is_supported():
+            # Not a reason to give up: the icon follows the watcher name, so a
+            # panel that is still starting (very common at session login) picks
+            # it up as soon as it appears. Until then the icon counts as
+            # unregistered and closing the window quits.
+            log.info(
+                "No status area yet; the icon will appear if one shows up"
+            )
+        tray = TrayIcon(
+            on_open=self.present_window,
+            on_quit=self.request_quit,
+            on_select_profile=self.select_profile,
+            profiles=self._tray_profiles,
+        )
+        if not tray.start():
+            return
+        self.tray = tray
+        # Adding, renaming, deleting or switching a profile all publish this
+        # event, so the icon's profile list never goes stale.
+        self.bus.subscribe("profile.changed", lambda *_a: tray.refresh())
+
+    def _tray_profiles(self) -> tuple[list[str], int]:
+        return (
+            [profile.name for profile in self.config.profiles],
+            self.config.current_profile,
+        )
+
+    @property
+    def tray_available(self) -> bool:
+        return self.tray is not None and self.tray.registered
+
+    def hides_on_close(self) -> bool:
+        """Whether closing the window should hide it instead of quitting."""
+        return (
+            not self._quitting
+            and self.config.close_action == CLOSE_ACTION_TRAY
+            and self.tray_available
+        )
+
+    def present_window(self) -> None:
+        """Show the main window, creating it if the application started hidden."""
+        if self.window is None:
+            self.gtk_app.activate()
+            return
+        self.window.set_visible(True)
+        self.window.present()
+
+    def select_profile(self, index: int) -> None:
+        """Switch profile from the status icon, respecting unsaved key edits."""
+        if self.window is not None:
+            self.window.request_profile(index)
+        else:
+            self.controller.set_profile(index)
+
+    def request_quit(self) -> None:
+        """Quit from the status icon, giving the window a chance to confirm."""
+        if self.window is not None:
+            self.window.request_quit()
+        else:
+            self.quit()
+
+    def quit(self) -> None:
+        """Really terminate the application, bypassing the hide-on-close rule."""
+        self._quitting = True
+        self.gtk_app.quit()
+
+    def update_application_settings(
+        self, close_action: str, start_on_login: bool
+    ) -> Exception | None:
+        """Save the close behaviour and apply the autostart entry."""
+        self.config.close_action = (
+            close_action if close_action in CLOSE_ACTIONS else DEFAULT_CLOSE_ACTION
+        )
+        self.config.save()
+        error: Exception | None = None
+        try:
+            autostart.set_enabled(start_on_login)
+        except OSError as autostart_error:
+            log.exception("Could not update the autostart entry")
+            error = autostart_error
+        self.bus.emit("status", text="Application settings saved")
+        return error
 
     # ---------- secure OBS credentials ----------
 

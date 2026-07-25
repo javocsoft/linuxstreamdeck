@@ -66,7 +66,10 @@ the GUI to "see" a change (see §5).
 app plus the two pip-only deps (`StreamDeck`, `obsws_python`) are vendored under
 `/usr/lib/linuxstreamdeck/_vendor`, while GTK4/Adw (PyGObject), Secret Service,
 GNOME Keyring, GStreamer plus its base/good plugins, Pillow, hidapi,
-websocket-client and `ca-certificates` come from apt `Depends`. AI provider HTTPS
+websocket-client and `ca-certificates` come from apt `Depends`. `ydotool` (key
+injection) and `playerctl` (media transport) are `Recommends`, so apt installs
+them by default while the package still installs where they are unavailable and
+the app degrades to a status message. AI provider HTTPS
 calls and the local audio wrapper use the Python standard library / system GI
 bindings, so there is no additional pip dependency. The launcher
 `/usr/bin/linuxstreamdeck` runs the system `python3` with those paths on
@@ -95,7 +98,8 @@ closes HID, so no background work outlives application teardown.
 linuxstreamdeck/
 ├── __main__.py        Entry point; logging setup; `linuxstreamdeck` console script.
 ├── app.py             LinuxStreamDeckApp: builds config, credential stores, AI service,
-│                      EventBus, OBS client, deck/controller and MainWindow; app lifecycle.
+│                      EventBus, OBS client, deck/controller, MainWindow and the
+│                      status icon; app lifecycle and hide-on-close policy.
 ├── basic_actions.py   System actions (including clocks/audio) plus explicit page navigation.
 ├── ai/
 │   ├── constants.py   OpenAI/Claude provider ids, labels and default models.
@@ -110,6 +114,10 @@ linuxstreamdeck/
 │   ├── actions.py     Action framework: `Action` base, declarative `Param`,
 │   │                  `ActionContext`, global `REGISTRY`, `@register`, `by_category`.
 │   ├── audio.py       Blocking local playback via GStreamer playbin; shutdown-aware.
+│   ├── autostart.py   XDG autostart entry: read/write/remove, hidden-start flag.
+│   ├── apps.py        Desktop applications: list, resolve, launch, find and close.
+│   ├── media.py       MPRIS transport (playerctl) and session volume (wpctl/pactl).
+│   ├── keystrokes.py  Shortcut parsing, Linux presets, ydotool/wtype/xdotool.
 │   ├── clocks.py      Thread-safe countdown/stopwatch runtime keyed by profile/page/key.
 │   ├── controller.py  DeckController: presses, action/render workers, running feedback,
 │   │                  clocks/audio notifications, profile/key operations and imports.
@@ -139,6 +147,8 @@ linuxstreamdeck/
 │   ├── steps.py       StepEditor / StepList / AppearanceBox — reused by the editor
 │   │                  for single, multi and toggle key types.
 │   ├── icon_picker.py Searchable grid to pick a library icon.
+│   ├── tray.py       StatusNotifierItem + dbusmenu status icon (no GTK widgets).
+│   ├── preferences.py Close behaviour and start-on-login settings dialog.
 │   ├── about.py       About dialog: application identity, credits, license and source link.
 │   ├── obs_settings.py OBS connection dialog (host/port/password).
 │   ├── screensaver_settings.py Screen saver and clean-exit display settings.
@@ -276,8 +286,19 @@ Actions are declarative and self-registering:
   `file_filter_name` for the native chooser. A parameter may also set
   `choices_source` so the editor fills the dropdown **live from OBS**
   (`scenes`, `inputs`, `media_inputs`, `transitions`, `scene_collections`,
-  `profiles`, `sources_in_scene`, `filters_of_source`, `hotkeys`, `pages`).
-  The `pages` source reads page names from the active profile, not OBS.
+  `profiles`, `sources_in_scene`, `filters_of_source`, `hotkeys`, `pages`,
+  `deck_profiles`, `applications`). `pages`, `deck_profiles` and `applications`
+  are local sources and must stay **above** the `obs.connected` guard in
+  `_fetch_choices`, so they still fill when OBS is not running. Note that
+  `profiles` means OBS profiles; LinuxStreamDeck's own are `deck_profiles`.
+  A dropdown may show something other than what it stores: `_display_options()`
+  returns the labels plus a `display -> value` map, kept on the widget as
+  `_value_map` and consulted by `_widget_value()`. `hotkeys` is the one source
+  that uses it, because `GetHotkeyList` only returns identifiers such as
+  `OBSBasic.StartStreaming` and `TriggerHotkeyByName` needs exactly that string
+  back. `hotkey_display_name()` in `obs/client.py` derives the readable text, and
+  `get_hotkeys()` removes the duplicates OBS emits once per source. Keep the map
+  in sync in `_repopulate()` too, or a refreshed dropdown starts storing labels.
 - `execute(ctx, params)` performs the action; `feedback(ctx, params)` may return
   any of `active`, `color`, `badge` and `display` for live key state. `display`
   replaces the icon with fitted, centered text.
@@ -289,6 +310,9 @@ Actions are declarative and self-registering:
   action worker; multi/toggle sequences still use their normal worker.
 - Set `running_feedback = True` on a blocking action that should show the
   controller's temporary `RUN`/breathing feedback even as a single-action key.
+- Set `supports_long_press = True` and override `long_press(ctx, params)` when
+  holding a single-action key should do something else. Returning `False` means
+  "not handled", and the controller runs the normal press instead.
 - Set `restart_on_repress = True` when pressing the same profile/page/key again
   should cancel its prior invocation and restart the complete key sequence.
   Long-running actions must cooperate through `ActionContext.stop_requested()`
@@ -360,6 +384,42 @@ action/default icon as the controller and deck grid, but must keep the stored
 reference empty. Clearing an explicit icon therefore restores inheritance instead
 of copying the current fallback into config.
 
+### Desktop integration backends
+
+Three modules keep the system-facing work out of the action definitions, so each
+action stays declarative and every backend is unit-testable on its own.
+
+`core/apps.py` reads the application list from `Gio.AppInfo`, which is already
+available through GTK, so listing and launching need no extra dependency. Keys
+store the **display name**; `find_application()` accepts either that or a desktop
+id. `running_pids()` uses `pgrep` against the entry's executable, deliberately
+ignoring wrapper names (`env`, `sh`, `flatpak`) that would match everything.
+Relaunching a running application is what raises its window — the desktop routes
+the launch to the existing instance — so there is no separate "activate" path.
+
+`core/media.py` drives transport through MPRIS (`playerctl`) and volume through
+the session mixer (`wpctl`, falling back to `pactl`). Never implement these by
+faking media keys: MPRIS and the mixer work identically on Wayland and X11 and
+need no privileges. Volume raises are capped at 1.0 so a key cannot push the sink
+past 100 %.
+
+`core/keystrokes.py` is the only place that injects input. Wayland blocks
+synthetic events, so it shells out to `ydotool` (preferred: it writes to uinput
+and therefore works on every compositor), `wtype` or `xdotool`. They are
+`Recommends` of the `.deb`, never `Depends`: apt installs them by default while
+the package still installs on a distribution that lacks them, and `backend()`
+returns `""` when none is present so the action reports what to install.
+
+**The two ydotool generations are incompatible.** 0.x — still what Debian and
+Ubuntu ship — takes a key sequence (`ydotool key ctrl+c`), while 1.x takes
+press/release event codes (`ydotool key 29:1 46:1 46:0 29:0`). Never assume one:
+`ydotool_syntax()` detects it from the help text and caches the answer. A key is
+therefore held canonically as its **Linux input name** (`esc`, `dot`, `sysrq`,
+`leftbrace`), with `_KEY_ALIASES` accepting what a user might type, `_KEY_CODES`
+giving the 1.x codes and `_XKB_NAMES` the X keysyms for the other two backends.
+Presets are adapted to Linux — Windows-only entries of the original catalogue are
+dropped — and always stay editable, because desktops rebind them.
+
 ### Local audio action
 
 `sys.audio` (**Play audio file**) uses GStreamer `playbin` for local `.wav`,
@@ -416,6 +476,90 @@ loads it into the existing editor, reviews it, and presses **Save** to persist i
   per-step delay.
 - `multi_toggle` (`KIND_TOGGLE`) — two lists (`steps_on` / `steps_off`) with an
   ON/OFF state; the state is keyed by (profile, page, key) in the controller.
+- `random` (`KIND_RANDOM`) — reuses `steps`, but a press runs exactly one entry
+  chosen with `random.choice`.
+- `press` (`KIND_PRESS`) — `steps_single`, `steps_double` and `steps_long`, one
+  per press gesture.
+
+`STEP_FIELDS` lists every field holding `ActionStep`s. Anything walking a key's
+actions — portable bundles, legacy migration — must iterate it rather than
+hard-coding the three original names, or the new lists silently lose their
+bundled audio and their `nav.page` migration.
+
+### Press gestures
+
+`LONG_PRESS_SECONDS` (0.5) and `DOUBLE_PRESS_SECONDS` (0.35) live in
+`core/controller.py`. `_on_deck_key` now routes both edges: `key_down()` and
+`key_up()`. `_gesture_mode()` decides what a key needs — `"press"` for
+`KIND_PRESS`, `"long"` for a single-action key whose action sets
+`supports_long_press`, and `""` for everything else, which keeps running on the
+press exactly as before.
+
+A gesture key resolves on release: held past the long threshold runs `steps_long`;
+otherwise a `threading.Timer` waits out the double-press window, and a second
+release inside it cancels that timer and runs `steps_double` instead of
+`steps_single`. Pending timers must be cancelled whenever the key's meaning
+changes — `key_config_changed()`, `swap_keys()`, `_clear_time_actions()` (page or
+profile change) and `shutdown()` all call into `_cancel_gesture()` or
+`_clear_gestures()`, because a stored index refers to a different key afterwards.
+
+A virtual press has no release to time, so `press()` runs `steps_single` directly;
+the editor says so. `Action.long_press(ctx, params)` returns `False` to decline,
+and the controller then falls through to a normal press, which is what makes
+"Nothing" behave exactly like a short press.
+
+### Status icon and application lifetime
+
+GTK 4 has no tray API, so `ui/tray.py` publishes the icon directly on D-Bus with
+`org.kde.StatusNotifierItem` plus `com.canonical.dbusmenu`, over
+`Gio.DBusConnection`. It adds no dependency and works on COSMIC and KDE natively,
+and on GNOME with an AppIndicator extension. The module creates no GTK widgets;
+D-Bus handlers run on the GTK main thread, and every user action is still routed
+back through `GLib.idle_add`.
+
+`TrayIcon.start()` exports both objects, owns an
+`org.kde.StatusNotifierItem-<pid>-1` bus name and then watches the watcher name,
+so the icon survives a panel restart and can be published before the status area
+exists. `is_supported()` is only informational: `app.py` must start the icon
+even when it returns `False`, because a session that is still logging in — the
+normal autostart case — very often has no status area yet, and the name watcher
+publishes the icon the moment one appears. `RegisterStatusNotifierItem` is called
+**asynchronously**; it runs on the GTK main thread, so a synchronous call would
+freeze the window whenever the panel is slow. Until the reply arrives the icon
+counts as unregistered, which is the safe direction. The menu is **Open**, a **Profile** submenu of radio entries and
+**Quit**; `ItemIsMenu` is true, so a plain click opens it. `menu_items()` and
+`build_layout()` are pure functions, which is what the tests exercise. Profile
+entry IDs start at `PROFILE_ID_BASE` so they never collide with the fixed ones.
+`app.py` subscribes to `profile.changed` and calls `refresh()`, which bumps the
+revision and emits `LayoutUpdated`; that one event already covers adding,
+renaming, deleting and switching a profile.
+
+`Config.close_action` is `tray` (default) or `quit`.
+`LinuxStreamDeckApp.hides_on_close()` is the single decision point and requires
+all three of: no explicit quit in progress, the configured `tray` action, and a
+**registered** icon. A missing or unregistered status area therefore always
+falls back to quitting, so the window can never vanish with no way back.
+`MainWindow` hides instead of closing by returning `True` from `close-request`;
+the window is only hidden, never destroyed, so `Adw.Application` keeps the
+process alive and the whole session — including an unsaved key draft — survives.
+Hiding deliberately asks nothing.
+
+Quitting and switching profiles from the icon go through `MainWindow.request_quit()`
+and `request_profile()`, which reuse the normal unsaved-change guard and present
+the window first when a confirmation is needed, because that dialog is modal to
+it. `app.quit()` sets the explicit-quit flag before `Gtk.Application.quit()` so
+the hide rule cannot intercept it, and `_on_shutdown` stops the icon before the
+controller, deck and OBS client.
+
+`core/autostart.py` owns the XDG entry at `~/.config/autostart/<APP_ID>.desktop`
+(overridable with `LSD_AUTOSTART_DIR` in tests). Its state lives in that file and
+never in `config.json`: an exported configuration must not enable autostart on
+another computer, and the desktop's own startup tool may disable the entry, which
+`is_enabled()` honours by checking both `Hidden` and `X-GNOME-Autostart-enabled`.
+The entry runs the installed console script when there is one, falling back to
+the current interpreter, and always adds the `--hidden` flag that
+`strip_hidden_flag()` removes before GTK parses argv. A hidden start only skips
+presenting the window when the icon actually registered.
 
 ### Key label font size
 
@@ -526,7 +670,8 @@ by `sys.audio` or the `sound` parameter of `sys.timer`; identical audio content
 is deduplicated even across both actions. Audio is limited to 200 MiB per file
 and 500 MiB total, while the exit image is limited to 50 MiB. Built-in `mdi:`
 icons stay as references, and OBS passwords and provider API keys are never
-exported. Missing, unreadable, unsupported or oversized portable files remain
+exported. `close_action` travels with the configuration like `brightness` does,
+but the autostart entry never does: it stays local to each computer. Missing, unreadable, unsupported or oversized portable files remain
 local references and produce an export warning.
 
 Import accepts format v1, v2 and v3, validates archive member paths and size
@@ -718,7 +863,45 @@ hard-to-diagnose failures.
    On shutdown, signal the saver wakeup, join its thread before the monitor
    thread, and apply the clean-exit display before HID closes.
 
-16. **The clean-exit display must be the final HID state.** Keep
+16. **Never nest a built `GLib.Variant` inside a format string.** The dbusmenu
+   reply is `(u(ia{sv}av))` and its layout is already a typed variant. Passing it
+   as a tuple element of `GLib.Variant("(u(ia{sv}av))", …)` makes PyGObject try to
+   rebuild it from its unpacked value and fail with
+   `TypeError: Expected GLib.Variant, but got str`. Assemble such replies with
+   `GLib.Variant.new_tuple(...)` instead. This only shows up on a real D-Bus call,
+   never when building the layout in isolation, so keep the reply-shape test.
+
+17. **Hiding to the status area must always be reversible.** Keep
+   `hides_on_close()` as the only decision point and keep all three of its
+   conditions, so a missing, unregistered or vanished status area falls back to
+   quitting. Hide by returning `True` from `close-request` and only setting the
+   window invisible; destroying it would end the process and lose the session.
+   Route icon-driven quit and profile switches through the window so the
+   unsaved-change guard still runs, and present the window before any
+   confirmation, since those dialogs are modal to it. Autostart state belongs in
+   the XDG entry, never in `config.json` or an export. Never gate starting the
+   icon on `is_supported()` and never register with `call_sync`: the status area
+   commonly appears after the application at session login, and a blocking call
+   on the GTK main thread freezes the window for its whole timeout. Keep the
+   late-appearance regression test.
+
+18. **Press gestures must not leak across keys.** Resolve them on release, keep
+   the pending double-press timer keyed by profile/page/key, and cancel it from
+   every path that changes what that index means: key edit, drag/drop swap, page
+   or profile change and shutdown. A key with no gesture mode must still run on
+   the press, so plain keys keep their current latency. Never make the virtual
+   deck wait out the double-press window; it runs the single-press list directly.
+
+19. **Never fake media or modifier keys.** Media transport goes through MPRIS and
+   volume through the session mixer, both of which work unprivileged on Wayland.
+   Only genuine application shortcuts use `core/keystrokes.py`, and its backends
+   must stay optional: no code path may assume ydotool exists, and a missing
+   backend must surface as a status message, never an exception that breaks a
+   multi-action sequence. Keep `ydotool_syntax()` detection: emitting 1.x key
+   codes to the 0.x binary that Debian and Ubuntu ship fails silently for the
+   user.
+
+20. **The clean-exit display must be the final HID state.** Keep
    `device_default` as a firmware reset, `blank` as black tiles followed by
    brightness 0, and `custom` as a validated full-grid center crop written at
    normal configured brightness. Apply it only after device workers have joined

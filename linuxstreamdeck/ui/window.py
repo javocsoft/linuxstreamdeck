@@ -96,6 +96,9 @@ class MainWindow(Adw.ApplicationWindow):
             "Import configuration…", "win.config-import"
         )
         profile_menu.append_section(None, configuration_menu)
+        application_menu = Gio.Menu()
+        application_menu.append("Preferences…", "win.app-preferences")
+        profile_menu.append_section(None, application_menu)
         menu_btn = Gtk.MenuButton(icon_name="view-more-symbolic",
                                   tooltip_text="Manage profiles and configuration",
                                   menu_model=profile_menu)
@@ -316,6 +319,14 @@ class MainWindow(Adw.ApplicationWindow):
             continue_action()
 
     def _on_close_request(self, *_args) -> bool:
+        # Hiding to the status area keeps the whole session, including an
+        # unfinished key edit, so it deliberately asks nothing.
+        if not self._allow_close and self.app.hides_on_close():
+            self.set_visible(False)
+            self.app.bus.emit(
+                "status", text="Still running in the status area"
+            )
+            return True
         if self._allow_close or not self.editor.has_unsaved_changes():
             return False
         self._confirm_unsaved_changes(
@@ -327,6 +338,32 @@ class MainWindow(Adw.ApplicationWindow):
     def _close_after_unsaved_confirmation(self) -> None:
         self._allow_close = True
         self.close()
+
+    # ---------- entry points used by the status icon ----------
+
+    def request_quit(self) -> None:
+        """Quit for good, confirming unsaved key changes first."""
+        self._present_for_dialog()
+        self._confirm_unsaved_changes(
+            "quitting LinuxStreamDeck",
+            self.app.quit,
+        )
+
+    def request_profile(self, index: int) -> None:
+        """Switch profile from outside the window, honouring unsaved changes."""
+        if index == self.app.config.current_profile:
+            return
+        self._present_for_dialog()
+        self._confirm_unsaved_changes(
+            "switching profiles",
+            lambda: self.app.controller.set_profile(index),
+        )
+
+    def _present_for_dialog(self) -> None:
+        """A confirmation is modal to this window, so it must be on screen."""
+        if self.editor.has_unsaved_changes() and not self.get_visible():
+            self.set_visible(True)
+            self.present()
 
     # ---------- move / copy / paste / clear keys ----------
 
@@ -355,7 +392,8 @@ class MainWindow(Adw.ApplicationWindow):
                          ("page-rename", self._rename_page),
                          ("page-delete", self._delete_page),
                          ("config-export", self._export_configuration),
-                         ("config-import", self._import_configuration)):
+                         ("config-import", self._import_configuration),
+                         ("app-preferences", self._open_preferences)):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda a, p, cb=cb: cb())
             self.add_action(act)
@@ -1034,6 +1072,11 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_screensaver_settings(self, _btn) -> None:
         self.app.deck.record_activity()
         ScreenSaverSettingsDialog(self, self.app).present()
+
+    def _open_preferences(self) -> None:
+        from .preferences import PreferencesDialog
+
+        PreferencesDialog(self, self.app).present()
 
     # ---------- state ----------
 

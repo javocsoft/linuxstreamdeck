@@ -8,6 +8,7 @@ cache (`OBSState`) fed by events so key feedback is instant, and emits
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 
@@ -18,6 +19,52 @@ from ..core.events import EventBus
 log = logging.getLogger(__name__)
 
 RECONNECT_SECONDS = 3
+
+# Splits CamelCase, including an acronym followed by a word ("OBSBasic").
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_SEPARATORS = re.compile(r"[-_.\s]+")
+# Prefixes that only say where a hotkey lives, adding nothing for the reader.
+_GENERIC_HOTKEY_GROUPS = frozenset({"obsbasic", "libobs", "obs"})
+
+
+def _words(text: str) -> list[str]:
+    parts: list[str] = []
+    for chunk in _SEPARATORS.split(text):
+        if chunk:
+            parts.extend(part for part in _CAMEL_BOUNDARY.split(chunk) if part)
+    return parts
+
+
+def _sentence(words: list[str]) -> str:
+    if not words:
+        return ""
+    # Keep acronyms as they are, lowercase the rest, capitalize the first word.
+    rendered = [word if word.isupper() else word.lower() for word in words]
+    first = rendered[0]
+    rendered[0] = first if first.isupper() else first.capitalize()
+    return " ".join(rendered)
+
+
+def hotkey_display_name(name: str) -> str:
+    """Readable text for an internal OBS hotkey name.
+
+    obs-websocket's GetHotkeyList only returns identifiers such as
+    "OBSBasic.StartStreaming" or "libobs.push-to-mute", with no localized
+    description, so the label is derived here. The identifier itself stays the
+    stored value, because that is what TriggerHotkeyByName needs.
+    """
+    text = str(name or "").strip()
+    if not text:
+        return ""
+    group, separator, rest = text.partition(".")
+    if not separator or not rest:
+        group, rest = "", text
+    label = _sentence(_words(rest))
+    if not label:
+        return text
+    if group and group.lower() not in _GENERIC_HOTKEY_GROUPS:
+        return f"{_sentence(_words(group))}: {label}"
+    return label
 
 
 class OBSState:
@@ -226,7 +273,10 @@ class OBSClient:
 
     def get_hotkeys(self) -> list[str]:
         d = self.try_request("GetHotkeyList") or {}
-        return d.get("hotkeys", [])
+        # OBS registers some hotkeys once per source, so the same name comes
+        # back several times. They are indistinguishable to TriggerHotkeyByName,
+        # so only the first occurrence is worth offering.
+        return list(dict.fromkeys(d.get("hotkeys", [])))
 
     # ---------- initial state ----------
 

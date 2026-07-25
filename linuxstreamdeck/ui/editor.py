@@ -21,6 +21,8 @@ from gi.repository import Gtk  # noqa: E402
 from ..core import actions as action_registry  # noqa: E402
 from ..core.config import (  # noqa: E402
     KIND_MULTI,
+    KIND_PRESS,
+    KIND_RANDOM,
     KIND_SINGLE,
     KIND_TOGGLE,
     ActionStep,
@@ -34,6 +36,8 @@ KINDS = [
     (KIND_SINGLE, "Single action"),
     (KIND_MULTI, "Multiple actions"),
     (KIND_TOGGLE, "Toggle (ON/OFF)"),
+    (KIND_RANDOM, "Random action"),
+    (KIND_PRESS, "Single / double / long press"),
 ]
 KIND_IDS = [k for k, _ in KINDS]
 
@@ -86,6 +90,9 @@ class EditorPanel(Gtk.Box):
         self.off_list: StepList | None = None
         self.app_main: AppearanceBox | None = None
         self.app_off: AppearanceBox | None = None
+        self.single_press_list: StepList | None = None
+        self.double_press_list: StepList | None = None
+        self.long_press_list: StepList | None = None
 
         self.clear()
 
@@ -139,6 +146,15 @@ class EditorPanel(Gtk.Box):
             kc.action, kc.params = step.action, step.params
         elif kind == KIND_MULTI and self.multi_list is not None:
             kc.steps = self.multi_list.get_steps()
+        elif kind == KIND_RANDOM and self.multi_list is not None:
+            kc.steps = self.multi_list.get_steps()
+        elif kind == KIND_PRESS:
+            if self.single_press_list is not None:
+                kc.steps_single = self.single_press_list.get_steps()
+            if self.double_press_list is not None:
+                kc.steps_double = self.double_press_list.get_steps()
+            if self.long_press_list is not None:
+                kc.steps_long = self.long_press_list.get_steps()
         elif kind == KIND_TOGGLE:
             if self.on_list is not None:
                 kc.steps_on = self.on_list.get_steps()
@@ -210,6 +226,8 @@ class EditorPanel(Gtk.Box):
         self._clear(self.body)
         self.single_editor = self.multi_list = None
         self.on_list = self.off_list = self.app_main = self.app_off = None
+        self.single_press_list = self.double_press_list = None
+        self.long_press_list = None
         kind = self._current_kind()
 
         if kind == KIND_SINGLE:
@@ -247,6 +265,68 @@ class EditorPanel(Gtk.Box):
                 kc.icon,
                 kc.bg_color,
                 self._steps_icon(kc.steps, "mdi:playlist-play"),
+                kc.font_size,
+            )
+            self.body.append(self.app_main)
+
+        elif kind == KIND_RANDOM:
+            self.body.append(self._hint(
+                "One of these actions is chosen at random on every press."
+            ))
+            self.multi_list = StepList(
+                self.app,
+                on_change=self._update_multi_icon_preview,
+            )
+            self.multi_list.load(kc.steps)
+            self.body.append(self.multi_list)
+            self.body.append(Gtk.Separator())
+            self.app_main = AppearanceBox("Appearance")
+            self.app_main.load(
+                kc.label,
+                kc.icon,
+                kc.bg_color,
+                self._steps_icon(kc.steps, "mdi:shuffle-variant"),
+                kc.font_size,
+            )
+            self.body.append(self.app_main)
+
+        elif kind == KIND_PRESS:
+            self.body.append(self._hint(
+                "Each gesture runs its own list. Leave one empty to ignore it. "
+                "Only the physical deck can tell the gestures apart; a click on "
+                "the on-screen deck is a single press."
+            ))
+            self.single_press_list = StepList(
+                self.app,
+                on_change=self._update_press_icon_preview,
+            )
+            self.single_press_list.load(kc.steps_single)
+            self.body.append(self._frame("• Single press", [self.single_press_list]))
+
+            self.double_press_list = StepList(
+                self.app,
+                on_change=self._update_press_icon_preview,
+            )
+            self.double_press_list.load(kc.steps_double)
+            self.body.append(self._frame("•• Double press", [self.double_press_list]))
+
+            self.long_press_list = StepList(
+                self.app,
+                on_change=self._update_press_icon_preview,
+            )
+            self.long_press_list.load(kc.steps_long)
+            self.body.append(self._frame("— Long press", [self.long_press_list]))
+
+            self.body.append(Gtk.Separator())
+            self.app_main = AppearanceBox("Appearance")
+            self.app_main.load(
+                kc.label,
+                kc.icon,
+                kc.bg_color,
+                self._steps_icon(
+                    [*kc.steps_single, *kc.steps_double, *kc.steps_long],
+                    "mdi:gesture-tap",
+                ),
                 kc.font_size,
             )
             self.body.append(self.app_main)
@@ -315,6 +395,21 @@ class EditorPanel(Gtk.Box):
                     "mdi:playlist-play",
                 )
             )
+
+    def _update_press_icon_preview(self) -> None:
+        if self.app_main is None:
+            return
+        steps: list[ActionStep] = []
+        for step_list in (
+            self.single_press_list,
+            self.double_press_list,
+            self.long_press_list,
+        ):
+            if step_list is not None:
+                steps.extend(step_list.get_steps())
+        self.app_main.set_fallback_icon(
+            self._steps_icon(steps, "mdi:gesture-tap")
+        )
 
     def _update_on_icon_preview(self) -> None:
         if self.on_list is not None and self.app_main is not None:

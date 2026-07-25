@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import logging
+import random
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -20,6 +22,8 @@ from .audio import play_audio
 from .clocks import ClockRuntime, ClockSnapshot, TimerCompletion
 from .config import (
     KIND_MULTI,
+    KIND_PRESS,
+    KIND_RANDOM,
     KIND_SINGLE,
     KIND_TOGGLE,
     ActionStep,
@@ -34,6 +38,12 @@ from ..device import renderer
 log = logging.getLogger(__name__)
 
 BUSY_PULSE_SECONDS = 0.75
+
+# Press-gesture keys. Holding at least LONG_PRESS_SECONDS is a long press; a
+# second tap within DOUBLE_PRESS_SECONDS of the first release is a double press.
+# A single press therefore only resolves once that window has passed.
+LONG_PRESS_SECONDS = 0.5
+DOUBLE_PRESS_SECONDS = 0.35
 
 
 class _ExecutionControl:
@@ -87,6 +97,11 @@ class DeckController:
             tuple[int, int, int],
             _ExecutionControl,
         ] = {}
+        # Press-gesture keys: when each one went down, and the timer waiting to
+        # see whether a second tap turns a single press into a double one.
+        self._gesture_lock = threading.Lock()
+        self._gesture_down: dict[tuple[int, int, int], float] = {}
+        self._gesture_timers: dict[tuple[int, int, int], threading.Timer] = {}
         self._busy_thread = threading.Thread(
             target=self._busy_loop,
             daemon=True,
@@ -293,6 +308,9 @@ class DeckController:
         self._clocks.swap(pa, pb)
         self._cancel_timer_sound(pa)
         self._cancel_timer_sound(pb)
+        # A gesture in flight belonged to the key that just moved away.
+        self._cancel_gesture(pa)
+        self._cancel_gesture(pb)
         self.config.save()
         self.refresh()
 
@@ -315,12 +333,141 @@ class DeckController:
         self._toggle.pop(key, None)
         self._clocks.reset(key, refresh=False)
         self._cancel_timer_sound(key)
+        self._cancel_gesture(key)
+
+    def _cancel_gesture(self, key: tuple[int, int, int]) -> None:
+        """Drop any half-finished press gesture for one key."""
+        with self._gesture_lock:
+            self._gesture_down.pop(key, None)
+            timer = self._gesture_timers.pop(key, None)
+        if timer is not None:
+            timer.cancel()
 
     # ---------- presses ----------
 
     def _on_deck_key(self, topic: str, data: dict) -> None:
+        index = data.get("index")
+        if index is None:
+            return
         if data.get("pressed"):
-            self.press(data["index"])
+            self.key_down(index)
+        else:
+            self.key_up(index)
+
+    # ---------- press gestures (single / double / long) ----------
+
+    def _gesture_mode(self, index: int) -> str:
+        """How a key must be timed: "press", "long", or "" for none."""
+        kc = self.page.key(index)
+        if kc is None or kc.is_empty():
+            return ""
+        if kc.kind == KIND_PRESS:
+            return "press"
+        if kc.kind == KIND_SINGLE:
+            action = action_registry.get(kc.action)
+            if action is not None and action.supports_long_press:
+                return "long"
+        return ""
+
+    def key_down(self, index: int) -> None:
+        """Physical press. Only gesture keys need to wait for the release."""
+        if not self._gesture_mode(index):
+            self.press(index)
+            return
+        if self._stopping.is_set() or self.deck.record_activity():
+            return
+        with self._gesture_lock:
+            self._gesture_down[self._tkey(index)] = time.monotonic()
+
+    def key_up(self, index: int) -> None:
+        """Physical release. Resolves which gesture the key received."""
+        mode = self._gesture_mode(index)
+        if not mode or self._stopping.is_set():
+            return
+        if mode == "long":
+            self._resolve_long_press_action(index)
+            return
+        key = self._tkey(index)
+        with self._gesture_lock:
+            started = self._gesture_down.pop(key, None)
+            if started is None:
+                # A release whose press was consumed elsewhere (screen saver
+                # wake, or a key reconfigured while held).
+                return
+            held = time.monotonic() - started
+            pending = self._gesture_timers.pop(key, None)
+        if pending is not None:
+            pending.cancel()
+        if held >= LONG_PRESS_SECONDS:
+            self._run_gesture(index, "long")
+            return
+        if pending is not None:
+            self._run_gesture(index, "double")
+            return
+        timer = threading.Timer(
+            DOUBLE_PRESS_SECONDS, self._resolve_single_press, args=(index, key)
+        )
+        timer.daemon = True
+        with self._gesture_lock:
+            self._gesture_timers[key] = timer
+        timer.start()
+
+    def _resolve_long_press_action(self, index: int) -> None:
+        """Single-action key whose action handles being held down."""
+        key = self._tkey(index)
+        with self._gesture_lock:
+            started = self._gesture_down.pop(key, None)
+        if started is None:
+            return
+        kc = self.page.key(index)
+        action = action_registry.get(kc.action) if kc is not None else None
+        if action is None:
+            return
+        if time.monotonic() - started >= LONG_PRESS_SECONDS:
+            # A long press that the action declines falls through to a normal
+            # press, so "Nothing" behaves exactly like a short press.
+            self._action_executor.submit(
+                self._run_long_press, action, dict(kc.params), index, key
+            )
+            return
+        self.press(index)
+
+    def _run_long_press(self, action, params: dict, index: int, key) -> None:
+        try:
+            handled = action.long_press(self.ctx.for_key(key), params)
+        except Exception as error:
+            log.exception("Long press of %s failed", action.id)
+            self.bus.emit("status", text=f"Error: {error}")
+            return
+        if not handled and not self._stopping.is_set():
+            self.press(index)
+        else:
+            # Closing the application changes its running feedback.
+            self.refresh()
+
+    def _resolve_single_press(self, index: int, key: tuple[int, int, int]) -> None:
+        with self._gesture_lock:
+            if self._gesture_timers.pop(key, None) is None:
+                return
+        if not self._stopping.is_set():
+            self._run_gesture(index, "single")
+
+    def _run_gesture(self, index: int, gesture: str) -> None:
+        kc = self.page.key(index)
+        if kc is None or kc.kind != KIND_PRESS:
+            return
+        steps = list(getattr(kc, f"steps_{gesture}", []))
+        if not steps:
+            return
+        self._submit_steps(steps, index, show_running=True)
+
+    def _clear_gestures(self) -> None:
+        with self._gesture_lock:
+            timers = list(self._gesture_timers.values())
+            self._gesture_timers.clear()
+            self._gesture_down.clear()
+        for timer in timers:
+            timer.cancel()
 
     def _on_screensaver(self, topic: str, data: dict) -> None:
         if not data.get("active"):
@@ -341,6 +488,12 @@ class DeckController:
             steps = [ActionStep(action=kc.action, params=kc.params)]
         elif kc.kind == KIND_MULTI:
             steps = list(kc.steps)
+        elif kc.kind == KIND_RANDOM:
+            steps = [random.choice(kc.steps)] if kc.steps else []
+        elif kc.kind == KIND_PRESS:
+            # A virtual press has no release to time, so it runs the single-press
+            # list; the physical deck resolves the real gesture in key_up().
+            steps = list(kc.steps_single)
         elif kc.kind == KIND_TOGGLE:
             key = self._tkey(index)
             new_state = not self._toggle.get(key, False)
@@ -348,24 +501,33 @@ class DeckController:
             steps = list(kc.steps_on if new_state else kc.steps_off)
         else:
             return
+        if not steps:
+            return
         single_action = (
             action_registry.get(kc.action)
             if kc.kind == KIND_SINGLE
             else None
         )
-        execution_key = self._tkey(index)
         if single_action is not None and single_action.immediate:
             self._run_immediate(
                 single_action,
                 dict(kc.params),
                 index,
-                execution_key,
+                self._tkey(index),
             )
             return
-        show_running = (
-            kc.kind in (KIND_MULTI, KIND_TOGGLE)
-            or bool(single_action and single_action.running_feedback)
+        self._submit_steps(
+            steps,
+            index,
+            show_running=(
+                kc.kind in (KIND_MULTI, KIND_TOGGLE, KIND_RANDOM, KIND_PRESS)
+                or bool(single_action and single_action.running_feedback)
+            ),
         )
+
+    def _submit_steps(self, steps, index: int, show_running: bool) -> None:
+        """Queue a key's steps on an action worker, with running feedback."""
+        execution_key = self._tkey(index)
         runtime_key = execution_key if show_running else None
         control = self._prepare_execution(execution_key, steps)
         if runtime_key is not None:
@@ -650,6 +812,9 @@ class DeckController:
     def _clear_time_actions(self) -> None:
         self._clocks.clear()
         self._cancel_all_timer_sounds()
+        # Stored indices shift with the profile/page, so a pending gesture would
+        # resolve against a different key.
+        self._clear_gestures()
 
     def _cancel_all_timer_sounds(self) -> None:
         with self._notification_lock:
@@ -709,12 +874,19 @@ class DeckController:
             return {"size": size}
         if kc.kind == KIND_TOGGLE:
             return self._toggle_spec(index, kc, size)
-        if kc.kind == KIND_MULTI:
+        if kc.kind in (KIND_MULTI, KIND_RANDOM, KIND_PRESS):
             busy, phase = self._busy_state(index)
-            icon = kc.icon or self._first_step_icon(kc.steps) or "mdi:playlist-play"
+            if kc.kind == KIND_RANDOM:
+                steps, fallback, badge = kc.steps, "mdi:shuffle-variant", "?"
+            elif kc.kind == KIND_PRESS:
+                steps = [*kc.steps_single, *kc.steps_double, *kc.steps_long]
+                fallback, badge = "mdi:gesture-tap", "⋮"
+            else:
+                steps, fallback, badge = kc.steps, "mdi:playlist-play", "⋯"
+            icon = kc.icon or self._first_step_icon(steps) or fallback
             return {"size": size, "label": kc.label, "icon_path": icon,
                     "bg": kc.bg_color, "busy": busy, "busy_phase": phase,
-                    "badge": "RUN" if busy else "⋯",
+                    "badge": "RUN" if busy else badge,
                     "font_size": kc.font_size}
         return self._single_spec(index, kc, size)
 
@@ -780,6 +952,7 @@ class DeckController:
         self._stopping.set()
         self._clocks.shutdown()
         self._cancel_all_timer_sounds()
+        self._clear_gestures()
         self._busy_wakeup.set()
         self._render_pending.clear()
         self._action_executor.shutdown(wait=True, cancel_futures=True)
