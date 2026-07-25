@@ -2,7 +2,7 @@
 
 - StepEditor   : selects category + action + parameters of ONE step.
 - StepList     : reorderable list of StepEditor (for multiple actions).
-- AppearanceBox: label + icon + background color of one key state.
+- AppearanceBox: label + font size + icon + background color of one key state.
 
 StepEditor concentrates the logic of filling the dropdowns live from OBS, which
 used to live in EditorPanel, so it can be reused for each step.
@@ -20,7 +20,12 @@ from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 from ..core import actions as registry  # noqa: E402
 from ..core.actions import Action, Param, format_duration, parse_duration  # noqa: E402
-from ..core.config import DEFAULT_KEY_BG, ActionStep  # noqa: E402
+from ..core.config import (  # noqa: E402
+    DEFAULT_KEY_BG,
+    KEY_FONT_SIZE_AUTO,
+    KEY_FONT_SIZE_CHOICES,
+    ActionStep,
+)
 
 log = logging.getLogger(__name__)
 
@@ -509,6 +514,14 @@ class AppearanceBox(Gtk.Box):
         self.label_entry = Gtk.Entry(placeholder_text="Key label")
         self.append(_row("Label", self.label_entry))
 
+        self.font_size_dd = Gtk.DropDown.new_from_strings(
+            [name for _, name in KEY_FONT_SIZE_CHOICES]
+        )
+        self.font_size_dd.set_tooltip_text(
+            "Size of the label text drawn on the key"
+        )
+        self.append(_row("Font size", self.font_size_dd))
+
         # preview + library / file / remove buttons
         icon_box = Gtk.Box(spacing=6)
         self.preview = Gtk.Image()
@@ -538,6 +551,7 @@ class AppearanceBox(Gtk.Box):
         icon: str,
         color: str,
         fallback_icon: str = "",
+        font_size: str = KEY_FONT_SIZE_AUTO,
     ) -> None:
         self.label_entry.set_text(label)
         self._fallback_icon_ref = fallback_icon
@@ -545,9 +559,23 @@ class AppearanceBox(Gtk.Box):
         rgba = Gdk.RGBA()
         rgba.parse(color or DEFAULT_KEY_BG)
         self.color_btn.set_rgba(rgba)
+        self.font_size_dd.set_selected(self._font_size_index(font_size))
 
     def label(self) -> str:
         return self.label_entry.get_text()
+
+    def font_size(self) -> str:
+        index = self.font_size_dd.get_selected()
+        if index == Gtk.INVALID_LIST_POSITION or index >= len(KEY_FONT_SIZE_CHOICES):
+            return KEY_FONT_SIZE_AUTO
+        return KEY_FONT_SIZE_CHOICES[index][0]
+
+    @staticmethod
+    def _font_size_index(value: str) -> int:
+        for position, (size, _name) in enumerate(KEY_FONT_SIZE_CHOICES):
+            if size == value:
+                return position
+        return 0
 
     def icon(self) -> str:
         return self._icon_ref

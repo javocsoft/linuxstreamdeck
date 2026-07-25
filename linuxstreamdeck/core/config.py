@@ -37,6 +37,19 @@ BACKUP_FILE = CONFIG_DIR / "config.json.bak"
 
 DEFAULT_KEY_BG = "#1e1e28"
 
+# Label font size. An empty value is an inheritance marker (the renderer picks a
+# size from the key height), mirroring how an empty icon inherits its default.
+KEY_FONT_SIZE_AUTO = ""
+KEY_FONT_SIZE_CHOICES = (
+    (KEY_FONT_SIZE_AUTO, "Automatic"),
+    ("xs", "Extra small"),
+    ("s", "Small"),
+    ("m", "Medium"),
+    ("l", "Large"),
+    ("xl", "Extra large"),
+)
+KEY_FONT_SIZES = frozenset(choice[0] for choice in KEY_FONT_SIZE_CHOICES)
+
 SCREENSAVER_CHOICES = (
     (
         "neon_pipes",
@@ -101,6 +114,11 @@ EXPORT_FORMAT = "linuxstreamdeck-configuration"
 EXPORT_VERSION = 3
 EXPORT_CONFIG_FILE = "config.json"
 EXPORT_MANIFEST_FILE = "manifest.json"
+# Single-key bundles reuse the archive layout and asset prefixes of a full
+# configuration export, with their own format id so the two cannot be confused.
+KEY_EXPORT_FORMAT = "linuxstreamdeck-key"
+KEY_EXPORT_VERSION = 1
+KEY_EXPORT_FILE = "key.json"
 EXPORT_ICON_PREFIX = "bundle:"
 EXPORT_AUDIO_PREFIX = "bundle-audio:"
 EXPORT_EXIT_IMAGE_PREFIX = "bundle-exit-image:"
@@ -136,6 +154,12 @@ def _migrate_page_action(action, params) -> tuple[str, dict]:
     return "nav.page.go", {"page": str(values.get("page", "") or "")}
 
 
+def _font_size(value) -> str:
+    """Keep only a known label size; anything else falls back to automatic."""
+    size = str(value or "").strip().lower()
+    return size if size in KEY_FONT_SIZES else KEY_FONT_SIZE_AUTO
+
+
 @dataclass(frozen=True)
 class ExportResult:
     bundled_icons: int
@@ -154,6 +178,21 @@ class ImportResult:
     restored_icons: int
     restored_audio: int = 0
     restored_exit_image: bool = False
+
+
+@dataclass(frozen=True)
+class KeyExportResult:
+    bundled_icons: int
+    missing_icons: int
+    bundled_audio: int
+    missing_audio: int
+
+
+@dataclass(frozen=True)
+class KeyImportResult:
+    key: "KeyConfig"
+    restored_icons: int
+    restored_audio: int
 
 
 @dataclass
@@ -183,11 +222,13 @@ class KeyConfig:
     label: str = ""
     icon: str = ""                        # path to an optional image
     bg_color: str = DEFAULT_KEY_BG
+    font_size: str = KEY_FONT_SIZE_AUTO   # "" inherits the automatic size
 
     # OFF state appearance (toggles only)
     label_off: str = ""
     icon_off: str = ""
     bg_color_off: str = DEFAULT_KEY_BG
+    font_size_off: str = KEY_FONT_SIZE_AUTO
 
     def is_empty(self) -> bool:
         if self.kind == KIND_SINGLE:
@@ -242,9 +283,11 @@ class KeyConfig:
             label=d.get("label", ""),
             icon=d.get("icon", ""),
             bg_color=d.get("bg_color", DEFAULT_KEY_BG),
+            font_size=_font_size(d.get("font_size")),
             label_off=d.get("label_off", ""),
             icon_off=d.get("icon_off", ""),
             bg_color_off=d.get("bg_color_off", DEFAULT_KEY_BG),
+            font_size_off=_font_size(d.get("font_size_off")),
         )
 
 
@@ -645,41 +688,19 @@ class Config:
             except OSError:
                 missing_exit_image = True
 
-        manifest = {
-            "format": EXPORT_FORMAT,
-            "version": EXPORT_VERSION,
+        members: dict[str, bytes] = {
+            EXPORT_MANIFEST_FILE: json.dumps(
+                {"format": EXPORT_FORMAT, "version": EXPORT_VERSION}, indent=2
+            ).encode("utf-8"),
+            EXPORT_CONFIG_FILE: json.dumps(
+                raw, indent=2, ensure_ascii=False
+            ).encode("utf-8"),
+            **icon_files,
+            **audio_files,
         }
-        destination = Path(destination).expanduser()
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.NamedTemporaryFile(
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-            dir=destination.parent,
-            delete=False,
-        )
-        temporary_path = Path(temporary.name)
-        temporary.close()
-        try:
-            with zipfile.ZipFile(
-                temporary_path, mode="w", compression=zipfile.ZIP_DEFLATED
-            ) as archive:
-                archive.writestr(
-                    EXPORT_MANIFEST_FILE,
-                    json.dumps(manifest, indent=2),
-                )
-                archive.writestr(
-                    EXPORT_CONFIG_FILE,
-                    json.dumps(raw, indent=2, ensure_ascii=False),
-                )
-                for archive_name, data in icon_files.items():
-                    archive.writestr(archive_name, data)
-                for archive_name, data in audio_files.items():
-                    archive.writestr(archive_name, data)
-                if exit_image_file is not None:
-                    archive.writestr(*exit_image_file)
-            temporary_path.replace(destination)
-        finally:
-            temporary_path.unlink(missing_ok=True)
+        if exit_image_file is not None:
+            members[exit_image_file[0]] = exit_image_file[1]
+        self._write_bundle_archive(destination, members)
         return ExportResult(
             bundled_icons=len(icon_files),
             missing_icons=len(missing_icons),
@@ -829,6 +850,172 @@ class Config:
             restored_exit_image=exit_image_payload is not None,
         )
 
+    # ---------- portable single-key import / export ----------
+
+    @classmethod
+    def export_key_bundle(
+        cls, key: KeyConfig, destination: Path
+    ) -> KeyExportResult:
+        """Write one key as a portable archive with its icons and audio."""
+        raw = asdict(key)
+        icon_files: dict[str, bytes] = {}
+        missing_icons: set[str] = set()
+        audio_files: dict[str, bytes] = {}
+        missing_audio: set[str] = set()
+        total_audio_bytes = 0
+
+        for field_name in ("icon", "icon_off"):
+            ref = raw.get(field_name, "")
+            if not ref or ref.startswith("mdi:"):
+                continue
+            try:
+                source = Path(ref).expanduser()
+                if not source.is_file() or source.stat().st_size > MAX_ICON_BYTES:
+                    missing_icons.add(ref)
+                    continue
+                data = source.read_bytes()
+            except OSError:
+                missing_icons.add(ref)
+                continue
+            digest = hashlib.sha256(data).hexdigest()
+            suffix = cls._safe_icon_suffix(source.suffix)
+            archive_name = f"icons/{digest}{suffix}"
+            icon_files.setdefault(archive_name, data)
+            raw[field_name] = f"{EXPORT_ICON_PREFIX}{archive_name}"
+
+        for action, params in cls._raw_action_params(raw):
+            parameter = _ACTION_AUDIO_PARAMETERS.get(action)
+            if parameter is None:
+                continue
+            ref = str(params.get(parameter, "") or "")
+            if not ref:
+                continue
+            try:
+                source = Path(ref).expanduser()
+                if (
+                    not source.is_file()
+                    or source.stat().st_size > MAX_AUDIO_BYTES
+                    or source.suffix.lower() not in SUPPORTED_AUDIO_EXTENSIONS
+                ):
+                    missing_audio.add(ref)
+                    continue
+                data = source.read_bytes()
+            except OSError:
+                missing_audio.add(ref)
+                continue
+            digest = hashlib.sha256(data).hexdigest()
+            archive_name = f"audio/{digest}{source.suffix.lower()}"
+            if archive_name not in audio_files:
+                if total_audio_bytes + len(data) > MAX_TOTAL_AUDIO_BYTES:
+                    missing_audio.add(ref)
+                    continue
+                audio_files[archive_name] = data
+                total_audio_bytes += len(data)
+            params[parameter] = f"{EXPORT_AUDIO_PREFIX}{archive_name}"
+
+        cls._write_bundle_archive(
+            destination,
+            {
+                EXPORT_MANIFEST_FILE: json.dumps(
+                    {
+                        "format": KEY_EXPORT_FORMAT,
+                        "version": KEY_EXPORT_VERSION,
+                    },
+                    indent=2,
+                ).encode("utf-8"),
+                KEY_EXPORT_FILE: json.dumps(
+                    raw, indent=2, ensure_ascii=False
+                ).encode("utf-8"),
+                **icon_files,
+                **audio_files,
+            },
+        )
+        return KeyExportResult(
+            bundled_icons=len(icon_files),
+            missing_icons=len(missing_icons),
+            bundled_audio=len(audio_files),
+            missing_audio=len(missing_audio),
+        )
+
+    @classmethod
+    def import_key_bundle(cls, source: Path) -> KeyImportResult:
+        """Validate a single-key archive and restore its portable files."""
+        source = Path(source).expanduser()
+        try:
+            archive = zipfile.ZipFile(source, mode="r")
+        except (OSError, zipfile.BadZipFile) as error:
+            raise ValueError("This is not a valid LinuxStreamDeck key export") from error
+
+        with archive:
+            manifest = cls._read_bundle_json(
+                archive, EXPORT_MANIFEST_FILE, MAX_CONFIG_BYTES
+            )
+            if manifest.get("format") != KEY_EXPORT_FORMAT:
+                raise ValueError("This file does not contain a single exported key")
+            if manifest.get("version") != KEY_EXPORT_VERSION:
+                raise ValueError("This LinuxStreamDeck key export version is not supported")
+            key = KeyConfig.from_dict(
+                cls._read_bundle_json(archive, KEY_EXPORT_FILE, MAX_CONFIG_BYTES)
+            )
+            icon_payloads: dict[Path, bytes] = {}
+            audio_payloads: dict[Path, bytes] = {}
+            restored_members: dict[str, Path] = {}
+            restored_audio_members: dict[str, Path] = {}
+            total_icon_bytes = 0
+            total_audio_bytes = 0
+
+            for field_name in ("icon", "icon_off"):
+                ref = getattr(key, field_name)
+                if not ref.startswith(EXPORT_ICON_PREFIX):
+                    continue
+                archive_name = ref.removeprefix(EXPORT_ICON_PREFIX)
+                if archive_name in restored_members:
+                    setattr(key, field_name, str(restored_members[archive_name]))
+                    continue
+                cls._validate_icon_member(archive_name)
+                data = cls._read_bundle_member(archive, archive_name, MAX_ICON_BYTES)
+                total_icon_bytes += len(data)
+                if total_icon_bytes > MAX_TOTAL_ICON_BYTES:
+                    raise ValueError("The exported icon files are too large")
+                suffix = cls._safe_icon_suffix(PurePosixPath(archive_name).suffix)
+                digest = hashlib.sha256(data).hexdigest()
+                target = CONFIG_DIR / "imported-icons" / f"{digest}{suffix}"
+                icon_payloads[target] = data
+                restored_members[archive_name] = target
+                setattr(key, field_name, str(target))
+
+            for action, params in cls._action_params(key):
+                parameter = _ACTION_AUDIO_PARAMETERS.get(action)
+                if parameter is None:
+                    continue
+                ref = str(params.get(parameter, "") or "")
+                if not ref.startswith(EXPORT_AUDIO_PREFIX):
+                    continue
+                archive_name = ref.removeprefix(EXPORT_AUDIO_PREFIX)
+                if archive_name in restored_audio_members:
+                    params[parameter] = str(restored_audio_members[archive_name])
+                    continue
+                cls._validate_audio_member(archive_name)
+                data = cls._read_bundle_member(archive, archive_name, MAX_AUDIO_BYTES)
+                total_audio_bytes += len(data)
+                if total_audio_bytes > MAX_TOTAL_AUDIO_BYTES:
+                    raise ValueError("The exported audio files are too large")
+                suffix = PurePosixPath(archive_name).suffix.lower()
+                digest = hashlib.sha256(data).hexdigest()
+                target = CONFIG_DIR / "imported-audio" / f"{digest}{suffix}"
+                audio_payloads[target] = data
+                restored_audio_members[archive_name] = target
+                params[parameter] = str(target)
+
+        for target, data in (*icon_payloads.items(), *audio_payloads.items()):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            cls._write_imported_file(target, data)
+        return KeyImportResult(
+            key=key,
+            restored_icons=len(icon_payloads),
+            restored_audio=len(audio_payloads),
+        )
+
     def _key_configs(self):
         for profile in self.profiles:
             for page in profile.pages:
@@ -863,6 +1050,29 @@ class Config:
         ):
             return suffix
         return ".img"
+
+    @staticmethod
+    def _write_bundle_archive(destination: Path, members: dict[str, bytes]) -> None:
+        """Write a portable archive atomically, replacing any existing file."""
+        destination = Path(destination).expanduser()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.NamedTemporaryFile(
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            dir=destination.parent,
+            delete=False,
+        )
+        temporary_path = Path(temporary.name)
+        temporary.close()
+        try:
+            with zipfile.ZipFile(
+                temporary_path, mode="w", compression=zipfile.ZIP_DEFLATED
+            ) as archive:
+                for archive_name, data in members.items():
+                    archive.writestr(archive_name, data)
+            temporary_path.replace(destination)
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
     @staticmethod
     def _write_imported_file(target: Path, data: bytes) -> None:

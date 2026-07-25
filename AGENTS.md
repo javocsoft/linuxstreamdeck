@@ -105,7 +105,8 @@ linuxstreamdeck/
 │   │                  `dispatcher` (GLib.idle_add) marshals callbacks to the UI thread.
 │   ├── config.py      Data model + atomic user-only JSON persistence: Config →
 │   │                  Profile → Page → KeyConfig (+ OBS/AI/deck-display settings).
-│   │                  Legacy action/profile migration, backup and `.lsdconfig` I/O.
+│   │                  Legacy action/profile migration, backup, `.lsdconfig` and
+│   │                  single-key `.lsdkey` I/O.
 │   ├── actions.py     Action framework: `Action` base, declarative `Param`,
 │   │                  `ActionContext`, global `REGISTRY`, `@register`, `by_category`.
 │   ├── audio.py       Blocking local playback via GStreamer playbin; shutdown-aware.
@@ -121,7 +122,8 @@ linuxstreamdeck/
 │   ├── screensaver.py Pure-Pillow coordinated full-deck animation renderer.
 │   ├── startup_animation.py 33-frame offscreen physical-deck wake/title sequence.
 │   └── renderer.py    `compose()` — builds each configured key PNG with Pillow
-│                      (bg, icon or centered value, label, badge, lighting, running halo).
+│                      (bg, icon or centered value, sized label, badge, lighting,
+│                      running halo).
 ├── obs/
 │   ├── client.py      OBSClient: obs-websocket v5 connection, auto-reconnect,
 │   │                  thread-safe requests, re-emits OBS events onto the bus.
@@ -130,7 +132,8 @@ linuxstreamdeck/
 ├── ui/
 │   ├── window.py      MainWindow: key grid (virtual deck), header (profiles,
 │   │                  import/export, pages, deck display, brightness, OBS, About),
-│   │                  explicit saver activity, DnD, copy/paste, unsaved guard, status bar.
+│   │                  explicit saver activity, DnD, copy/paste, single-key
+│   │                  export/import, unsaved guard, status bar.
 │   ├── editor.py      EditorPanel: key editor, canonical draft/baseline and key type.
 │   ├── ai_assistant.py OpenAI/Claude proposal dialog and explicit editor handoff.
 │   ├── steps.py       StepEditor / StepList / AppearanceBox — reused by the editor
@@ -414,6 +417,24 @@ loads it into the existing editor, reviews it, and presses **Save** to persist i
 - `multi_toggle` (`KIND_TOGGLE`) — two lists (`steps_on` / `steps_off`) with an
   ON/OFF state; the state is keyed by (profile, page, key) in the controller.
 
+### Key label font size
+
+`KeyConfig.font_size` and `KeyConfig.font_size_off` hold one of the IDs in
+`KEY_FONT_SIZE_CHOICES`: `""` / **Automatic**, `xs` / **Extra small**, `s` /
+**Small**, `m` / **Medium**, `l` / **Large**, `xl` / **Extra large**. Like an
+empty `icon`, the empty value is an inheritance marker, not a missing value:
+`renderer._label_font_size()` then derives the size from the key height
+(`max(10, h // 6)`, the historical automatic size). Every named ID is a divisor
+of the key height in `FONT_SIZE_DIVISORS`, so a chosen size keeps its proportion
+on any key geometry, and no resolved size drops below `MIN_FONT_SIZE`.
+
+`KeyConfig.from_dict()` normalizes the stored value and falls back to automatic
+for anything unknown, so old configurations and hand-edited files stay loadable.
+The controller passes `font_size` through every `_key_spec` variant; a toggle's
+OFF state uses `font_size_off or font_size`, mirroring how `label_off` falls back
+to `label`. The badge keeps its own fixed size, and because the label box grows
+with the font, the icon and any centered clock value shrink to fit.
+
 ### Running key feedback and workers
 
 Multi and multi-toggle invocations, plus single actions with
@@ -518,6 +539,28 @@ OBS password must be entered once after moving to a new computer. The controller
 applies imported normal brightness, screen-saver and clean-exit display settings
 immediately before reconnecting OBS.
 
+### Portable single-key bundles
+
+The key context menu exports one key as a `.lsdkey` ZIP through
+`Config.export_key_bundle()` and reads it back with `Config.import_key_bundle()`.
+Both are classmethods that reuse the configuration bundle's archive layout,
+`EXPORT_ICON_PREFIX` / `EXPORT_AUDIO_PREFIX` rewriting, size limits, member
+validation and atomic `_write_bundle_archive()` writer. The manifest carries its
+own `KEY_EXPORT_FORMAT` (`linuxstreamdeck-key`) and `KEY_EXPORT_VERSION`, so a
+full `.lsdconfig` cannot be imported as a key and a `.lsdkey` cannot be imported
+as a configuration; the key itself lives in `key.json`.
+
+Export never mutates the source `KeyConfig` (it works on an `asdict()` copy),
+bundles only that key's custom icons plus `sys.audio` / `sys.timer` audio,
+deduplicates identical audio across both actions and reports missing files as
+warnings instead of failing. Import validates paths and sizes before writing,
+restores assets below `CONFIG_DIR/imported-icons` and `CONFIG_DIR/imported-audio`,
+runs the value through `KeyConfig.from_dict()` so legacy `nav.page` actions still
+migrate, and returns the key without saving. `MainWindow` then applies it through
+`DeckController.paste_key()`, which resets that position's toggle/clock state and
+persists the configuration. Replacing the key currently open in the editor goes
+through the unsaved-change guard with `offer_save=False`, exactly like paste.
+
 ---
 
 ## 4. Conventions
@@ -550,7 +593,10 @@ hard-to-diagnose failures.
    `DecompressionBombWarning` + blank keys). Configured-key glyph centering uses
    `textbbox` + ink-bbox recenter; the startup title centers each character from
    its text bounding box within one hardware-key cell, and the screen-saver title
-   uses the same BASIC-only discipline.
+   uses the same BASIC-only discipline. User-selectable label sizes stay bounded
+   for the same reason: keep them expressed as `FONT_SIZE_DIVISORS` of the key
+   height rather than absolute point sizes, so no choice can grow into an
+   oversized mask.
 
 2. **Rendering is not thread-safe → `RENDER_LOCK`.** Pillow/FreeType is not
    thread-safe. Configured keys render on a worker, the screen saver renders on
@@ -619,7 +665,11 @@ hard-to-diagnose failures.
    both actions and restore it only below `CONFIG_DIR/imported-audio`. Bundle the
    supported BMP/JPEG/PNG/WebP custom exit image at most once, enforce its 50 MiB
    limit and restore it only below `CONFIG_DIR/imported-exit-images`. Validate
-   every archive path and size before extraction.
+   every archive path and size before extraction. Single-key `.lsdkey` bundles
+   follow the same rules and must keep their distinct manifest format, so neither
+   bundle type can be imported through the other's entry point. Export must not
+   mutate the `KeyConfig` it is given, and import must not save the
+   configuration itself.
 
 11. **Physical startup must remain exclusive and cancellable.** Generate frames
    offscreen under `RENDER_LOCK`, keep their brightness at or below the configured

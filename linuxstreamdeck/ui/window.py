@@ -336,12 +336,18 @@ class MainWindow(Adw.ApplicationWindow):
         menu.append("Copy", "win.key-copy")
         menu.append("Paste", "win.key-paste")
         menu.append("Clear key", "win.key-clear")
+        portable_menu = Gio.Menu()
+        portable_menu.append("Export key…", "win.key-export")
+        portable_menu.append("Import key…", "win.key-import")
+        menu.append_section(None, portable_menu)
         self._key_popover = Gtk.PopoverMenu.new_from_model(menu)
 
         self._key_actions = {}
         for name, cb in (("key-copy", self._copy_selected),
                          ("key-paste", self._paste_selected),
                          ("key-clear", self._clear_selected),
+                         ("key-export", self._export_selected),
+                         ("key-import", self._import_selected),
                          ("profile-new", self._new_profile),
                          ("profile-edit", self._edit_profile),
                          ("profile-delete", self._delete_profile),
@@ -774,6 +780,9 @@ class MainWindow(Adw.ApplicationWindow):
         kc = self.app.controller.page.key(index)
         self._key_actions["key-copy"].set_enabled(kc is not None)
         self._key_actions["key-clear"].set_enabled(kc is not None)
+        self._key_actions["key-export"].set_enabled(
+            kc is not None and not kc.is_empty()
+        )
         self._key_actions["key-paste"].set_enabled(self._clipboard is not None)
         pop = self._key_popover
         if pop.get_parent() is not None:
@@ -840,6 +849,125 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             clear()
 
+    # --- portable single-key export / import ---
+
+    def _export_key(self, index: int) -> None:
+        kc = self.app.controller.page.key(index)
+        if kc is None or kc.is_empty():
+            self._flash_status("This key has nothing to export")
+            return
+        chooser = Gtk.FileDialog(title=f"Export key {index + 1}")
+        chooser.set_initial_name(f"{self._key_export_name(kc, index)}.lsdkey")
+        chooser.set_default_filter(self._key_file_filter())
+        chooser.save(
+            self, None,
+            lambda dialog, result: self._on_key_export_chosen(dialog, result, kc),
+        )
+
+    def _on_key_export_chosen(self, chooser, result, kc) -> None:
+        try:
+            file = chooser.save_finish(result)
+        except Exception:
+            return
+        path = file.get_path() if file is not None else None
+        if not path:
+            self._show_configuration_error(
+                "Export failed", "Choose a local destination for the exported key."
+            )
+            return
+        destination = Path(path)
+        if destination.suffix.lower() != ".lsdkey":
+            destination = Path(f"{destination}.lsdkey")
+        try:
+            exported = self.app.config.export_key_bundle(kc, destination)
+        except Exception as error:
+            log.exception("Could not export the key")
+            self._show_configuration_error("Export failed", str(error))
+            return
+        if exported.missing_icons or exported.missing_audio:
+            warnings = []
+            if exported.missing_icons:
+                warnings.append(
+                    f"{exported.missing_icons} custom icon file(s) could not "
+                    "be found or included."
+                )
+            if exported.missing_audio:
+                warnings.append(
+                    f"{exported.missing_audio} audio file(s) could not be "
+                    "found or included."
+                )
+            self._show_configuration_error(
+                "Key exported with warnings",
+                f"Saved to {destination}.\n\n" + "\n".join(warnings),
+            )
+        else:
+            self._flash_status(f"Key exported to {destination.name}")
+
+    def _import_key(self, index: int) -> None:
+        chooser = Gtk.FileDialog(title=f"Import into key {index + 1}")
+        chooser.set_default_filter(self._key_file_filter())
+        chooser.open(
+            self, None,
+            lambda dialog, result: self._on_key_import_chosen(dialog, result, index),
+        )
+
+    def _on_key_import_chosen(self, chooser, result, index: int) -> None:
+        try:
+            file = chooser.open_finish(result)
+        except Exception:
+            return
+        path = file.get_path() if file is not None else None
+        if not path:
+            self._show_configuration_error(
+                "Import failed", "Choose a local LinuxStreamDeck key export."
+            )
+            return
+        try:
+            imported = self.app.config.import_key_bundle(Path(path))
+        except Exception as error:
+            log.exception("Could not import the key")
+            self._show_configuration_error("Import failed", str(error))
+            return
+
+        def apply() -> None:
+            self.app.controller.paste_key(index, imported.key)
+            if self.selected == index:
+                self.editor.load(index)
+            text = f"Imported {Path(path).name} into key {index + 1}"
+            restored = []
+            if imported.restored_icons:
+                restored.append(f"{imported.restored_icons} custom icon(s)")
+            if imported.restored_audio:
+                restored.append(f"{imported.restored_audio} audio file(s)")
+            if restored:
+                text += f"; restored {', '.join(restored)}"
+            self._flash_status(text)
+
+        if self.selected == index:
+            self._confirm_unsaved_changes(
+                f"replacing Key {index + 1} with the imported key",
+                apply,
+                offer_save=False,
+            )
+        else:
+            apply()
+
+    @staticmethod
+    def _key_export_name(kc, index: int) -> str:
+        """Readable default file name built from the key label."""
+        allowed = [c if c.isalnum() or c in "-_" else "-" for c in kc.label.strip()]
+        name = "".join(allowed).strip("-").lower()
+        while "--" in name:
+            name = name.replace("--", "-")
+        return name or f"key-{index + 1}"
+
+    @staticmethod
+    def _key_file_filter() -> Gtk.FileFilter:
+        file_filter = Gtk.FileFilter()
+        file_filter.set_name("LinuxStreamDeck key")
+        file_filter.add_pattern("*.lsdkey")
+        return file_filter
+
     def _copy_selected(self):
         if self.selected is not None:
             self._copy_key(self.selected)
@@ -851,6 +979,14 @@ class MainWindow(Adw.ApplicationWindow):
     def _clear_selected(self):
         if self.selected is not None:
             self._clear_key(self.selected)
+
+    def _export_selected(self):
+        if self.selected is not None:
+            self._export_key(self.selected)
+
+    def _import_selected(self):
+        if self.selected is not None:
+            self._import_key(self.selected)
 
     def _on_page_selected(self, dropdown, _pspec) -> None:
         if self._updating_pages:

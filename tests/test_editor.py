@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from linuxstreamdeck import basic_actions as _basic_actions  # noqa: F401
-from linuxstreamdeck.core.config import ActionStep
+from linuxstreamdeck.core.config import ActionStep, KeyConfig
 from linuxstreamdeck.obs import actions as _obs_actions  # noqa: F401
 from linuxstreamdeck.ui.editor import EditorPanel
 from linuxstreamdeck.ui.window import MainWindow
@@ -216,6 +216,28 @@ class KeyDragTests(unittest.TestCase):
         self.assertFalse(foreign)
         self.assertFalse(stale)
         self.assertEqual(moves, [])
+
+
+class KeyExportNameTests(unittest.TestCase):
+    @staticmethod
+    def _name(label: str, index: int = 4) -> str:
+        return MainWindow._key_export_name(KeyConfig(label=label), index)
+
+    def test_label_becomes_a_readable_file_name(self) -> None:
+        self.assertEqual(self._name("Start Streaming"), "start-streaming")
+
+    def test_unsafe_characters_are_replaced(self) -> None:
+        self.assertEqual(self._name("Mute / Mic!"), "mute-mic")
+
+    def test_separators_are_collapsed_and_trimmed(self) -> None:
+        self.assertEqual(self._name("  Rec  ***  now  "), "rec-now")
+
+    def test_dashes_and_underscores_are_kept(self) -> None:
+        self.assertEqual(self._name("Mute-Mic_1"), "mute-mic_1")
+
+    def test_a_key_without_a_usable_label_falls_back_to_its_position(self) -> None:
+        self.assertEqual(self._name(""), "key-5")
+        self.assertEqual(self._name("***"), "key-5")
 
 
 if __name__ == "__main__":

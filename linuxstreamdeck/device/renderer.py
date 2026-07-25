@@ -34,6 +34,19 @@ ACTIVE_ACCENT = 0.12
 BUSY_BG_BLEND = (0.035, 0.07)
 BUSY_HALO_BLEND = (0.24, 0.38)
 
+# Label font size. Each named scale is a divisor of the key height, so a chosen
+# size keeps its proportion on any key geometry. "Medium" matches the automatic
+# size used when the key does not select one.
+AUTO_FONT_DIVISOR = 6.0
+FONT_SIZE_DIVISORS = {
+    "xs": 9.0,
+    "s": 7.2,
+    "m": 6.0,
+    "l": 5.0,
+    "xl": 4.2,
+}
+MIN_FONT_SIZE = 8
+
 
 def _rgb(color) -> tuple[int, int, int]:
     """Parse a '#rrggbb' (or '#rgb') string into an (r, g, b) tuple."""
@@ -83,7 +96,7 @@ _FONT_CANDIDATES = [
 ]
 
 
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=32)
 def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     for path in _FONT_CANDIDATES:
         if Path(path).exists():
@@ -93,6 +106,14 @@ def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
             except Exception:
                 continue
     return ImageFont.load_default()
+
+
+def _label_font_size(height: int, font_size: str) -> int:
+    """Resolve a named label size into pixels for this key height."""
+    divisor = FONT_SIZE_DIVISORS.get(str(font_size or "").lower())
+    if divisor is None:
+        return max(10, int(height // AUTO_FONT_DIVISOR))
+    return max(MIN_FONT_SIZE, int(height / divisor))
 
 
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
@@ -145,6 +166,7 @@ def compose(
     badge: str = "",
     center_text: str = "",
     icon_color: str = "#ffffff",
+    font_size: str = "",
 ) -> Image.Image:
     w, h = size
     # when active, the whole key is softly lit instead of getting a border
@@ -157,10 +179,10 @@ def compose(
         img = Image.new("RGB", size, base_bg)
         draw = ImageDraw.Draw(img)
 
-        font_size = max(10, h // 6)
-        font = _font(font_size)
+        label_size = _label_font_size(h, font_size)
+        font = _font(label_size)
         label_lines = _wrap(draw, label, font, w - 8) if label else []
-        label_height = len(label_lines) * (font_size + 2)
+        label_height = len(label_lines) * (label_size + 2)
 
         # Dynamic values such as clocks replace the icon and use the full
         # available width. Otherwise show the configured or built-in icon.
@@ -201,7 +223,7 @@ def compose(
         for line in label_lines:
             tw = draw.textlength(line, font=font)
             draw.text(((w - tw) // 2, y), line, font=font, fill=TEXT_COLOR)
-            y += font_size + 2
+            y += label_size + 2
 
         # state badge (top-right corner)
         if badge:

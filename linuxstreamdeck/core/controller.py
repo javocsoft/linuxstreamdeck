@@ -714,7 +714,8 @@ class DeckController:
             icon = kc.icon or self._first_step_icon(kc.steps) or "mdi:playlist-play"
             return {"size": size, "label": kc.label, "icon_path": icon,
                     "bg": kc.bg_color, "busy": busy, "busy_phase": phase,
-                    "badge": "RUN" if busy else "⋯"}
+                    "badge": "RUN" if busy else "⋯",
+                    "font_size": kc.font_size}
         return self._single_spec(index, kc, size)
 
     @staticmethod
@@ -752,6 +753,7 @@ class DeckController:
             "busy_phase": phase,
             "badge": "RUN" if busy else fb.get("badge", ""),
             "center_text": fb.get("display", ""),
+            "font_size": kc.font_size,
         }
 
     def _toggle_spec(self, index: int, kc: KeyConfig, size) -> dict:
@@ -760,12 +762,14 @@ class DeckController:
             icon = kc.icon or self._first_step_icon(kc.steps_on) or "mdi:toggle-switch"
             return {"size": size, "label": kc.label, "icon_path": icon,
                     "bg": kc.bg_color, "active": True, "busy": busy,
-                    "busy_phase": phase, "badge": "RUN" if busy else "ON"}
+                    "busy_phase": phase, "badge": "RUN" if busy else "ON",
+                    "font_size": kc.font_size}
         icon = (kc.icon_off or kc.icon
                 or self._first_step_icon(kc.steps_off) or "mdi:toggle-switch-off-outline")
         return {"size": size, "label": kc.label_off or kc.label, "icon_path": icon,
                 "bg": kc.bg_color_off, "busy": busy, "busy_phase": phase,
-                "badge": "RUN" if busy else "OFF"}
+                "badge": "RUN" if busy else "OFF",
+                "font_size": kc.font_size_off or kc.font_size}
 
     def wait_until_stopped(self, timeout: float) -> bool:
         """Wait for timeout seconds, returning early when shutdown begins."""

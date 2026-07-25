@@ -75,6 +75,12 @@ implemented actions, no guessing. It runs, and it's useful.
 - 💾 **Portable configuration backups** — export or import profiles, pages, keys,
   settings, custom key icons, the custom exit image and referenced playback or
   timer audio in one file.
+- 🔤 **Adjustable label size** — pick the font size drawn on each key, from
+  *Extra small* to *Extra large*, or leave it on *Automatic*. Toggle keys can use
+  a different size for their ON and OFF states.
+- 📤 **Share a single key** — right-click any key to export it as a portable
+  `.lsdkey` file, with its custom icon and audio bundled in, and import it back
+  into any key on any computer.
 - 🔐 **Secure OBS password storage** — the password stays in your desktop keyring,
   never in the configuration file or an export.
 - ✨ **AI-assisted key creation** — describe the key you want, get a locally
@@ -407,6 +413,23 @@ Use the profiles menu (⋮) in the header to choose **Export configuration** or
   accepted. The import keeps this computer's keyring credentials and ignores
   password fields in older exports. When moving to another computer, enter the
   OBS password and any provider API keys again.
+
+### Sharing a single key
+
+Right-click a key in the grid and choose **Export key…** or **Import key…**.
+
+- **Export key** writes a `.lsdkey` ZIP archive with that key alone: its type,
+  actions and parameters, appearance and label size, plus its custom icon and any
+  audio referenced by **Play audio file** or a countdown timer's completion sound.
+  Built-in `mdi:` icons stay as references and identical audio is stored once.
+  The same size limits as a full export apply, and missing files produce a
+  warning instead of failing the export.
+- **Import key** validates the archive and writes it into the key you
+  right-clicked, replacing whatever was there. Bundled icons and audio are
+  restored under `~/.config/linuxstreamdeck/imported-icons/` and
+  `~/.config/linuxstreamdeck/imported-audio/`, with archive paths and sizes
+  validated first. A full `.lsdconfig` export is rejected here, and a `.lsdkey`
+  file is rejected by **Import configuration**.
 
 ## 🗂️ Project structure
 
