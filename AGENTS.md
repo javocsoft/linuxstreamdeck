@@ -901,7 +901,17 @@ hard-to-diagnose failures.
    the press, so plain keys keep their current latency. Never make the virtual
    deck wait out the double-press window; it runs the single-press list directly.
 
-19. **Never fake media or modifier keys.** Media transport goes through MPRIS and
+19. **Opening the deck disturbs the USB bus, and that is not our bug.** hidapi
+   detaches the kernel driver and unbinds the interface, which removes the deck's
+   input node (`eventN`) and, on a hub or dock, can make the whole dock
+   re-enumerate. On a dock that also carries video, the desktop may restart its
+   panel. This was diagnosed once on COSMIC and traced to the dock: connecting
+   the deck directly made it stop. Do not "fix" it in the application or with a
+   `LIBINPUT_IGNORE_DEVICE` udev rule — neither is the cause. When something like
+   this appears, correlate `udevadm monitor` with the affected process's PID, and
+   check how the deck is physically connected before changing any code.
+
+20. **Never fake media or modifier keys.** Media transport goes through MPRIS and
    volume through the session mixer, both of which work unprivileged on Wayland.
    Only genuine application shortcuts use `core/keystrokes.py`, and its backends
    must stay optional: no code path may assume ydotool exists, and a missing
@@ -910,7 +920,7 @@ hard-to-diagnose failures.
    codes to the 0.x binary that Debian and Ubuntu ship fails silently for the
    user.
 
-20. **The clean-exit display must be the final HID state.** Keep
+21. **The clean-exit display must be the final HID state.** Keep
    `device_default` as a firmware reset, `blank` as black tiles followed by
    brightness 0, and `custom` as a validated full-grid center crop written at
    normal configured brightness. Apply it only after device workers have joined

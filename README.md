@@ -183,6 +183,11 @@ sudo ./install-udev.sh
 ```
 </details>
 
+> **Using a USB hub or dock?** Opening the deck detaches its kernel driver and
+> unbinds the USB interface. On a dock that also carries video or network, that
+> can make the dock re-enumerate, and the desktop may briefly restart its panel
+> or flicker. Connecting the Stream Deck straight to the computer avoids it.
+
 <details>
 <summary>Build the <code>.deb</code> yourself</summary>
 
