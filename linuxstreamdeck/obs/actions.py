@@ -142,9 +142,24 @@ class RecordToggle(Action):
     id = "obs.record"
     name = "Record on/off"
     category = CAT_OUTPUT
+    description = (
+        "Start or stop recording. «toggle» switches between the two, so one key "
+        "does both."
+    )
+    params = [
+        Param("mode", "Mode", kind="choice", default="toggle",
+              choices=["toggle", "start", "stop"]),
+    ]
 
     def execute(self, ctx, p):
-        ctx.obs.request("ToggleRecord")
+        # An older key has no mode and toggled, so that stays the default.
+        mode = p.get("mode", "toggle")
+        if mode == "start":
+            ctx.obs.request("StartRecord")
+        elif mode == "stop":
+            ctx.obs.request("StopRecord")
+        else:
+            ctx.obs.request("ToggleRecord")
 
     def feedback(self, ctx, p):
         s = ctx.obs.state
@@ -251,9 +266,23 @@ class MuteToggle(Action):
     id = "obs.mute"
     name = "Mute input"
     category = CAT_AUDIO
-    description = "The key lights up when the input is muted."
+    description = (
+        "The key lights up when the input is muted. The scene only narrows "
+        "the list of inputs to choose from; muting applies to the input "
+        "itself, on every scene."
+    )
     params = [
-        Param("input", "Audio input", choices_source="inputs"),
+        Param(
+            "scene",
+            "Scene (narrows the list below)",
+            choices_source="scenes",
+            default="",
+        ),
+        Param(
+            "input",
+            "Audio input",
+            choices_source="audio_sources_in_scene",
+        ),
         Param("mode", "Mode", kind="choice", default="toggle",
               choices=["toggle", "mute", "unmute"]),
     ]
@@ -278,8 +307,22 @@ class VolumeAdjust(Action):
     id = "obs.volume_adjust"
     name = "Raise/lower volume"
     category = CAT_AUDIO
+    description = (
+        "The scene only narrows the list of inputs to choose from; the "
+        "change applies to the input itself, on every scene."
+    )
     params = [
-        Param("input", "Audio input", choices_source="inputs"),
+        Param(
+            "scene",
+            "Scene (narrows the list below)",
+            choices_source="scenes",
+            default="",
+        ),
+        Param(
+            "input",
+            "Audio input",
+            choices_source="audio_sources_in_scene",
+        ),
         Param("delta_db", "Change (dB, negative lowers)", kind="float", default=3.0),
     ]
 
@@ -295,8 +338,22 @@ class VolumeSet(Action):
     id = "obs.volume_set"
     name = "Set volume"
     category = CAT_AUDIO
+    description = (
+        "The scene only narrows the list of inputs to choose from; the "
+        "change applies to the input itself, on every scene."
+    )
     params = [
-        Param("input", "Audio input", choices_source="inputs"),
+        Param(
+            "scene",
+            "Scene (narrows the list below)",
+            choices_source="scenes",
+            default="",
+        ),
+        Param(
+            "input",
+            "Audio input",
+            choices_source="audio_sources_in_scene",
+        ),
         Param("db", "Volume (dB)", kind="float", default=0.0),
     ]
 

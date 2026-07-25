@@ -8,7 +8,9 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-ClockKey = tuple[int, int, int]
+# Opaque key identity supplied by the controller: (profile, page, folder path,
+# key index). Nothing here interprets it.
+ClockKey = tuple[int, int, tuple[int, ...], int]
 
 KIND_TIMER = "timer"
 KIND_STOPWATCH = "stopwatch"
@@ -201,6 +203,13 @@ class ClockRuntime:
                 self._states[first] = second_state
             if first_state is not None:
                 self._states[second] = first_state
+        self._wakeup.set()
+
+    def discard(self, matches: Callable[[ClockKey], bool]) -> None:
+        """Drop every clock whose key matches, such as one folder's subtree."""
+        with self._lock:
+            for key in [key for key in self._states if matches(key)]:
+                self._states.pop(key, None)
         self._wakeup.set()
 
     def clear(self) -> None:

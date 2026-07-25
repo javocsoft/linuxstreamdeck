@@ -159,14 +159,14 @@ class ControllerActivityTests(unittest.TestCase):
             self.controller.press(0)
 
         submit.assert_not_called()
-        running = self.controller.countdown_snapshot((0, 0, 0), 10)
+        running = self.controller.countdown_snapshot(self.controller._tkey(0), 10)
         self.assertTrue(running.running)
         spec = self.controller._key_spec(0, timer, self.deck.image_size)
         self.assertEqual(spec["center_text"], "00:00:10")
         self.assertTrue(spec["active"])
 
         self.controller.press(0)
-        reset = self.controller.countdown_snapshot((0, 0, 0), 10)
+        reset = self.controller.countdown_snapshot(self.controller._tkey(0), 10)
         self.assertEqual(reset.display, "00:00:10")
         self.assertFalse(reset.running)
 
@@ -181,19 +181,19 @@ class ControllerActivityTests(unittest.TestCase):
 
         self.controller.press(0)
 
-        snapshot = self.controller.countdown_snapshot((0, 0, 0), 10)
+        snapshot = self.controller.countdown_snapshot(self.controller._tkey(0), 10)
         self.assertFalse(snapshot.running)
         self.deck.screensaver_active = False
         self.controller.press(0)
         self.assertTrue(
-            self.controller.countdown_snapshot((0, 0, 0), 10).running
+            self.controller.countdown_snapshot(self.controller._tkey(0), 10).running
         )
 
     def test_resetting_a_finished_timer_stops_its_sound(self) -> None:
         started = threading.Event()
         stopped = threading.Event()
         completion = TimerCompletion(
-            key=(0, 0, 4),
+            key=(0, 0, (), 4),
             token=object(),
             sound_file="/tmp/finished.mp3",
             volume=70,

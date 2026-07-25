@@ -16,7 +16,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from ..core import actions as registry  # noqa: E402
 from ..core.actions import Action, Param, format_duration, parse_duration  # noqa: E402
@@ -35,6 +35,14 @@ CATEGORY_ORDER = [
     "OBS · Sources & Filters", "OBS · Media", "OBS · Advanced",
     "System", "Navigation",
 ]
+
+# Option sources answered locally, without OBS. They are the same ones
+# `_fetch_choices` resolves above its `obs.connected` guard: keep both in sync,
+# or a local dropdown stops filling while OBS is closed.
+LOCAL_CHOICE_SOURCES = frozenset({"pages", "deck_profiles", "applications"})
+
+# Internal drag payload used to reorder the steps of one list.
+_STEP_DRAG_PREFIX = "linuxstreamdeck-step:"
 
 
 def rgba_to_hex(rgba: Gdk.RGBA) -> str:
@@ -138,20 +146,33 @@ class _FileEntry(Gtk.Box):
 # =========================== single-step editor ===========================
 
 class StepEditor(Gtk.Box):
-    def __init__(self, app, on_change=None) -> None:
+    def __init__(self, app, on_change=None, show_label: bool = False) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.app = app
         self._on_change = on_change          # called when the chosen action changes
         self._param_widgets: dict[str, tuple[Param, Gtk.Widget]] = {}
-        # id of the notify::selected handler of each dependent dropdown, so it
-        # can be blocked while repopulating (avoids signal loops)
-        self._dep_handlers: dict[str, int] = {}
+        # The row holding each parameter widget, so a dependent parameter can be
+        # rebuilt in place when its options change (see _repopulate).
+        self._param_rows: dict[str, Gtk.Box] = {}
         self._building = False
 
         cats = registry.by_category()
         self._cat_names = [c for c in CATEGORY_ORDER if c in cats] + [
             c for c in cats if c not in CATEGORY_ORDER
         ]
+
+        # Only steps inside a list can be named: a single-action key has no list
+        # entry to name, and its own label already lives in Appearance.
+        self.label_entry: Gtk.Entry | None = None
+        if show_label:
+            self.label_entry = Gtk.Entry(
+                placeholder_text="Optional, shown instead of the action name"
+            )
+            self.label_entry.set_tooltip_text(
+                "Name this step so it is easy to recognize in the list"
+            )
+            self.label_entry.connect("changed", self._on_step_label_changed)
+            self.append(_row("Step name", self.label_entry))
 
         self.cat_dd = Gtk.DropDown.new_from_strings(self._cat_names)
         self.append(_row("Category", self.cat_dd))
@@ -170,6 +191,8 @@ class StepEditor(Gtk.Box):
 
     def load(self, step: ActionStep) -> None:
         self._building = True
+        if self.label_entry is not None:
+            self.label_entry.set_text(step.label)
         action = registry.get(step.action)
         if action is not None and action.category in self._cat_names:
             self.cat_dd.set_selected(self._cat_names.index(action.category))
@@ -186,11 +209,23 @@ class StepEditor(Gtk.Box):
             name: self._widget_value(param, widget)
             for name, (param, widget) in self._param_widgets.items()
         }
-        return ActionStep(action=action.id, params=params)
+        return ActionStep(action=action.id, params=params, label=self.step_label())
+
+    def step_label(self) -> str:
+        return self.label_entry.get_text().strip() if self.label_entry else ""
 
     def action_name(self) -> str:
         a = self._current_action()
         return a.name if a else "No action"
+
+    def display_name(self) -> str:
+        """What identifies this step in a list: its name, or its action."""
+        return self.step_label() or self.action_name()
+
+    def _on_step_label_changed(self, *_a) -> None:
+        # Renaming updates the list entry as it is typed.
+        if not self._building and self._on_change:
+            self._on_change()
 
     # ---------- selection ----------
 
@@ -229,7 +264,7 @@ class StepEditor(Gtk.Box):
     def _build_params(self, values: dict) -> None:
         _clear(self.params_box)
         self._param_widgets.clear()
-        self._dep_handlers.clear()
+        self._param_rows.clear()
         action = self._current_action()
         if action is None:
             self.desc.set_visible(False)
@@ -238,18 +273,20 @@ class StepEditor(Gtk.Box):
         self.desc.set_visible(bool(action.description))
         for param in action.params:
             widget = self._param_widget(param, values.get(param.name))
+            row = _row(param.label, widget)
             self._param_widgets[param.name] = (param, widget)
-            self.params_box.append(_row(param.label, widget))
+            self._param_rows[param.name] = row
+            self.params_box.append(row)
 
-    def _param_widget(self, param: Param, value) -> Gtk.Widget:
+    def _param_widget(
+        self, param: Param, value, keep_unknown: bool = True
+    ) -> Gtk.Widget:
         if param.kind == "choice":
             dd = self._choice_dd(param.choices, value or param.default)
             if param.name == "preset":
                 # Picking a preset writes its shortcut into the editable field,
                 # which the user is then free to change.
-                self._dep_handlers["preset"] = dd.connect(
-                    "notify::selected", self._on_preset_changed
-                )
+                dd.connect("notify::selected", self._on_preset_changed)
             return dd
         if param.kind in ("duration", "optional_duration"):
             return self._duration_entry(
@@ -272,35 +309,46 @@ class StepEditor(Gtk.Box):
             return Gtk.SpinButton(adjustment=adj, digits=digits)
         if param.choices_source:
             options = self._fetch_choices(param.choices_source)
-            if options:
-                if value and value not in options:
-                    options.insert(0, value)
+            # A value already stored on the key stays selectable even when OBS
+            # no longer reports it, so opening a key never silently drops it.
+            if keep_unknown and value and value not in options:
+                options.insert(0, value)
+            if options or self._choices_known(param.choices_source):
                 labels, values = _display_options(param.choices_source, options)
                 dd = self._choice_dd(labels, _label_for(values, value))
                 # What the user reads is not always what OBS needs; remember the
                 # mapping so _widget_value can give back the stored value.
                 dd._value_map = values
                 if param.name == "scene":
-                    self._dep_handlers["scene"] = dd.connect(
-                        "notify::selected", self._on_scene_changed
-                    )
+                    dd.connect("notify::selected", self._on_scene_changed)
                 elif param.name == "source":
-                    self._dep_handlers["source"] = dd.connect(
-                        "notify::selected", self._on_source_changed
-                    )
+                    dd.connect("notify::selected", self._on_source_changed)
                 return dd
         return Gtk.Entry(text=str(value if value is not None else param.default or ""))
+
+    def _choices_known(self, source: str) -> bool:
+        """Whether an empty option list is an answer or just missing data.
+
+        With OBS connected, "no options" really means there is nothing to pick —
+        an empty scene has no sources — and the parameter stays a dropdown that
+        fills in as soon as its parent changes. With OBS unreachable the list
+        says nothing at all, so it falls back to a text field that can still be
+        filled in by hand.
+        """
+        return source in LOCAL_CHOICE_SOURCES or bool(self.app.obs.connected)
 
     # When the SCENE changes, the source list is repopulated (and, in cascade,
     # the filter list). When the SOURCE changes, only the filter list is
     # repopulated. The dropdown that triggered the change is never repopulated,
-    # and its handler is blocked during repopulation: a signal loop is impossible.
+    # and a rebuilt dropdown only connects its handler after its selection is
+    # set, so a signal loop is impossible.
 
     def _on_scene_changed(self, *_a) -> None:
         if self._building:
             return
         log.debug("[editor] scene changed → repopulating sources/filters")
         self._repopulate("sources_in_scene")
+        self._repopulate("audio_sources_in_scene")
         self._repopulate("filters_of_source")
         if self._on_change:
             self._on_change()
@@ -331,22 +379,25 @@ class StepEditor(Gtk.Box):
             self._on_change()
 
     def _repopulate(self, choices_source: str) -> None:
+        """Rebuild the parameters whose options depend on another parameter.
+
+        The widget itself may have to change kind, not just its contents: a
+        dependent list that was empty when the step was built is a plain text
+        field, and it has to become a dropdown as soon as its parent offers
+        options. Updating only the model left that field empty for good, so
+        picking a scene whose sources appeared later showed nothing.
+        """
         for name, (param, widget) in list(self._param_widgets.items()):
-            if param.choices_source != choices_source or not isinstance(widget, Gtk.DropDown):
+            row = self._param_rows.get(name)
+            if param.choices_source != choices_source or row is None:
                 continue
-            options = self._fetch_choices(choices_source)
+            # A value that belonged to the previous parent is not an option of
+            # the new one, so it is deliberately not carried over.
             current = self._widget_value(param, widget)
-            labels, values = _display_options(choices_source, options)
-            hid = self._dep_handlers.get(name)
-            if hid is not None:
-                widget.handler_block(hid)          # avoids reentry via notify::selected
-            widget.set_model(Gtk.StringList.new(labels))
-            widget._value_map = values
-            selected = _label_for(values, current)
-            if selected in labels:
-                widget.set_selected(labels.index(selected))
-            if hid is not None:
-                widget.handler_unblock(hid)
+            replacement = self._param_widget(param, current, keep_unknown=False)
+            row.remove(widget)
+            row.append(replacement)
+            self._param_widgets[name] = (param, replacement)
 
     def _fetch_choices(self, source: str) -> list[str]:
         import threading
@@ -378,6 +429,10 @@ class StepEditor(Gtk.Box):
                 result = table[source]()
             elif source == "sources_in_scene":
                 result = obs.get_sources_in_scene(self._sibling_value("scene"))
+            elif source == "audio_sources_in_scene":
+                result = obs.get_audio_sources_in_scene(
+                    self._sibling_value("scene")
+                )
             elif source == "filters_of_source":
                 src = self._sibling_value("source")
                 result = obs.get_filters_of_source(src) if src else []
@@ -460,6 +515,8 @@ class StepList(Gtk.Box):
         self.app = app
         self._on_change = on_change
         self._editors: list[StepEditor] = []
+        self._drag_step: int | None = None
+        self._drop_step: int | None = None
 
         self._list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.append(self._list_box)
@@ -501,7 +558,7 @@ class StepList(Gtk.Box):
         return icon
 
     def _add(self, step: ActionStep, expand: bool, rebuild: bool = True) -> None:
-        editor = StepEditor(self.app)
+        editor = StepEditor(self.app, show_label=True)
         editor.load(step)
         editor._on_change = self._editors_changed
         editor._want_expand = expand  # type: ignore[attr-defined]
@@ -509,18 +566,129 @@ class StepList(Gtk.Box):
         if rebuild:
             self._rebuild()
             self._notify_change()
+            if expand:
+                self._reveal(editor)
+
+    def _duplicate(self, index: int) -> None:
+        """Copy a step to the end of the list, as a base for the next one."""
+        if not 0 <= index < len(self._editors):
+            return
+        self._add(self._editors[index].get_step(), expand=True)
 
     def _rebuild(self) -> None:
+        # Rebuilding recreates every expander, so what the user opened or closed
+        # by hand has to be read back first. Without this, adding a step
+        # restored the state each row had when it was created, silently
+        # reopening rows the user had collapsed.
+        self._remember_expansion()
+        # Every editor is about to be wrapped in a fresh expander, so detach it
+        # from the old one explicitly. Letting that expander be garbage
+        # collected instead only works while nothing else holds it, and a
+        # pending reveal does exactly that.
+        for editor in self._editors:
+            if (parent := editor.get_parent()) is not None:
+                parent.remove(editor)
         _clear(self._list_box)
         for i, editor in enumerate(self._editors):
             self._list_box.append(self._wrap(i, editor))
 
+    def _remember_expansion(self) -> None:
+        for editor in self._editors:
+            expander = getattr(editor, "_expander", None)
+            if expander is not None:
+                editor._want_expand = expander.get_expanded()
+
+    def _reveal(self, editor: StepEditor) -> None:
+        """Scroll a newly added step into view once the layout has settled."""
+        GLib.idle_add(
+            self._scroll_into_view, editor, priority=GLib.PRIORITY_LOW
+        )
+
+    def _rebuild_keeping_scroll(self) -> None:
+        """Rebuild without losing the reader's place.
+
+        Clearing the list collapses its height, so the scrolled window clamps
+        its adjustment to zero and reordering a step jumped back to the top.
+        The offset is restored on a low-priority idle, after the new rows have
+        been measured.
+        """
+        offset = self._scroll_offset()
+        self._rebuild()
+        if offset is not None:
+            GLib.idle_add(
+                self._apply_scroll, offset, priority=GLib.PRIORITY_LOW
+            )
+
+    def _adjustment(self) -> Gtk.Adjustment | None:
+        scroller = self.get_ancestor(Gtk.ScrolledWindow)
+        return scroller.get_vadjustment() if scroller is not None else None
+
+    def _scroll_offset(self) -> float | None:
+        adjustment = self._adjustment()
+        return adjustment.get_value() if adjustment is not None else None
+
+    def _apply_scroll(self, offset: float) -> bool:
+        adjustment = self._adjustment()
+        if adjustment is None:
+            return False
+        adjustment.set_value(
+            max(
+                adjustment.get_lower(),
+                min(offset, adjustment.get_upper() - adjustment.get_page_size()),
+            )
+        )
+        return False
+
+    def _scroll_into_view(self, editor: StepEditor) -> bool:
+        # Resolved late on purpose: another rebuild in the meantime gives the
+        # step a different expander, and that is the one to scroll to.
+        widget = getattr(editor, "_expander", None)
+        scroller = self.get_ancestor(Gtk.ScrolledWindow)
+        if widget is None or scroller is None:
+            return False
+        found, bounds = widget.compute_bounds(scroller)
+        if not found:
+            return False
+        # compute_bounds is relative to the visible area, so the offset adds to
+        # where the view already is.
+        offset = self._scroll_offset()
+        if offset is None:
+            return False
+        return self._apply_scroll(offset + bounds.get_y())
+
     def _wrap(self, i: int, editor: StepEditor) -> Gtk.Expander:
-        exp = Gtk.Expander(label=f"{i + 1}. {editor.action_name()}")
+        exp = Gtk.Expander()
         exp.set_expanded(getattr(editor, "_want_expand", False))
         editor._expander = exp  # type: ignore[attr-defined]
+        # The controls live in the expander's own title, so reordering, copying
+        # or removing a step never means opening it first.
+        exp.set_label_widget(self._header(i, editor))
+        exp.add_css_class("step-row")
+        self._disable_hover_expand(exp)
+        self._add_row_dnd(exp, i)
 
-        toolbar = Gtk.Box(spacing=4, margin_bottom=6)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                          margin_start=8, margin_top=4, margin_bottom=6)
+        content.append(editor)
+        exp.set_child(content)
+        return exp
+
+    def _header(self, i: int, editor: StepEditor) -> Gtk.Box:
+        header = Gtk.Box(spacing=4, hexpand=True)
+        handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
+        handle.set_tooltip_text("Drag to reorder")
+        handle.add_css_class("dim-label")
+        header.append(handle)
+
+        label = Gtk.Label(
+            label=f"{i + 1}. {editor.display_name()}",
+            xalign=0,
+            hexpand=True,
+            ellipsize=Pango.EllipsizeMode.END,
+        )
+        editor._title = label  # type: ignore[attr-defined]
+        header.append(label)
+
         up = Gtk.Button.new_from_icon_name("go-up-symbolic")
         up.set_tooltip_text("Move up")
         up.set_sensitive(i > 0)
@@ -529,39 +697,182 @@ class StepList(Gtk.Box):
         down.set_tooltip_text("Move down")
         down.set_sensitive(i < len(self._editors) - 1)
         down.connect("clicked", lambda _b: self._move(i, +1))
+        duplicate = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+        duplicate.set_tooltip_text("Duplicate this action at the end of the list")
+        duplicate.connect("clicked", lambda _b: self._duplicate(i))
         delete = Gtk.Button(child=self._delete_icon())
         delete.set_tooltip_text("Remove action")
-        delete.add_css_class("destructive-action")
+        # Flat like its neighbours, but red: "destructive-action" paints a solid
+        # red background that a flat button drops, which left the icon in the
+        # normal text color.
+        delete.add_css_class("step-remove")
         delete.connect("clicked", lambda _b: self._delete(i))
-        for b in (up, down, delete):
-            toolbar.append(b)
+        for button in (up, down, duplicate, delete):
+            button.add_css_class("flat")
+            header.append(button)
+        # Kept so focus can be handed to the replacement after a rebuild.
+        editor._controls = {  # type: ignore[attr-defined]
+            "up": up, "down": down, "duplicate": duplicate, "delete": delete,
+        }
+        return header
 
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
-                          margin_start=8, margin_top=4, margin_bottom=6)
-        content.append(toolbar)
-        content.append(editor)
-        exp.set_child(content)
-        return exp
+    @staticmethod
+    def _disable_hover_expand(row: Gtk.Expander) -> None:
+        """Stop a row from opening itself while a step is dragged over it.
+
+        GtkExpander installs its own GtkDropControllerMotion that expands after
+        a short hover during any drag, which is meant for tree views. Here the
+        drag is a reorder, so the row underneath must stay exactly as it is.
+        """
+        for controller in list(row.observe_controllers()):
+            if isinstance(controller, Gtk.DropControllerMotion):
+                row.remove_controller(controller)
+
+    # --- drag & drop reordering ---
+
+    def _add_row_dnd(self, row: Gtk.Expander, i: int) -> None:
+        """One source/target pair per row, in the bubble phase.
+
+        Bubble rather than capture, so the buttons in the title and the
+        expander's own toggle keep their clicks; only a real drag reorders.
+        """
+        drag = Gtk.DragSource()
+        drag.set_actions(Gdk.DragAction.MOVE)
+        drag.set_button(Gdk.BUTTON_PRIMARY)
+        drag.connect("prepare", self._on_step_drag_prepare, i)
+        drag.connect("drag-begin", self._on_step_drag_begin, i)
+        drag.connect("drag-end", lambda *_a: self._clear_step_drag_feedback())
+        row.add_controller(drag)
+
+        drop = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+        drop.set_preload(True)
+        drop.connect("enter", self._on_step_drag_motion, i)
+        drop.connect("motion", self._on_step_drag_motion, i)
+        drop.connect("leave", lambda *_a: self._set_step_drop_row(None))
+        drop.connect("drop", self._on_step_drop, i)
+        row.add_controller(drop)
+
+    def _on_step_drag_prepare(self, _source, _x, _y, i: int):
+        self._drag_step = i
+        return Gdk.ContentProvider.new_for_value(
+            GObject.Value(GObject.TYPE_STRING, f"{_STEP_DRAG_PREFIX}{i}")
+        )
+
+    def _on_step_drag_begin(self, source, _drag, i: int) -> None:
+        if 0 <= i < len(self._editors):
+            expander = getattr(self._editors[i], "_expander", None)
+            if expander is not None:
+                expander.add_css_class("drag-source")
+                source.set_icon(Gtk.WidgetPaintable.new(expander), 0, 0)
+
+    def _on_step_drag_motion(self, _target, *args):
+        destination = args[-1]
+        if self._drag_step is None or destination == self._drag_step:
+            self._set_step_drop_row(None)
+            return Gdk.DragAction(0)
+        self._set_step_drop_row(destination)
+        return Gdk.DragAction.MOVE
+
+    def _on_step_drop(self, _target, value, _x, _y, destination: int) -> bool:
+        if isinstance(value, GObject.Value):
+            value = value.get_string()
+        source = self._decode_step_drag(value)
+        self._set_step_drop_row(None)
+        if (
+            source is None
+            or source != self._drag_step
+            or source == destination
+            or not 0 <= destination < len(self._editors)
+        ):
+            log.debug(
+                "Rejected step drop: source=%r active=%r destination=%r",
+                source, self._drag_step, destination,
+            )
+            return False
+        self._reorder(source, destination)
+        return True
+
+    @staticmethod
+    def _decode_step_drag(value) -> int | None:
+        if not isinstance(value, str) or not value.startswith(_STEP_DRAG_PREFIX):
+            return None
+        try:
+            return int(value.removeprefix(_STEP_DRAG_PREFIX))
+        except ValueError:
+            return None
+
+    def _set_step_drop_row(self, index: int | None) -> None:
+        if self._drop_step == index:
+            return
+        for position in (self._drop_step, index):
+            if position is None or not 0 <= position < len(self._editors):
+                continue
+            expander = getattr(self._editors[position], "_expander", None)
+            if expander is not None:
+                if position == index:
+                    expander.add_css_class("drop-target")
+                else:
+                    expander.remove_css_class("drop-target")
+        self._drop_step = index
+
+    def _clear_step_drag_feedback(self) -> None:
+        self._set_step_drop_row(None)
+        if self._drag_step is not None and 0 <= self._drag_step < len(self._editors):
+            expander = getattr(self._editors[self._drag_step], "_expander", None)
+            if expander is not None:
+                expander.remove_css_class("drag-source")
+        self._drag_step = None
+
+    def _reorder(self, source: int, destination: int) -> None:
+        """Move one step to another position, rather than swapping two."""
+        if source == destination or not 0 <= source < len(self._editors):
+            return
+        if not 0 <= destination < len(self._editors):
+            return
+        self._remember_expansion()
+        editor = self._editors.pop(source)
+        self._editors.insert(destination, editor)
+        self._rebuild_keeping_scroll()
+        self._notify_change()
 
     def _move(self, i: int, delta: int) -> None:
         j = i + delta
         if 0 <= j < len(self._editors):
-            self._editors[i]._want_expand = True   # type: ignore[attr-defined]
+            # Reordering deliberately changes nothing else: each step keeps the
+            # open or closed state the user gave it.
+            self._remember_expansion()
             self._editors[i], self._editors[j] = self._editors[j], self._editors[i]
-            self._rebuild()
+            self._rebuild_keeping_scroll()
             self._notify_change()
+            # The rebuild destroyed the arrow that was just clicked. A viewport
+            # scrolls to whatever takes focus next, which is what threw the list
+            # back to the top, so focus goes to the same arrow of the moved row.
+            self._focus_control(j, "down" if delta > 0 else "up")
+
+    def _focus_control(self, index: int, name: str) -> None:
+        if not 0 <= index < len(self._editors):
+            return
+        button = getattr(self._editors[index], "_controls", {}).get(name)
+        if button is not None:
+            # After the pending layout, so the new row can actually take it.
+            GLib.idle_add(button.grab_focus, priority=GLib.PRIORITY_LOW)
 
     def _delete(self, i: int) -> None:
         del self._editors[i]
-        self._rebuild()
+        self._rebuild_keeping_scroll()
         self._notify_change()
 
     def _editors_changed(self) -> None:
         for i, editor in enumerate(self._editors):
-            exp = getattr(editor, "_expander", None)
-            if exp is not None:
-                exp.set_label(f"{i + 1}. {editor.action_name()}")
+            title = getattr(editor, "_title", None)
+            if title is not None:
+                title.set_text(f"{i + 1}. {editor.display_name()}")
         self._notify_change()
+
+    def step_title(self, index: int) -> str:
+        """The text shown on one row: its position and name."""
+        title = getattr(self._editors[index], "_title", None)
+        return title.get_text() if title is not None else ""
 
     def _notify_change(self) -> None:
         if self._on_change is not None:

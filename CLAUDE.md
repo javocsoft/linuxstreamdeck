@@ -66,6 +66,11 @@ of truth; everything here is Claude-specific and additive.
   the unsaved-change guard, and keep autostart state in the XDG entry rather than
   in `config.json`. Never nest a built `GLib.Variant` inside a format string when
   replying to dbusmenu. See AGENTS.md §3 and §5.
+- Keep folder keys bounded and reversible. The first slot inside a folder is
+  always the Back key and must never be stored or edited, nesting stays within
+  `MAX_FOLDER_DEPTH` on load/create/paste, `KeyConfig.folder` stays
+  `compare=False`, the open folder is never persisted, and every walk over a
+  key's actions or assets recurses into folders. See AGENTS.md §3 and §5.
 - Preserve the physical clean-exit display contract: firmware reset for
   **Device default**, black keys plus brightness 0 for **Off**, and one validated
   full-grid image at normal brightness for **Custom**. Apply it after device

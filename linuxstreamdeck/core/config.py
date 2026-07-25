@@ -131,13 +131,17 @@ SUPPORTED_EXIT_IMAGE_EXTENSIONS = frozenset(
 )
 
 EXPORT_FORMAT = "linuxstreamdeck-configuration"
-EXPORT_VERSION = 3
+EXPORT_VERSION = 4
+# Version 4 introduced folder keys. Older versions stay importable; older
+# applications reject a v4 bundle instead of silently dropping whole folders.
+SUPPORTED_EXPORT_VERSIONS = (1, 2, 3, EXPORT_VERSION)
 EXPORT_CONFIG_FILE = "config.json"
 EXPORT_MANIFEST_FILE = "manifest.json"
 # Single-key bundles reuse the archive layout and asset prefixes of a full
 # configuration export, with their own format id so the two cannot be confused.
 KEY_EXPORT_FORMAT = "linuxstreamdeck-key"
-KEY_EXPORT_VERSION = 1
+KEY_EXPORT_VERSION = 2
+SUPPORTED_KEY_EXPORT_VERSIONS = (1, KEY_EXPORT_VERSION)
 KEY_EXPORT_FILE = "key.json"
 EXPORT_ICON_PREFIX = "bundle:"
 EXPORT_AUDIO_PREFIX = "bundle-audio:"
@@ -160,6 +164,17 @@ KIND_MULTI = "multi"            # ordered list of actions run in sequence
 KIND_TOGGLE = "multi_toggle"    # toggle: two action lists (ON/OFF state)
 KIND_RANDOM = "random"          # one action picked at random from the list
 KIND_PRESS = "press"            # separate lists for single/double/long press
+KIND_FOLDER = "folder"          # opens its own grid of keys
+
+# Folders group keys without spending a page. Their contents share the deck's
+# own key numbering, and the first slot is always the Back key, so the physical
+# deck can never enter a folder it cannot leave.
+FOLDER_BACK_INDEX = 0
+DEFAULT_FOLDER_ICON = "mdi:folder"
+DEFAULT_FOLDER_NAME = "Folder"
+# Nesting is bounded so a hand-written or corrupt file cannot make loading,
+# exporting or navigation recurse without end.
+MAX_FOLDER_DEPTH = 5
 
 # Every field of KeyConfig that holds a list of ActionStep. Anything walking a
 # key's actions (portable bundles, migrations) must cover all of them.
@@ -234,6 +249,31 @@ class ActionStep:
     explicit Wait action (sys.wait), not a per-step delay."""
     action: str = ""                      # id of a registered action
     params: dict = field(default_factory=dict)
+    # Optional name for this step, shown in the editor's list instead of the
+    # action name. Purely descriptive: nothing at run time reads it.
+    label: str = ""
+
+
+class KeyGrid:
+    """Shared key access for anything holding one grid of keys.
+
+    Deliberately not a dataclass: it contributes no fields, so `Page` and
+    `Folder` keep their own field order (and therefore their JSON layout).
+    """
+
+    keys: dict[str, "KeyConfig"]
+
+    def key(self, index: int) -> "KeyConfig | None":
+        return self.keys.get(str(index))
+
+    def set_key(self, index: int, kc: "KeyConfig | None") -> None:
+        if kc is None:
+            self.keys.pop(str(index), None)
+        else:
+            self.keys[str(index)] = kc
+
+    def configured_keys(self) -> int:
+        return sum(1 for kc in self.keys.values() if kc is not None)
 
 
 @dataclass
@@ -256,6 +296,12 @@ class KeyConfig:
     steps_double: list[ActionStep] = field(default_factory=list)
     steps_long: list[ActionStep] = field(default_factory=list)
 
+    # kind == folder: the grid of keys it opens. Excluded from equality on
+    # purpose: its contents are edited by navigating into the folder and saved
+    # there, so the editor's unsaved-change check must not read an edit made
+    # inside the folder as a pending edit of the folder key itself.
+    folder: "Folder | None" = field(default=None, compare=False)
+
     # appearance (main state / ON state on toggles)
     label: str = ""
     icon: str = ""                        # path to an optional image
@@ -277,14 +323,27 @@ class KeyConfig:
             return not (self.steps_on or self.steps_off)
         if self.kind == KIND_PRESS:
             return not (self.steps_single or self.steps_double or self.steps_long)
+        if self.kind == KIND_FOLDER:
+            # A folder is configured as soon as it exists; filling it comes
+            # afterwards, so an empty one must still render and open.
+            return False
         return True
+
+    @property
+    def contents(self) -> "Folder | None":
+        """The folder this key opens, or None when it is not a folder."""
+        return self.folder if self.kind == KIND_FOLDER else None
+
+    def folder_name(self) -> str:
+        """Readable folder name: the key label, or a generic default."""
+        return self.label.strip() or DEFAULT_FOLDER_NAME
 
     def clone(self) -> "KeyConfig":
         """Independent deep copy (for copy/paste and moving keys)."""
         return copy.deepcopy(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "KeyConfig":
+    def from_dict(cls, d: dict, depth: int = 0) -> "KeyConfig":
         if not isinstance(d, dict):
             raise ValueError("Each key configuration must be a JSON object")
 
@@ -300,7 +359,13 @@ class KeyConfig:
                     s.get("action", ""),
                     s.get("params", {}),
                 )
-                out.append(ActionStep(action=action, params=params))
+                out.append(
+                    ActionStep(
+                        action=action,
+                        params=params,
+                        label=str(s.get("label", "") or ""),
+                    )
+                )
                 # legacy: a per-step "delay after (ms)" becomes an explicit Wait
                 # action (whole seconds), so old configs keep their pauses.
                 secs = round(s.get("delay_ms", 0) / 1000)
@@ -313,8 +378,9 @@ class KeyConfig:
             d.get("action", ""),
             d.get("params", {}),
         )
+        kind = d.get("kind", KIND_SINGLE)
         return cls(
-            kind=d.get("kind", KIND_SINGLE),
+            kind=kind,
             action=action,
             params=params,
             steps=steps("steps"),
@@ -323,6 +389,7 @@ class KeyConfig:
             steps_single=steps("steps_single"),
             steps_double=steps("steps_double"),
             steps_long=steps("steps_long"),
+            folder=_folder_contents(d.get("folder"), kind, depth),
             label=d.get("label", ""),
             icon=d.get("icon", ""),
             bg_color=d.get("bg_color", DEFAULT_KEY_BG),
@@ -335,19 +402,69 @@ class KeyConfig:
 
 
 @dataclass
-class Page:
+class Folder(KeyGrid):
+    """The grid of keys a folder key opens.
+
+    It shares the deck's own numbering, so no index has to shift when a key
+    moves in or out. `FOLDER_BACK_INDEX` is reserved for the Back key and is
+    therefore never stored.
+    """
+
+    keys: dict[str, KeyConfig] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, d, depth: int = 1) -> "Folder":
+        """Load a folder that sits `depth` levels below its page."""
+        if d is None:
+            return cls()
+        if not isinstance(d, dict):
+            raise ValueError("A folder must be a JSON object")
+        raw_keys = d.get("keys", {})
+        if not isinstance(raw_keys, dict):
+            raise ValueError("The folder keys field must be a JSON object")
+        return cls(
+            keys={
+                str(k): KeyConfig.from_dict(v, depth)
+                for k, v in raw_keys.items()
+                if str(k) != str(FOLDER_BACK_INDEX)
+            }
+        )
+
+
+def _folder_contents(raw, kind: str, depth: int) -> Folder | None:
+    """The contents of a folder key, bounded by the nesting limit.
+
+    `depth` is the level the key itself lives at, so a key one level below the
+    limit keeps its own grid while anything deeper stays a plain (unopenable)
+    folder key. That keeps loading, exporting and navigation bounded without
+    letting one hand-written branch cost the whole configuration.
+    """
+    if kind != KIND_FOLDER:
+        return None
+    if depth >= MAX_FOLDER_DEPTH:
+        if isinstance(raw, dict) and raw.get("keys"):
+            log.warning(
+                "Ignoring folder contents nested deeper than %d levels",
+                MAX_FOLDER_DEPTH,
+            )
+        return None
+    return Folder.from_dict(raw, depth + 1)
+
+
+def folder_depth(kc: KeyConfig) -> int:
+    """How many folder levels a key adds. 0 when it is not a folder."""
+    contents = kc.contents
+    if contents is None:
+        return 0
+    nested = [folder_depth(child) for child in contents.keys.values()]
+    return 1 + max(nested, default=0)
+
+
+@dataclass
+class Page(KeyGrid):
     name: str = "Page 1"
     # keys as str for JSON compatibility: "0".."14"
     keys: dict[str, KeyConfig] = field(default_factory=dict)
-
-    def key(self, index: int) -> KeyConfig | None:
-        return self.keys.get(str(index))
-
-    def set_key(self, index: int, kc: KeyConfig | None) -> None:
-        if kc is None:
-            self.keys.pop(str(index), None)
-        else:
-            self.keys[str(index)] = kc
 
     @classmethod
     def from_dict(cls, d: dict, index: int = 0) -> "Page":
@@ -645,6 +762,73 @@ class Config:
 
     # ---------- portable import / export ----------
 
+    @classmethod
+    def _bundle_key_icons(
+        cls,
+        key: dict,
+        icon_files: dict[str, bytes],
+        missing_icons: set[str],
+    ) -> None:
+        """Copy one key's custom icons into the archive and rewrite its refs."""
+        for field_name in ("icon", "icon_off"):
+            ref = key.get(field_name, "")
+            if not ref or ref.startswith("mdi:"):
+                continue
+            try:
+                source = Path(ref).expanduser()
+                if not source.is_file() or source.stat().st_size > MAX_ICON_BYTES:
+                    missing_icons.add(ref)
+                    continue
+                data = source.read_bytes()
+            except OSError:
+                missing_icons.add(ref)
+                continue
+            digest = hashlib.sha256(data).hexdigest()
+            suffix = cls._safe_icon_suffix(source.suffix)
+            archive_name = f"icons/{digest}{suffix}"
+            icon_files.setdefault(archive_name, data)
+            key[field_name] = f"{EXPORT_ICON_PREFIX}{archive_name}"
+
+    @classmethod
+    def _bundle_key_audio(
+        cls,
+        key: dict,
+        audio_files: dict[str, bytes],
+        missing_audio: set[str],
+        total_audio_bytes: int,
+    ) -> int:
+        """Copy one key's audio into the archive; returns the new total size."""
+        for action, params in cls._raw_action_params(key):
+            parameter = _ACTION_AUDIO_PARAMETERS.get(action)
+            if parameter is None:
+                continue
+            ref = str(params.get(parameter, "") or "")
+            if not ref:
+                continue
+            try:
+                source = Path(ref).expanduser()
+                if (
+                    not source.is_file()
+                    or source.stat().st_size > MAX_AUDIO_BYTES
+                    or source.suffix.lower() not in SUPPORTED_AUDIO_EXTENSIONS
+                ):
+                    missing_audio.add(ref)
+                    continue
+                data = source.read_bytes()
+            except OSError:
+                missing_audio.add(ref)
+                continue
+            digest = hashlib.sha256(data).hexdigest()
+            archive_name = f"audio/{digest}{source.suffix.lower()}"
+            if archive_name not in audio_files:
+                if total_audio_bytes + len(data) > MAX_TOTAL_AUDIO_BYTES:
+                    missing_audio.add(ref)
+                    continue
+                audio_files[archive_name] = data
+                total_audio_bytes += len(data)
+            params[parameter] = f"{EXPORT_AUDIO_PREFIX}{archive_name}"
+        return total_audio_bytes
+
     def export_bundle(self, destination: Path) -> ExportResult:
         """Write a portable archive with custom icons, audio and exit image."""
         raw = self._serializable_dict()
@@ -658,57 +842,13 @@ class Config:
 
         for profile in raw["profiles"]:
             for page in profile["pages"]:
-                for key in page["keys"].values():
-                    for field_name in ("icon", "icon_off"):
-                        ref = key.get(field_name, "")
-                        if not ref or ref.startswith("mdi:"):
-                            continue
-                        try:
-                            source = Path(ref).expanduser()
-                            if not source.is_file() or source.stat().st_size > MAX_ICON_BYTES:
-                                missing_icons.add(ref)
-                                continue
-                            data = source.read_bytes()
-                        except OSError:
-                            missing_icons.add(ref)
-                            continue
-                        digest = hashlib.sha256(data).hexdigest()
-                        suffix = self._safe_icon_suffix(source.suffix)
-                        archive_name = f"icons/{digest}{suffix}"
-                        icon_files.setdefault(archive_name, data)
-                        key[field_name] = f"{EXPORT_ICON_PREFIX}{archive_name}"
-                    for action, params in self._raw_action_params(key):
-                        parameter = _ACTION_AUDIO_PARAMETERS.get(action)
-                        if parameter is None:
-                            continue
-                        ref = str(params.get(parameter, "") or "")
-                        if not ref:
-                            continue
-                        try:
-                            source = Path(ref).expanduser()
-                            if (
-                                not source.is_file()
-                                or source.stat().st_size > MAX_AUDIO_BYTES
-                                or source.suffix.lower()
-                                not in SUPPORTED_AUDIO_EXTENSIONS
-                            ):
-                                missing_audio.add(ref)
-                                continue
-                            data = source.read_bytes()
-                        except OSError:
-                            missing_audio.add(ref)
-                            continue
-                        digest = hashlib.sha256(data).hexdigest()
-                        suffix = source.suffix.lower()
-                        archive_name = f"audio/{digest}{suffix}"
-                        if archive_name not in audio_files:
-                            if total_audio_bytes + len(data) > MAX_TOTAL_AUDIO_BYTES:
-                                missing_audio.add(ref)
-                                continue
-                            audio_files[archive_name] = data
-                            total_audio_bytes += len(data)
-                        params[parameter] = (
-                            f"{EXPORT_AUDIO_PREFIX}{archive_name}"
+                for top_key in page["keys"].values():
+                    # Folders carry their own keys, with their own icons and
+                    # audio, so a bundle has to reach every nested key too.
+                    for key in self._walk_raw_keys(top_key):
+                        self._bundle_key_icons(key, icon_files, missing_icons)
+                        total_audio_bytes = self._bundle_key_audio(
+                            key, audio_files, missing_audio, total_audio_bytes
                         )
 
         exit_ref = str(
@@ -772,7 +912,7 @@ class Config:
             )
             if (
                 manifest.get("format") != EXPORT_FORMAT
-                or manifest.get("version") not in (1, 2, EXPORT_VERSION)
+                or manifest.get("version") not in SUPPORTED_EXPORT_VERSIONS
             ):
                 raise ValueError("This LinuxStreamDeck export version is not supported")
             raw = self._read_bundle_json(
@@ -889,11 +1029,7 @@ class Config:
         return ImportResult(
             profiles=len(self.profiles),
             pages=sum(len(profile.pages) for profile in self.profiles),
-            keys=sum(
-                len(page.keys)
-                for profile in self.profiles
-                for page in profile.pages
-            ),
+            keys=sum(1 for _ in self._key_configs()),
             restored_icons=len(icon_payloads),
             restored_audio=len(audio_payloads),
             restored_exit_image=exit_image_payload is not None,
@@ -913,54 +1049,12 @@ class Config:
         missing_audio: set[str] = set()
         total_audio_bytes = 0
 
-        for field_name in ("icon", "icon_off"):
-            ref = raw.get(field_name, "")
-            if not ref or ref.startswith("mdi:"):
-                continue
-            try:
-                source = Path(ref).expanduser()
-                if not source.is_file() or source.stat().st_size > MAX_ICON_BYTES:
-                    missing_icons.add(ref)
-                    continue
-                data = source.read_bytes()
-            except OSError:
-                missing_icons.add(ref)
-                continue
-            digest = hashlib.sha256(data).hexdigest()
-            suffix = cls._safe_icon_suffix(source.suffix)
-            archive_name = f"icons/{digest}{suffix}"
-            icon_files.setdefault(archive_name, data)
-            raw[field_name] = f"{EXPORT_ICON_PREFIX}{archive_name}"
-
-        for action, params in cls._raw_action_params(raw):
-            parameter = _ACTION_AUDIO_PARAMETERS.get(action)
-            if parameter is None:
-                continue
-            ref = str(params.get(parameter, "") or "")
-            if not ref:
-                continue
-            try:
-                source = Path(ref).expanduser()
-                if (
-                    not source.is_file()
-                    or source.stat().st_size > MAX_AUDIO_BYTES
-                    or source.suffix.lower() not in SUPPORTED_AUDIO_EXTENSIONS
-                ):
-                    missing_audio.add(ref)
-                    continue
-                data = source.read_bytes()
-            except OSError:
-                missing_audio.add(ref)
-                continue
-            digest = hashlib.sha256(data).hexdigest()
-            archive_name = f"audio/{digest}{source.suffix.lower()}"
-            if archive_name not in audio_files:
-                if total_audio_bytes + len(data) > MAX_TOTAL_AUDIO_BYTES:
-                    missing_audio.add(ref)
-                    continue
-                audio_files[archive_name] = data
-                total_audio_bytes += len(data)
-            params[parameter] = f"{EXPORT_AUDIO_PREFIX}{archive_name}"
+        # A folder key travels with everything inside it.
+        for entry in cls._walk_raw_keys(raw):
+            cls._bundle_key_icons(entry, icon_files, missing_icons)
+            total_audio_bytes = cls._bundle_key_audio(
+                entry, audio_files, missing_audio, total_audio_bytes
+            )
 
         cls._write_bundle_archive(
             destination,
@@ -1001,7 +1095,7 @@ class Config:
             )
             if manifest.get("format") != KEY_EXPORT_FORMAT:
                 raise ValueError("This file does not contain a single exported key")
-            if manifest.get("version") != KEY_EXPORT_VERSION:
+            if manifest.get("version") not in SUPPORTED_KEY_EXPORT_VERSIONS:
                 raise ValueError("This LinuxStreamDeck key export version is not supported")
             key = KeyConfig.from_dict(
                 cls._read_bundle_json(archive, KEY_EXPORT_FILE, MAX_CONFIG_BYTES)
@@ -1013,48 +1107,50 @@ class Config:
             total_icon_bytes = 0
             total_audio_bytes = 0
 
-            for field_name in ("icon", "icon_off"):
-                ref = getattr(key, field_name)
-                if not ref.startswith(EXPORT_ICON_PREFIX):
-                    continue
-                archive_name = ref.removeprefix(EXPORT_ICON_PREFIX)
-                if archive_name in restored_members:
-                    setattr(key, field_name, str(restored_members[archive_name]))
-                    continue
-                cls._validate_icon_member(archive_name)
-                data = cls._read_bundle_member(archive, archive_name, MAX_ICON_BYTES)
-                total_icon_bytes += len(data)
-                if total_icon_bytes > MAX_TOTAL_ICON_BYTES:
-                    raise ValueError("The exported icon files are too large")
-                suffix = cls._safe_icon_suffix(PurePosixPath(archive_name).suffix)
-                digest = hashlib.sha256(data).hexdigest()
-                target = CONFIG_DIR / "imported-icons" / f"{digest}{suffix}"
-                icon_payloads[target] = data
-                restored_members[archive_name] = target
-                setattr(key, field_name, str(target))
+            # A folder key restores the assets of everything inside it.
+            for entry in cls._walk_keys(key):
+                for field_name in ("icon", "icon_off"):
+                    ref = getattr(entry, field_name)
+                    if not ref.startswith(EXPORT_ICON_PREFIX):
+                        continue
+                    archive_name = ref.removeprefix(EXPORT_ICON_PREFIX)
+                    if archive_name in restored_members:
+                        setattr(entry, field_name, str(restored_members[archive_name]))
+                        continue
+                    cls._validate_icon_member(archive_name)
+                    data = cls._read_bundle_member(archive, archive_name, MAX_ICON_BYTES)
+                    total_icon_bytes += len(data)
+                    if total_icon_bytes > MAX_TOTAL_ICON_BYTES:
+                        raise ValueError("The exported icon files are too large")
+                    suffix = cls._safe_icon_suffix(PurePosixPath(archive_name).suffix)
+                    digest = hashlib.sha256(data).hexdigest()
+                    target = CONFIG_DIR / "imported-icons" / f"{digest}{suffix}"
+                    icon_payloads[target] = data
+                    restored_members[archive_name] = target
+                    setattr(entry, field_name, str(target))
 
-            for action, params in cls._action_params(key):
-                parameter = _ACTION_AUDIO_PARAMETERS.get(action)
-                if parameter is None:
-                    continue
-                ref = str(params.get(parameter, "") or "")
-                if not ref.startswith(EXPORT_AUDIO_PREFIX):
-                    continue
-                archive_name = ref.removeprefix(EXPORT_AUDIO_PREFIX)
-                if archive_name in restored_audio_members:
-                    params[parameter] = str(restored_audio_members[archive_name])
-                    continue
-                cls._validate_audio_member(archive_name)
-                data = cls._read_bundle_member(archive, archive_name, MAX_AUDIO_BYTES)
-                total_audio_bytes += len(data)
-                if total_audio_bytes > MAX_TOTAL_AUDIO_BYTES:
-                    raise ValueError("The exported audio files are too large")
-                suffix = PurePosixPath(archive_name).suffix.lower()
-                digest = hashlib.sha256(data).hexdigest()
-                target = CONFIG_DIR / "imported-audio" / f"{digest}{suffix}"
-                audio_payloads[target] = data
-                restored_audio_members[archive_name] = target
-                params[parameter] = str(target)
+                for action, params in cls._action_params(entry):
+                    parameter = _ACTION_AUDIO_PARAMETERS.get(action)
+                    if parameter is None:
+                        continue
+                    ref = str(params.get(parameter, "") or "")
+                    if not ref.startswith(EXPORT_AUDIO_PREFIX):
+                        continue
+                    archive_name = ref.removeprefix(EXPORT_AUDIO_PREFIX)
+                    if archive_name in restored_audio_members:
+                        params[parameter] = str(restored_audio_members[archive_name])
+                        continue
+                    cls._validate_audio_member(archive_name)
+                    data = cls._read_bundle_member(archive, archive_name, MAX_AUDIO_BYTES)
+                    total_audio_bytes += len(data)
+                    if total_audio_bytes > MAX_TOTAL_AUDIO_BYTES:
+                        raise ValueError("The exported audio files are too large")
+                    suffix = PurePosixPath(archive_name).suffix.lower()
+                    digest = hashlib.sha256(data).hexdigest()
+                    target = CONFIG_DIR / "imported-audio" / f"{digest}{suffix}"
+                    audio_payloads[target] = data
+                    restored_audio_members[archive_name] = target
+                    params[parameter] = str(target)
 
         for target, data in (*icon_payloads.items(), *audio_payloads.items()):
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -1068,7 +1164,27 @@ class Config:
     def _key_configs(self):
         for profile in self.profiles:
             for page in profile.pages:
-                yield from page.keys.values()
+                for key in page.keys.values():
+                    yield from self._walk_keys(key)
+
+    @classmethod
+    def _walk_keys(cls, key: KeyConfig):
+        """A key followed by every key nested inside its folders."""
+        yield key
+        folder = key.contents
+        if folder is not None:
+            for nested in folder.keys.values():
+                yield from cls._walk_keys(nested)
+
+    @classmethod
+    def _walk_raw_keys(cls, key: dict):
+        """`_walk_keys` over the serialized form used while bundling."""
+        yield key
+        folder = key.get("folder")
+        if isinstance(folder, dict):
+            for nested in folder.get("keys", {}).values():
+                if isinstance(nested, dict):
+                    yield from cls._walk_raw_keys(nested)
 
     @staticmethod
     def _raw_action_params(key: dict):

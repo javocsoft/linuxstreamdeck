@@ -7,7 +7,20 @@ import os
 import sys
 
 
+def version_requested(argv: list[str]) -> bool:
+    """Whether the command line only asks what version this is."""
+    return any(arg in ("--version", "-V") for arg in argv[1:])
+
+
 def main() -> int:
+    # Answered before GTK sees argv: the bug report template asks people to run
+    # this, and Adw.Application rejects any option it does not know.
+    if version_requested(sys.argv):
+        from . import APP_NAME, VERSION
+
+        print(f"{APP_NAME} {VERSION}")
+        return 0
+
     level = logging.DEBUG if os.environ.get("LSD_DEBUG") else logging.INFO
     logging.basicConfig(
         level=level, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"

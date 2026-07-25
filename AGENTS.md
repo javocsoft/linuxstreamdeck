@@ -80,6 +80,14 @@ catalogues can discover its icon, description and screenshot), and the udev rule
 **syncs it into both** `pyproject.toml` and `linuxstreamdeck/__init__.py::VERSION`,
 so passing `X.Y.Z` also bumps those sources.
 
+Everything else derives that one value: `ui/about.py` reads `VERSION`,
+`__main__.py` answers `--version` / `-V` **before GTK parses argv** (an unknown
+option would otherwise be rejected, and the bug report template tells people to
+run it), and the AppStream metainfo ships `@VERSION@` / `@DATE@` placeholders
+that the build substitutes. Keep that release entry templated: a hardcoded one
+would go stale on the next build without the scan below ever noticing, because
+the scan only recognises a version that is *wrong*, never one that is missing.
+
 Before that sync, `check_hardcoded_versions()` scans every tracked file and fails
 the build when one still names a different version of this application — the way
 an issue template or a document silently goes stale after a release. Dependency
@@ -117,9 +125,9 @@ linuxstreamdeck/
 │   ├── events.py      EventBus (pub/sub). Emitters may run on any thread; a
 │   │                  `dispatcher` (GLib.idle_add) marshals callbacks to the UI thread.
 │   ├── config.py      Data model + atomic user-only JSON persistence: Config →
-│   │                  Profile → Page → KeyConfig (+ OBS/AI/deck-display settings).
-│   │                  Legacy action/profile migration, backup, `.lsdconfig` and
-│   │                  single-key `.lsdkey` I/O.
+│   │                  Profile → Page → KeyConfig → Folder (+ OBS/AI/deck-display
+│   │                  settings). Legacy action/profile migration, backup,
+│   │                  `.lsdconfig` and single-key `.lsdkey` I/O.
 │   ├── actions.py     Action framework: `Action` base, declarative `Param`,
 │   │                  `ActionContext`, global `REGISTRY`, `@register`, `by_category`.
 │   ├── audio.py       Blocking local playback via GStreamer playbin; shutdown-aware.
@@ -127,9 +135,10 @@ linuxstreamdeck/
 │   ├── apps.py        Desktop applications: list, resolve, launch, find and close.
 │   ├── media.py       MPRIS transport (playerctl) and session volume (wpctl/pactl).
 │   ├── keystrokes.py  Shortcut parsing, Linux presets, ydotool/wtype/xdotool.
-│   ├── clocks.py      Thread-safe countdown/stopwatch runtime keyed by profile/page/key.
+│   ├── clocks.py      Thread-safe countdown/stopwatch runtime keyed by RuntimeKey.
 │   ├── controller.py  DeckController: presses, action/render workers, running feedback,
-│   │                  clocks/audio notifications, profile/key operations and imports.
+│   │                  clocks/audio notifications, folder navigation, profile/key
+│   │                  operations and imports.
 │   ├── icons.py       Built-in icon library (Material Design Icons glyphs via
 │   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
 │   └── secrets.py     Async Secret Service storage for OBS and per-provider API keys.
@@ -149,8 +158,9 @@ linuxstreamdeck/
 ├── ui/
 │   ├── window.py      MainWindow: key grid (virtual deck), header (profiles,
 │   │                  import/export, pages, deck display, brightness, OBS, About),
-│   │                  explicit saver activity, DnD, copy/paste, single-key
-│   │                  export/import, unsaved guard, status bar.
+│   │                  folder breadcrumb and navigation, explicit saver activity,
+│   │                  DnD, copy/paste, single-key export/import, unsaved guard,
+│   │                  status bar.
 │   ├── editor.py      EditorPanel: key editor, canonical draft/baseline and key type.
 │   ├── ai_assistant.py OpenAI/Claude proposal dialog and explicit editor handoff.
 │   ├── steps.py       StepEditor / StepList / AppearanceBox — reused by the editor
@@ -176,6 +186,7 @@ linuxstreamdeck/
 | `obs.connected` / `obs.disconnected` | — | OBS websocket state. |
 | `obs.state` | `what:str` | Any OBS state change (drives key feedback). |
 | `page.changed` | `index:int, name:str` | Active page changed. |
+| `folder.changed` | `path:tuple[int, ...], trail:list` | A folder was opened, left or reset to the page root. |
 | `profile.changed` | `name, description, …` | Active profile changed. |
 | `ui.key_image` | `index:int, png:bytes` | A key was rendered; UI paints it. |
 | `ui.screensaver_frame` | `images:tuple[bytes, ...]` | One animated full-deck frame for the virtual deck. |
@@ -297,17 +308,27 @@ Actions are declarative and self-registering:
   (`scenes`, `inputs`, `media_inputs`, `transitions`, `scene_collections`,
   `profiles`, `sources_in_scene`, `filters_of_source`, `hotkeys`, `pages`,
   `deck_profiles`, `applications`). `pages`, `deck_profiles` and `applications`
-  are local sources and must stay **above** the `obs.connected` guard in
-  `_fetch_choices`, so they still fill when OBS is not running. Note that
-  `profiles` means OBS profiles; LinuxStreamDeck's own are `deck_profiles`.
+  are the `LOCAL_CHOICE_SOURCES` and must stay **above** the `obs.connected`
+  guard in `_fetch_choices`, so they still fill when OBS is not running. Note
+  that `profiles` means OBS profiles; LinuxStreamDeck's own are `deck_profiles`.
+  `sources_in_scene`, `audio_sources_in_scene` and `filters_of_source` **depend
+  on another parameter** (`scene`, `scene` and `source`, read with
+  `_sibling_value()`), so changing the parent rebuilds them through
+  `_repopulate()`. That rebuild replaces the whole widget,
+  not just its model: `_choices_known()` decides between a dropdown and a plain
+  text field, and a dependent list that was empty when the step was built starts
+  out as a text field. Updating only the model left it a text field for good, so
+  a scene whose sources appeared later showed nothing until the key was saved
+  and reopened. A stored value is always kept selectable (`keep_unknown`), while
+  a value inherited from the previous parent is deliberately dropped.
   A dropdown may show something other than what it stores: `_display_options()`
   returns the labels plus a `display -> value` map, kept on the widget as
   `_value_map` and consulted by `_widget_value()`. `hotkeys` is the one source
   that uses it, because `GetHotkeyList` only returns identifiers such as
   `OBSBasic.StartStreaming` and `TriggerHotkeyByName` needs exactly that string
   back. `hotkey_display_name()` in `obs/client.py` derives the readable text, and
-  `get_hotkeys()` removes the duplicates OBS emits once per source. Keep the map
-  in sync in `_repopulate()` too, or a refreshed dropdown starts storing labels.
+  `get_hotkeys()` removes the duplicates OBS emits once per source. The map is
+  rebuilt with the widget, so it can never drift from the options on screen.
 - `execute(ctx, params)` performs the action; `feedback(ctx, params)` may return
   any of `active`, `color`, `badge` and `display` for live key state. `display`
   replaces the icon with fitted, centered text.
@@ -464,6 +485,15 @@ When a saved key is displayed, its fixed read-only mask is only a presence
 indicator. The request must use the separately held stored key, never the mask.
 Replacing, returning to the saved key, and forgetting it are explicit UI actions.
 
+The **Audio** actions scope their input list to a scene:
+`OBSClient.get_audio_sources_in_scene()` takes the scene's items, adds the
+special inputs from `GetSpecialInputs` (Desktop Audio, Mic/Aux belong to no
+scene yet are audible on all of them) and keeps only the ones that answer
+`GetInputMute`, since OBS has no request for "the audio sources of a scene".
+Their `scene` parameter is an **editor filter only**: it defaults to `""`, is
+never sent to OBS, and the actions still target the input globally, so keys
+saved before it existed keep working untouched.
+
 The optional generation context is an explicit user opt-in. It contains only
 bounded OBS and page names collected by `collect_generation_context()`; never
 send passwords, commands, the full configuration, or other secrets. The action
@@ -474,6 +504,15 @@ parameter, choice and icon validation before becoming an `AIProposal`. Generatio
 must never execute or save a key. The user first previews the proposal, explicitly
 loads it into the existing editor, reviews it, and presses **Save** to persist it.
 
+A proposed step may carry an optional `label`, the same descriptive name the
+editor's step list shows. `_step_label()` treats it as what it is — text that
+names a row and is never matched against an action — so it only bounds it to
+`MAX_STEP_LABEL_CHARS` and flattens it to one line; a missing one is simply
+empty, and a non-string is rejected. The action id alone still decides what
+runs, so no label can select or reach an action. `format_proposal()` prints the
+name **and** its action (`1. Cut to camera — Switch scene`), so the preview can
+never hide behind a friendly name what the key would actually do.
+
 ### Config / key model
 
 `Config` holds `profiles` and delegates `pages`/`current_page` to the active
@@ -483,17 +522,64 @@ loads it into the existing editor, reviews it, and presses **Save** to persist i
 - `multi` (`KIND_MULTI`) — an ordered list of `ActionStep`s run in sequence;
   pauses are an explicit `Wait` action (`sys.wait`, a `duration` param), not a
   per-step delay.
+
+Each `StepList` row is a `Gtk.Expander` whose **title is a widget**
+(`set_label_widget`): a drag handle, the hexpanding title label and the move /
+duplicate / remove buttons, so none of them needs the step to be opened first.
+Rows also reorder by drag and drop, with one source/target pair per row in the
+**bubble** phase — capture would swallow the clicks of those very buttons and
+the expander's own toggle. Each row must also drop GtkExpander's **own**
+`GtkDropControllerMotion` (`_disable_hover_expand()`): it exists to spring open
+a tree node after a hover, so without removing it the row under the pointer
+opens itself mid-reorder. The remove button uses the `.step-remove` class rather
+than `.destructive-action`, because the latter paints a background that `.flat`
+drops, leaving the icon in the normal text colour instead of red. The payload is the internal typed string
+`linuxstreamdeck-step:<index>`, validated against the drag in progress exactly
+like the key grid's, and a drop **moves** the step to that position rather than
+swapping two. Because the title is a widget, renaming a row sets
+`editor._title`, not `Gtk.Expander.set_label()`; `step_title()` reads it back.
+
+`StepList` rebuilds all of its rows whenever one is added, duplicated, moved or
+removed, which makes two things easy to get wrong. It must call
+`_remember_expansion()` first, so each row keeps the state the **user** gave it
+rather than the one it was created with — otherwise adding a step silently
+reopens rows that were collapsed. And it must unparent each `StepEditor`
+explicitly before re-wrapping it, instead of relying on the previous expander
+being garbage collected: anything still holding that expander (a queued reveal,
+a handler) leaves the editor attached to it and the rebuild fails with
+`gtk_box_append: assertion 'gtk_widget_get_parent (child) == NULL' failed`.
+`_reveal()` scrolls a newly added or duplicated step into view on a low-priority
+idle and resolves the expander **late**, so a rebuild in between scrolls to the
+current row. Reordering and removing instead go through
+`_rebuild_keeping_scroll()`, and `_move()` hands focus back to the same arrow on
+the row's new position: `GtkViewport:scroll-to-focus` is on by default, so the
+button being destroyed mid-click is what threw the list back to the top. Note that a collapsed `GtkExpander` keeps its child out of the
+traversable widget tree, so tests must walk down from `get_child()`.
+
+Every `ActionStep` also carries an optional `label`: a name shown in the editor's
+step list instead of the action name, so a long sequence stays readable. It is
+purely descriptive — nothing at run time reads it — and it is stripped of
+surrounding blanks, so a name of only spaces falls back to the action name.
+`StepEditor(show_label=True)` draws the field, which `StepList` sets and the
+single-action editor does not: a single-action key has no list entry to name, and
+its own label already lives in Appearance. Because the field is outside
+`params_box`, a name survives changing the step's action. Old configurations
+without the field load with an empty label, and older builds ignore it, so no
+bundle version changes.
 - `multi_toggle` (`KIND_TOGGLE`) — two lists (`steps_on` / `steps_off`) with an
-  ON/OFF state; the state is keyed by (profile, page, key) in the controller.
+  ON/OFF state; the state is keyed by `RuntimeKey` in the controller.
 - `random` (`KIND_RANDOM`) — reuses `steps`, but a press runs exactly one entry
   chosen with `random.choice`.
 - `press` (`KIND_PRESS`) — `steps_single`, `steps_double` and `steps_long`, one
   per press gesture.
+- `folder` (`KIND_FOLDER`) — holds a `Folder` of nested keys in `folder` and runs
+  no action at all; see **Folder keys** below.
 
 `STEP_FIELDS` lists every field holding `ActionStep`s. Anything walking a key's
 actions — portable bundles, legacy migration — must iterate it rather than
 hard-coding the three original names, or the new lists silently lose their
-bundled audio and their `nav.page` migration.
+bundled audio and their `nav.page` migration. For the same reason it must walk
+nested folder keys with `Config._walk_keys()` / `_walk_raw_keys()`.
 
 ### Press gestures
 
@@ -569,6 +655,63 @@ The entry runs the installed console script when there is one, falling back to
 the current interpreter, and always adds the `--hidden` flag that
 `strip_hidden_flag()` removes before GTK parses argv. A hidden start only skips
 presenting the window when the icon actually registered.
+
+### Folder keys
+
+A `KIND_FOLDER` key opens its own grid instead of running anything, so related
+actions group without spending a page. Its contents live in `KeyConfig.folder`
+(a `Folder`), its name is the key's own `label` (`folder_name()` falls back to
+`DEFAULT_FOLDER_NAME`) and its icon is the key's `icon`, defaulting to
+`DEFAULT_FOLDER_ICON`. `Page` and `Folder` both extend the plain `KeyGrid` mixin,
+which supplies `key()`, `set_key()` and `configured_keys()`; the mixin declares no
+dataclass fields, so both keep their own field order and JSON layout.
+
+Three rules make the shape safe:
+
+- **`folder` is `compare=False`.** Its contents are edited by navigating inside
+  and saved there, so the editor's unsaved-change comparison must not read an
+  edit made *inside* a folder as a pending edit of the folder key itself.
+- **Slot `FOLDER_BACK_INDEX` (0) is reserved.** Inside a folder it always renders
+  the Back key (`_back_spec`, showing the folder name), it is never stored, and
+  `is_reserved_key()` blocks selecting, dragging, dropping, pasting, clearing and
+  swapping it. The physical deck can therefore never enter a folder it cannot
+  leave. Folder contents keep the deck's own numbering, so no index shifts.
+- **Nesting stops at `MAX_FOLDER_DEPTH` (5).** `_folder_contents()` drops the
+  contents of anything deeper while keeping the key itself, so one hand-written
+  branch cannot cost the whole configuration or make loading recurse without end.
+  `can_add_folder()` and `fits_here()` apply the same limit to new folders and to
+  pasted or imported subtrees.
+
+`DeckController._folder_path` is a tuple of key indices from the page root, and
+`container` resolves it into the grid on screen, self-healing back to the page
+when a step stops resolving. It is **view state, never configuration**: opening
+or closing a folder saves nothing, and `_leave_folders()` returns to the page
+root on every page, profile and configuration change, because those indices would
+otherwise address a different grid. `folder.changed` carries `path` and the
+`folder_trail()` of `(path, name)` pairs that the window renders as a clickable
+breadcrumb.
+
+Transient state therefore keys on `RuntimeKey` — `(profile, page, folder path,
+key index)` — so the same index inside a folder is a different key from the one
+on its page, and clocks inside a folder keep running while you are elsewhere.
+`_discard_folder_state()` drops every toggle, clock, timer sound, execution
+control and gesture under a folder slot when that folder is cleared, pasted over
+or moved; editing the folder key itself keeps them, so renaming a folder does not
+reset the timers inside it. Pressing a folder key calls `open_folder()` directly
+and never reaches an action worker.
+
+Anything walking a key's actions or assets must recurse with `_walk_keys()` /
+`_walk_raw_keys()`: `_key_configs()`, both bundle exporters (through the shared
+`_bundle_key_icons()` / `_bundle_key_audio()`), `import_key_bundle()` and
+`rename_page()` all do. Missing one silently loses a folder's nested audio,
+icons or `nav.page.go` rewrites.
+
+The editor offers **Folder** as a key type, hides it once the depth limit is
+reached, and locks the whole type list while the stored key is a folder that
+holds keys, so its contents cannot be replaced by switching type. Clearing,
+pasting over or importing onto a non-empty folder asks for confirmation first.
+The AI catalogue never exposes folders: `ai/service.py` still restricts proposals
+to single, multi and toggle.
 
 ### Key label font size
 
@@ -672,7 +815,7 @@ and the password is session-only. OpenAI and Claude API keys are also stored onl
 in Secret Service, under separate provider identities; AI preferences in config
 never contain either key.
 
-The profiles menu exports `.lsdconfig` ZIP format v3 with the full JSON
+The profiles menu exports `.lsdconfig` ZIP format v4 with the full JSON
 configuration, including screen-saver and clean-exit display settings, available
 custom key icons, the selected custom exit image and supported files referenced
 by `sys.audio` or the `sound` parameter of `sys.timer`; identical audio content
@@ -683,7 +826,8 @@ exported. `close_action` travels with the configuration like `brightness` does,
 but the autostart entry never does: it stays local to each computer. Missing, unreadable, unsupported or oversized portable files remain
 local references and produce an export warning.
 
-Import accepts format v1, v2 and v3, validates archive member paths and size
+Import accepts every version in `SUPPORTED_EXPORT_VERSIONS` (v1 to v4),
+validates archive member paths and size
 limits, restores bundled icons below `CONFIG_DIR/imported-icons`, audio below
 `CONFIG_DIR/imported-audio` and the exit image below
 `CONFIG_DIR/imported-exit-images`, replaces the complete configuration and writes
@@ -702,7 +846,10 @@ Both are classmethods that reuse the configuration bundle's archive layout,
 validation and atomic `_write_bundle_archive()` writer. The manifest carries its
 own `KEY_EXPORT_FORMAT` (`linuxstreamdeck-key`) and `KEY_EXPORT_VERSION`, so a
 full `.lsdconfig` cannot be imported as a key and a `.lsdkey` cannot be imported
-as a configuration; the key itself lives in `key.json`.
+as a configuration; the key itself lives in `key.json`. Both formats were raised
+when folder keys landed (bundle v4, key v2) so an older application refuses the
+file instead of silently dropping whole folders; the loaders still accept every
+earlier version.
 
 Export never mutates the source `KeyConfig` (it works on an `asdict()` copy),
 bundles only that key's custom icons plus `sys.audio` / `sys.timer` audio,
@@ -927,6 +1074,20 @@ hard-to-diagnose failures.
    and immediately before closing HID; if custom preparation or writes fail,
    fall back to the device default. Do not promise this state after forced
    termination, a crash or power loss.
+
+22. **Folders must stay bounded, reversible and key-scoped.** Slot
+   `FOLDER_BACK_INDEX` inside a folder is always the Back key: never store,
+   select, drag, drop, paste, clear or swap it, or the physical deck can enter a
+   folder with no way out. Keep `MAX_FOLDER_DEPTH` enforced in three places —
+   loading (`_folder_contents`), creating (`can_add_folder`) and pasting or
+   importing a subtree (`fits_here`). Keep `KeyConfig.folder` `compare=False`, or
+   editing a key inside a folder makes its parent key look permanently dirty.
+   Keep the open folder out of `config.json`: it is view state, and
+   `_leave_folders()` must reset it on every page, profile and configuration
+   change. Keep transient state on the full `RuntimeKey`, and discard a subtree's
+   state when its folder is replaced or moved but **not** when the folder key
+   itself is merely edited. Every walk over a key's actions or assets must
+   recurse with `_walk_keys()` / `_walk_raw_keys()`.
 
 ---
 

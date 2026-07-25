@@ -40,7 +40,7 @@ def context(controller=None):
             bus=SimpleNamespace(
                 emit=lambda _topic, text="": messages.append(text)
             ),
-            key=(0, 0, 0),
+            key=(0, 0, (), 0),
         ),
         messages,
     )
@@ -345,7 +345,7 @@ class ShortcutSwitchTests(unittest.TestCase):
     def test_state_is_kept_per_key(self) -> None:
         params = {"first": "ctrl+c", "second": "ctrl+v"}
         other = SimpleNamespace(**vars(self.ctx))
-        other.key = (0, 0, 1)
+        other.key = (0, 0, (), 1)
 
         self.action.execute(self.ctx, params)
         self.action.execute(other, params)

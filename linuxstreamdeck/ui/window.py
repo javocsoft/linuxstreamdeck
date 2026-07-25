@@ -37,7 +37,17 @@ _CSS = b"""
     border-color: @accent_bg_color;
     background-color: alpha(@accent_bg_color, 0.14);
 }
+.deck-key.reserved { opacity: 0.9; }
 .statusbar { padding: 4px 10px; font-size: 0.85em; }
+.breadcrumb { padding: 2px 0; }
+/* Steps of a multi-action key (ui/steps.py): reordering and the remove button. */
+.step-row.drag-source { opacity: 0.55; }
+.step-row.drop-target {
+    background-color: alpha(@accent_bg_color, 0.14);
+    border-radius: 6px;
+}
+.step-remove { color: @error_color; }
+.step-remove:hover { background-color: alpha(@error_color, 0.15); }
 """
 
 _KEY_DRAG_PREFIX = "linuxstreamdeck-key:"
@@ -53,7 +63,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._key_pictures: list[Gtk.Picture] = []
         self._updating_pages = False
         self._updating_profiles = False
-        self._selected_page = None
+        self._selected_container = None
         self._unsaved_dialog: Adw.MessageDialog | None = None
         self._allow_close = False
         self._clipboard = None            # copied KeyConfig (for pasting)
@@ -71,6 +81,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._connect_bus()
         self._refresh_profile_dropdown()
         self._refresh_page_dropdown()
+        self._refresh_breadcrumb()
         self.connect("close-request", self._on_close_request)
 
     # ---------- construction ----------
@@ -153,6 +164,11 @@ class MainWindow(Adw.ApplicationWindow):
             orientation=Gtk.Orientation.VERTICAL,
             valign=Gtk.Align.CENTER, halign=Gtk.Align.CENTER, hexpand=True,
         )
+        # Where the grid currently is: the page, then each open folder.
+        self._breadcrumb = Gtk.Box(spacing=4, halign=Gtk.Align.CENTER)
+        self._breadcrumb.add_css_class("breadcrumb")
+        self._breadcrumb.set_margin_bottom(10)
+        grid_box.append(self._breadcrumb)
         grid = Gtk.Grid(row_spacing=10, column_spacing=10)
         rows = (self.app.deck.key_count + GRID_COLS - 1) // GRID_COLS
         for index in range(self.app.deck.key_count):
@@ -164,6 +180,7 @@ class MainWindow(Adw.ApplicationWindow):
             btn.connect("clicked", self._on_key_clicked, index)
             self._add_key_contextmenu(btn, index)
             self._add_key_shortcuts(btn, index)
+            self._add_key_activation(btn, index)
             grid.attach(btn, index % GRID_COLS, index // GRID_COLS, 1, 1)
             self._key_buttons.append(btn)
             self._key_pictures.append(pic)
@@ -172,6 +189,7 @@ class MainWindow(Adw.ApplicationWindow):
         grid_box.append(grid)
         hint = Gtk.Label(
             label="Drag to move · right-click to copy/paste · "
+                  "double-click a folder to open it · "
                   "“Test” runs the action"
         )
         hint.add_css_class("dim-label")
@@ -202,6 +220,7 @@ class MainWindow(Adw.ApplicationWindow):
         bus.subscribe("ui.screensaver_frame", self._on_screensaver_frame)
         bus.subscribe("profile.changed", self._on_profile_changed)
         bus.subscribe("page.changed", lambda t, d: self._on_page_changed())
+        bus.subscribe("folder.changed", lambda t, d: self._on_folder_changed())
         for topic in ("deck.connected", "deck.disconnected",
                       "obs.connected", "obs.disconnected"):
             bus.subscribe(topic, lambda t, d: self._update_status())
@@ -217,7 +236,97 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_key_clicked(self, btn, index: int) -> None:
         self.app.deck.record_activity()
+        if self.app.controller.is_reserved_key(index):
+            # The Back key is navigation, not a configurable key.
+            self._leave_folder()
+            return
         self._select(index)
+
+    # ---------- folders ----------
+
+    def _add_key_activation(self, btn: Gtk.Button, index: int) -> None:
+        """Double-click opens a folder; a single click still selects the key."""
+        gesture = Gtk.GestureClick(button=Gdk.BUTTON_PRIMARY)
+        gesture.connect("pressed", self._on_key_pressed, index)
+        btn.add_controller(gesture)
+
+    def _on_key_pressed(self, _gesture, n_press: int, _x, _y, index: int) -> None:
+        if n_press == 2:
+            self.open_folder(index)
+
+    def open_folder(self, index: int) -> None:
+        """Enter the folder held by a key, protecting unsaved editor changes."""
+        kc = self.app.controller.container.key(index)
+        if kc is None or kc.contents is None:
+            # A folder just chosen in the editor has no grid until it is saved,
+            # so offer that instead of silently doing nothing.
+            if self.selected == index and self.editor.has_unsaved_changes():
+                self._confirm_unsaved_changes(
+                    f"opening Key {index + 1}",
+                    lambda: self._enter_folder(index),
+                )
+            return
+        self._confirm_unsaved_changes(
+            f"opening “{kc.folder_name()}”",
+            lambda: self._enter_folder(index),
+        )
+
+    def _enter_folder(self, index: int) -> None:
+        if not self.app.controller.open_folder(index):
+            self._flash_status("This key does not hold a folder")
+
+    def _leave_folder(self) -> None:
+        self._confirm_unsaved_changes(
+            "leaving this folder",
+            self.app.controller.close_folder,
+        )
+
+    def _go_to_folder(self, path: tuple[int, ...]) -> None:
+        self._confirm_unsaved_changes(
+            "moving to another folder",
+            lambda: self.app.controller.set_folder_path(path),
+        )
+
+    def _on_folder_changed(self) -> None:
+        self._clear_selection()
+        self._refresh_breadcrumb()
+
+    def _refresh_breadcrumb(self) -> None:
+        """Rebuild the path shown above the grid: page ▸ folder ▸ folder."""
+        while (child := self._breadcrumb.get_first_child()) is not None:
+            self._breadcrumb.remove(child)
+        controller = self.app.controller
+        trail = controller.folder_trail()
+        root = Gtk.Button(label=controller.page.name)
+        root.add_css_class("flat")
+        root.set_sensitive(bool(trail))
+        root.connect("clicked", lambda _b: self._go_to_folder(()))
+        self._breadcrumb.append(root)
+        for position, (path, name) in enumerate(trail):
+            self._breadcrumb.append(Gtk.Label(label="▸"))
+            button = Gtk.Button(label=name)
+            button.add_css_class("flat")
+            last = position == len(trail) - 1
+            button.set_sensitive(not last)
+            if last:
+                button.add_css_class("heading")
+            button.connect(
+                "clicked", lambda _b, p=path: self._go_to_folder(p)
+            )
+            self._breadcrumb.append(button)
+        self._refresh_reserved_key()
+
+    def _refresh_reserved_key(self) -> None:
+        """Mark the Back slot so it does not look like a configurable key."""
+        controller = self.app.controller
+        for index, button in enumerate(self._key_buttons):
+            reserved = controller.is_reserved_key(index)
+            if reserved:
+                button.add_css_class("reserved")
+                button.set_tooltip_text("Leave this folder")
+            else:
+                button.remove_css_class("reserved")
+                button.set_tooltip_text(None)
 
     def _on_screensaver_frame(self, _topic: str, data: dict) -> None:
         for index, png in enumerate(data.get("images", ())):
@@ -231,6 +340,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _select(self, index: int, on_selected=None) -> None:
         """Request a key selection, protecting unsaved editor changes."""
+        if self.app.controller.is_reserved_key(index):
+            return
         if self.selected == index:
             if on_selected is not None:
                 on_selected()
@@ -244,7 +355,7 @@ class MainWindow(Adw.ApplicationWindow):
         if self.selected is not None and self.selected < len(self._key_buttons):
             self._key_buttons[self.selected].remove_css_class("sel")
         self.selected = index
-        self._selected_page = self.app.controller.page
+        self._selected_container = self.app.controller.container
         self._key_buttons[index].add_css_class("sel")
         self.editor.load(index)
         if on_selected is not None:
@@ -370,6 +481,7 @@ class MainWindow(Adw.ApplicationWindow):
     def _setup_key_editing(self) -> None:
         """Context menu (right-click) and copy/paste/clear actions."""
         menu = Gio.Menu()
+        menu.append("Open folder", "win.key-open")
         menu.append("Copy", "win.key-copy")
         menu.append("Paste", "win.key-paste")
         menu.append("Clear key", "win.key-clear")
@@ -380,7 +492,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._key_popover = Gtk.PopoverMenu.new_from_model(menu)
 
         self._key_actions = {}
-        for name, cb in (("key-copy", self._copy_selected),
+        for name, cb in (("key-open", self._open_selected_folder),
+                         ("key-copy", self._copy_selected),
                          ("key-paste", self._paste_selected),
                          ("key-clear", self._clear_selected),
                          ("key-export", self._export_selected),
@@ -711,7 +824,11 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_drag_prepare(self, source, x, y):
         index = self._key_at_grid_point(x, y)
-        if index is None or self.app.controller.page.key(index) is None:
+        if (
+            index is None
+            or self.app.controller.is_reserved_key(index)
+            or self.app.controller.container.key(index) is None
+        ):
             self._drag_source_index = None
             return None
         self._drag_source_index = index
@@ -735,7 +852,13 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_drag_motion(self, target, x, y):
         destination = self._key_at_grid_point(x, y)
-        if destination == self._drag_source_index:
+        if (
+            destination == self._drag_source_index
+            or (
+                destination is not None
+                and self.app.controller.is_reserved_key(destination)
+            )
+        ):
             destination = None
         self._set_drag_destination(destination)
         if self._drag_source_index is None or destination is None:
@@ -755,6 +878,7 @@ class MainWindow(Adw.ApplicationWindow):
             or source != self._drag_source_index
             or destination is None
             or source == destination
+            or self.app.controller.is_reserved_key(destination)
         ):
             log.debug(
                 "Rejected key drop: source=%r active=%r destination=%r",
@@ -809,19 +933,27 @@ class MainWindow(Adw.ApplicationWindow):
         btn.add_controller(gesture)
 
     def _on_key_right_click(self, gesture, n_press, x, y, index):
+        if self.app.controller.is_reserved_key(index):
+            return
         self._select(
             index,
             lambda: self._show_key_context_menu(index, x, y),
         )
 
     def _show_key_context_menu(self, index: int, x: float, y: float) -> None:
-        kc = self.app.controller.page.key(index)
+        controller = self.app.controller
+        kc = controller.container.key(index)
+        self._key_actions["key-open"].set_enabled(
+            kc is not None and kc.contents is not None
+        )
         self._key_actions["key-copy"].set_enabled(kc is not None)
         self._key_actions["key-clear"].set_enabled(kc is not None)
         self._key_actions["key-export"].set_enabled(
             kc is not None and not kc.is_empty()
         )
-        self._key_actions["key-paste"].set_enabled(self._clipboard is not None)
+        self._key_actions["key-paste"].set_enabled(
+            self._clipboard is not None and controller.fits_here(self._clipboard)
+        )
         pop = self._key_popover
         if pop.get_parent() is not None:
             pop.unparent()
@@ -837,7 +969,7 @@ class MainWindow(Adw.ApplicationWindow):
         sc = Gtk.ShortcutController()
         for accel, cb in (("<Control>c", self._copy_key),
                           ("<Control>v", self._paste_key),
-                          ("Delete", self._clear_key)):
+                          ("Delete", self.clear_key)):
             sc.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(accel),
                 Gtk.CallbackAction.new(lambda w, a, cb=cb, i=index: (cb(i), True)[1]),
@@ -847,7 +979,7 @@ class MainWindow(Adw.ApplicationWindow):
     # --- operations ---
 
     def _copy_key(self, index: int) -> None:
-        kc = self.app.controller.page.key(index)
+        kc = self.app.controller.container.key(index)
         self._clipboard = kc.clone() if kc is not None else None
         if self._clipboard is not None:
             self.app.bus.emit("status", text=f"Key {index + 1} copied")
@@ -856,12 +988,20 @@ class MainWindow(Adw.ApplicationWindow):
         if self._clipboard is None:
             self.app.bus.emit("status", text="No key copied")
             return
+        if self.app.controller.is_reserved_key(index):
+            return
+        if not self.app.controller.fits_here(self._clipboard):
+            self._flash_status(
+                "That folder has too many levels to fit here"
+            )
+            return
 
         def paste() -> None:
-            self.app.controller.paste_key(index, self._clipboard)
-            if self.selected == index:
-                self.editor.load(index)
-            self.app.bus.emit("status", text=f"Pasted into key {index + 1}")
+            self._replacing_folder(
+                index,
+                f"replacing Key {index + 1}",
+                lambda: self._apply_paste(index),
+            )
 
         if self.selected == index:
             self._confirm_unsaved_changes(
@@ -872,11 +1012,23 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             paste()
 
-    def _clear_key(self, index: int) -> None:
+    def _apply_paste(self, index: int) -> None:
+        self.app.controller.paste_key(index, self._clipboard)
+        if self.selected == index:
+            self.editor.load(index)
+        self.app.bus.emit("status", text=f"Pasted into key {index + 1}")
+
+    def clear_key(self, index: int) -> None:
+        """Empty a key, confirming unsaved edits and discarded folders first."""
+        if self.app.controller.is_reserved_key(index):
+            return
+
         def clear() -> None:
-            self.app.controller.clear_key(index)
-            if self.selected == index:
-                self.editor.load(index)
+            self._replacing_folder(
+                index,
+                f"clearing Key {index + 1}",
+                lambda: self._apply_clear(index),
+            )
 
         if self.selected == index:
             self._confirm_unsaved_changes(
@@ -887,10 +1039,50 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             clear()
 
+    def _apply_clear(self, index: int) -> None:
+        self.app.controller.clear_key(index)
+        if self.selected == index:
+            self.editor.load(index)
+
+    def _replacing_folder(
+        self,
+        index: int,
+        destination: str,
+        continue_action: Callable[[], None],
+    ) -> None:
+        """Confirm before an operation throws away a folder's contents."""
+        kc = self.app.controller.container.key(index)
+        contents = kc.contents if kc is not None else None
+        if contents is None or not contents.keys:
+            continue_action()
+            return
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Discard folder contents?",
+            body=(
+                f"“{kc.folder_name()}” holds {len(contents.keys)} key(s). "
+                f"Continuing by {destination} deletes them as well."
+            ),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("discard", "Delete folder")
+        dialog.set_response_appearance(
+            "discard", Adw.ResponseAppearance.DESTRUCTIVE
+        )
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect(
+            "response",
+            lambda _d, response: (
+                continue_action() if response == "discard" else None
+            ),
+        )
+        dialog.present()
+
     # --- portable single-key export / import ---
 
     def _export_key(self, index: int) -> None:
-        kc = self.app.controller.page.key(index)
+        kc = self.app.controller.container.key(index)
         if kc is None or kc.is_empty():
             self._flash_status("This key has nothing to export")
             return
@@ -966,8 +1158,14 @@ class MainWindow(Adw.ApplicationWindow):
             log.exception("Could not import the key")
             self._show_configuration_error("Import failed", str(error))
             return
+        if not self.app.controller.fits_here(imported.key):
+            self._show_configuration_error(
+                "Import failed",
+                "This key contains folders nested too deeply to fit here.",
+            )
+            return
 
-        def apply() -> None:
+        def restore() -> None:
             self.app.controller.paste_key(index, imported.key)
             if self.selected == index:
                 self.editor.load(index)
@@ -980,6 +1178,11 @@ class MainWindow(Adw.ApplicationWindow):
             if restored:
                 text += f"; restored {', '.join(restored)}"
             self._flash_status(text)
+
+        def apply() -> None:
+            self._replacing_folder(
+                index, f"replacing Key {index + 1}", restore
+            )
 
         if self.selected == index:
             self._confirm_unsaved_changes(
@@ -1016,7 +1219,11 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _clear_selected(self):
         if self.selected is not None:
-            self._clear_key(self.selected)
+            self.clear_key(self.selected)
+
+    def _open_selected_folder(self):
+        if self.selected is not None:
+            self.open_folder(self.selected)
 
     def _export_selected(self):
         if self.selected is not None:
@@ -1040,7 +1247,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_page_changed(self) -> None:
         self._refresh_page_dropdown()
-        if self._selected_page is self.app.controller.page:
+        self._refresh_breadcrumb()
+        if self._selected_container is self.app.controller.container:
             return
         self._clear_selection()
 
@@ -1049,7 +1257,7 @@ class MainWindow(Adw.ApplicationWindow):
         if self.selected is not None:
             self._key_buttons[self.selected].remove_css_class("sel")
             self.selected = None
-        self._selected_page = None
+        self._selected_container = None
 
     def _refresh_page_dropdown(self) -> None:
         self._updating_pages = True

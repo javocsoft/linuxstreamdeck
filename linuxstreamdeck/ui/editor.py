@@ -20,12 +20,15 @@ from gi.repository import Gtk  # noqa: E402
 
 from ..core import actions as action_registry  # noqa: E402
 from ..core.config import (  # noqa: E402
+    DEFAULT_FOLDER_ICON,
+    KIND_FOLDER,
     KIND_MULTI,
     KIND_PRESS,
     KIND_RANDOM,
     KIND_SINGLE,
     KIND_TOGGLE,
     ActionStep,
+    Folder,
     KeyConfig,
 )
 from .steps import AppearanceBox, StepEditor, StepList  # noqa: E402
@@ -38,6 +41,7 @@ KINDS = [
     (KIND_TOGGLE, "Toggle (ON/OFF)"),
     (KIND_RANDOM, "Random action"),
     (KIND_PRESS, "Single / double / long press"),
+    (KIND_FOLDER, "Folder"),
 ]
 KIND_IDS = [k for k, _ in KINDS]
 
@@ -50,9 +54,14 @@ class EditorPanel(Gtk.Box):
         )
         self.app = app
         self.index: int | None = None
-        self._page = None
+        self._container = None
         self._building = False
         self._baseline: KeyConfig | None = None
+        # A folder's contents are edited by navigating into it, so the editor
+        # only carries them across a save; the key type list itself changes with
+        # the nesting depth, hence a per-load copy of the offered ids.
+        self._folder: Folder | None = None
+        self._kind_ids: list[str] = list(KIND_IDS)
 
         self.title = Gtk.Label(xalign=0)
         self.title.add_css_class("title-3")
@@ -111,27 +120,55 @@ class EditorPanel(Gtk.Box):
         info.add_css_class("dim-label")
         self.body.append(info)
         self.index = None
-        self._page = None
+        self._container = None
         self._baseline = None
+        self._folder = None
 
     def load(self, index: int) -> None:
         self.index = index
-        self._page = self.app.controller.page
-        kc = self._page.key(index) or KeyConfig()
+        self._container = self.app.controller.container
+        kc = self._container.key(index) or KeyConfig()
         self.title.set_label(f"Key {index + 1}")
         self.ai_button.set_visible(True)
         self.kind_row.set_visible(True)
         self.buttons.set_visible(True)
         self._building = True
-        self.kind_dd.set_selected(KIND_IDS.index(kc.kind) if kc.kind in KIND_IDS else 0)
+        self._refresh_kind_choices(kc)
+        self.kind_dd.set_selected(
+            self._kind_ids.index(kc.kind) if kc.kind in self._kind_ids else 0
+        )
         self._building = False
         self._build_body(kc)
         self._baseline = self.current_key_config()
 
+    def _refresh_kind_choices(self, kc: KeyConfig) -> None:
+        """Offer the key types that are usable where this key lives.
+
+        A folder is dropped from the list once the nesting limit is reached,
+        and the whole list is locked while the stored key is a folder that
+        already holds keys, so its contents cannot be replaced by accident.
+        """
+        controller = self.app.controller
+        kinds = [
+            (kind, name)
+            for kind, name in KINDS
+            if kind != KIND_FOLDER
+            or kc.kind == KIND_FOLDER
+            or controller.can_add_folder()
+        ]
+        self._kind_ids = [kind for kind, _ in kinds]
+        self.kind_dd.set_model(Gtk.StringList.new([name for _, name in kinds]))
+        self.kind_dd.set_sensitive(not self._holds_folder_keys(kc))
+
+    @staticmethod
+    def _holds_folder_keys(kc: KeyConfig) -> bool:
+        contents = kc.contents
+        return contents is not None and bool(contents.keys)
+
     def has_unsaved_changes(self) -> bool:
         return (
             self.index is not None
-            and self._page is not None
+            and self._container is not None
             and self._baseline is not None
             and self.current_key_config() != self._baseline
         )
@@ -155,6 +192,8 @@ class EditorPanel(Gtk.Box):
                 kc.steps_double = self.double_press_list.get_steps()
             if self.long_press_list is not None:
                 kc.steps_long = self.long_press_list.get_steps()
+        elif kind == KIND_FOLDER:
+            kc.folder = self._folder if self._folder is not None else Folder()
         elif kind == KIND_TOGGLE:
             if self.on_list is not None:
                 kc.steps_on = self.on_list.get_steps()
@@ -175,10 +214,10 @@ class EditorPanel(Gtk.Box):
 
     def save(self) -> bool:
         """Persist the current editor state. Return whether a key was selected."""
-        if self.index is None or self._page is None:
+        if self.index is None or self._container is None:
             return False
         kc = self.current_key_config()
-        self._page.set_key(self.index, kc)
+        self._container.set_key(self.index, kc)
         self.app.controller.key_config_changed(self.index)
         self.app.config.save()
         self.app.controller.refresh()
@@ -197,7 +236,9 @@ class EditorPanel(Gtk.Box):
 
     def _current_kind(self) -> str:
         i = self.kind_dd.get_selected()
-        return KIND_IDS[i] if i != Gtk.INVALID_LIST_POSITION else KIND_SINGLE
+        if i == Gtk.INVALID_LIST_POSITION or i >= len(self._kind_ids):
+            return KIND_SINGLE
+        return self._kind_ids[i]
 
     def _open_ai_assistant(self, _button) -> None:
         if self.index is None:
@@ -210,11 +251,19 @@ class EditorPanel(Gtk.Box):
             self._load_ai_proposal,
         ).present()
 
+    def _open_folder(self, _button) -> None:
+        """Save first if needed, then go inside: the key must exist to open."""
+        if self.index is None:
+            return
+        window = self.get_root()
+        if window is not None and hasattr(window, "open_folder"):
+            window.open_folder(self.index)
+
     def _load_ai_proposal(self, key: KeyConfig) -> None:
-        if self.index is None or key.kind not in KIND_IDS:
+        if self.index is None or key.kind not in self._kind_ids:
             return
         self._building = True
-        self.kind_dd.set_selected(KIND_IDS.index(key.kind))
+        self.kind_dd.set_selected(self._kind_ids.index(key.kind))
         self._building = False
         self._build_body(key)
         self.app.bus.emit(
@@ -229,8 +278,47 @@ class EditorPanel(Gtk.Box):
         self.single_press_list = self.double_press_list = None
         self.long_press_list = None
         kind = self._current_kind()
+        self._folder = (
+            (kc.folder if kc.folder is not None else Folder())
+            if kind == KIND_FOLDER
+            else None
+        )
 
-        if kind == KIND_SINGLE:
+        if kind == KIND_FOLDER:
+            inside = len(self._folder.keys)
+            self.body.append(self._hint(
+                "A folder holds its own grid of keys, so related actions can "
+                "be grouped without spending a page. Double-click it on the "
+                "deck grid to go inside; the first key in a folder is always "
+                "Back."
+            ))
+            self.body.append(self._hint(
+                f"It currently holds {inside} key(s)." if inside
+                else "It is empty: open it and configure its keys."
+            ))
+            open_button = Gtk.Button(label="Open folder")
+            open_button.connect("clicked", self._open_folder)
+            self.body.append(open_button)
+            if self._holds_folder_keys(kc):
+                self.body.append(self._hint(
+                    "Clear this key first to change its type; its contents "
+                    "would be lost."
+                ))
+            self.body.append(Gtk.Separator())
+            self.app_main = AppearanceBox("Appearance")
+            self.app_main.load(
+                kc.label,
+                kc.icon,
+                kc.bg_color,
+                DEFAULT_FOLDER_ICON,
+                kc.font_size,
+            )
+            self.body.append(self.app_main)
+            self.body.append(self._hint(
+                "The label is the folder name."
+            ))
+
+        elif kind == KIND_SINGLE:
             self.single_editor = StepEditor(
                 self.app,
                 on_change=self._update_single_icon_preview,
@@ -450,9 +538,15 @@ class EditorPanel(Gtk.Box):
         self.save()
 
     def _wipe(self, _btn) -> None:
-        if self.index is None or self._page is None:
+        if self.index is None or self._container is None:
             return
-        self._page.set_key(self.index, None)
+        window = self.get_root()
+        if window is not None and hasattr(window, "clear_key"):
+            # The window owns the confirmations (unsaved edits, and discarding
+            # a folder's contents) and reloads this panel afterwards.
+            window.clear_key(self.index)
+            return
+        self._container.set_key(self.index, None)
         self.app.config.save()
         self.app.controller.refresh()
         self.load(self.index)

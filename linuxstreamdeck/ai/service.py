@@ -48,6 +48,9 @@ MAX_PROMPT_CHARS = 4000
 MAX_MODEL_CHARS = 160
 MAX_STEPS = 12
 MAX_TOTAL_STEPS = 20
+# A step label only names a row in the editor's list, so it stays short enough
+# to read there at a glance.
+MAX_STEP_LABEL_CHARS = 48
 MAX_CONTEXT_ITEMS = 100
 MAX_CONTEXT_SCENES = 20
 MAX_CONTEXT_SOURCES = 60
@@ -87,8 +90,11 @@ _STEP_SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        # Optional name for this step in the editor's list. Descriptive only:
+        # it never selects an action or reaches anything executable.
+        "label": {"type": "string"},
     },
-    "required": ["action", "parameters"],
+    "required": ["action", "parameters", "label"],
     "additionalProperties": False,
 }
 
@@ -151,6 +157,9 @@ Rules:
 - Use exact choice and OBS/page names when they are supplied.
 - Use sys.wait only inside multi or multi_toggle keys.
 - Keep labels short and in the same language as the user's request.
+- Give each step in a multi or multi_toggle key a short label naming what that
+  step does, so the list is easy to read. Use an empty step label when the action
+  name already says it, and on the single action of a single key.
 - Use an empty icon to inherit the first action's icon. Otherwise use only an exact
   default_icon value from the catalog.
 - Use #rrggbb background colors. Use #1e1e28 when no special color is needed.
@@ -389,20 +398,26 @@ def format_proposal(proposal: AIProposal) -> str:
         lines.append("")
         lines.append("Actions:")
         for index, step in enumerate(key.steps, 1):
-            _append_step_preview(lines, step.action, step.params, f"{index}. ")
+            _append_step_preview(
+                lines, step.action, step.params, f"{index}. ", step.label
+            )
     else:
         lines.append("")
         lines.append("ON actions:")
         if not key.steps_on:
             lines.append("  (none)")
         for index, step in enumerate(key.steps_on, 1):
-            _append_step_preview(lines, step.action, step.params, f"{index}. ")
+            _append_step_preview(
+                lines, step.action, step.params, f"{index}. ", step.label
+            )
         lines.append("")
         lines.append("OFF actions:")
         if not key.steps_off:
             lines.append("  (none)")
         for index, step in enumerate(key.steps_off, 1):
-            _append_step_preview(lines, step.action, step.params, f"{index}. ")
+            _append_step_preview(
+                lines, step.action, step.params, f"{index}. ", step.label
+            )
         if key.label_off:
             lines.append(f"OFF label: {key.label_off}")
     lines.extend([
@@ -415,10 +430,17 @@ def format_proposal(proposal: AIProposal) -> str:
 
 
 def _append_step_preview(
-    lines: list[str], action_id: str, params: dict[str, Any], prefix: str
+    lines: list[str],
+    action_id: str,
+    params: dict[str, Any],
+    prefix: str,
+    label: str = "",
 ) -> None:
     action = action_registry.get(action_id)
     name = action.name if action is not None else action_id
+    # A named step shows both, so the preview never hides which action runs.
+    if label:
+        name = f"{label} — {name}"
     details = ", ".join(f"{key}: {value}" for key, value in params.items())
     lines.append(f"{prefix}{name}" + (f" ({details})" if details else ""))
 
@@ -581,7 +603,25 @@ def _validate_step(raw: Any, context: dict[str, Any]) -> ActionStep:
         converted[param.name] = _coerce_parameter(
             action_id, param, value, converted, context
         )
-    return ActionStep(action=action_id, params=converted)
+    return ActionStep(
+        action=action_id,
+        params=converted,
+        label=_step_label(raw.get("label")),
+    )
+
+
+def _step_label(value: Any) -> str:
+    """Validate the optional name the model gave one step.
+
+    Descriptive text only: it names a row in the editor's list and is never
+    matched against an action, so it is simply bounded and flattened to a single
+    line. A model that omits it is fine; anything that is not text is not.
+    """
+    if value is None:
+        return ""
+    return " ".join(
+        _plain_string(value, "action name", MAX_STEP_LABEL_CHARS).split()
+    )
 
 
 def _coerce_parameter(

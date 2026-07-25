@@ -43,13 +43,22 @@ implemented actions, no guessing. It runs, and it's useful.
 - 🗂️ **Profiles & pages** — each profile keeps its own set of pages and keys; switch
   between "Streaming", "Work", "Gaming" in one click. Rename, delete, describe,
   or assign keys to move directly, forward or backward through that profile.
-- 🧩 **Five key types** — *single action*; *multiple actions* (run in sequence, with an
+- 🧩 **Six key types** — *single action*; *multiple actions* (run in sequence, with an
   optional **Wait** action to pause between them); *toggle (ON/OFF)* with two action
   lists and its own look per state; *random action*, which picks one of its actions
-  at each press; and *single / double / long press*, with a separate action list per
-  gesture. Multi-action keys show **RUN** with a subtle slow blue breathing halo
-  while their actions are queued or running; blocking single **Wait** and **Play
-  audio file** actions use the same feedback.
+  at each press; *single / double / long press*, with a separate action list per
+  gesture; and *folder*, which opens its own grid of keys. Multi-action keys show
+  **RUN** with a subtle slow blue breathing halo while their actions are queued or
+  running; blocking single **Wait** and **Play audio file** actions use the same
+  feedback.
+- 🏷️ **Name each action in a list** — give any step in a multiple, toggle, random
+  or press key an optional **Step name**, and the list shows it instead of the
+  action name, so a long sequence stays readable at a glance. Duplicate any step
+  to the end of the list to build the next one from it.
+- 📁 **Folders on a key** — group related actions inside a key instead of spending
+  a whole page on them. Give the folder a name and an icon, nest folders up to
+  five levels deep, and go back with the reserved first key that every folder
+  provides.
 - 🔊 **Local audio playback** — play WAV, MP3, OGG, FLAC or Opus files at a chosen
   volume, for the full file or an optional maximum duration.
 - ⏱️ **On-key timer and stopwatch** — show a live `HH:MM:SS` value in the
@@ -99,9 +108,9 @@ implemented actions, no guessing. It runs, and it's useful.
 | Area | Actions |
 | --- | --- |
 | **Scenes** | Switch program / preview · studio mode · transitions (type & duration) |
-| **Recording & streaming** | Record start/stop/pause · stream start/stop · virtual camera |
+| **Recording & streaming** | Record (start, stop or toggle) · pause recording · stream start/stop · virtual camera |
 | **Replay & capture** | Enable & save replay buffer · source screenshots to PNG |
-| **Audio** | Mute (with feedback) · raise/lower volume · set volume in dB |
+| **Audio** | Mute (with feedback) · raise/lower volume · set volume in dB. Pick a scene and the list narrows to its audio inputs, plus Desktop Audio and Mic/Aux |
 | **Sources & filters** | Show/hide sources per scene · enable/disable filters |
 | **Media** | Play / pause / restart / stop / next / previous |
 | **Advanced** | Scene collections & profiles · internal hotkeys · **raw request** (100% of the API) |
@@ -229,6 +238,14 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
 1. Click the network button in the header and set your obs-websocket host / port / password.
 2. Click a key in the grid, choose the **key type**, the category and the action, fill in
    the parameters (dropdowns are populated **live from OBS**) and press **Save**.
+   In a list of actions, each step also takes an optional **Step name**; the list
+   then shows that name instead of the action, which makes a long sequence much
+   easier to follow. Every row carries **move up**, **move down**, **duplicate** —
+   which appends a copy at the end of the list, ready to adjust — and **remove**,
+   all on the row itself, so nothing has to be opened first. Rows can also be
+   **dragged by their handle** to any position. A newly added or duplicated step
+   opens and scrolls into view, and the rows you opened or collapsed stay as you
+   left them.
 3. Under **Icon**, pick one from the built-in library, use your own image, or keep the
    action's default. When inherited, the Appearance preview shows the same default
    icon as the deck without turning it into a custom override. Add a **Label** only
@@ -239,13 +256,16 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
    both keys; dragging works in any direction. Empty keys are destinations, not
    drag sources. **Duplicate** a key with right-click → Copy, then Paste onto
    another (or `Ctrl+C`/`Ctrl+V`).
-6. **Pages** — use the menu (⋮) next to the page selector to add a new page, rename or
+6. **Folders** — set a key's type to **Folder** and save it; then double-click it
+   on the grid (or right-click → Open folder) to configure the keys it holds.
+   Pressing it on the physical deck opens it too.
+7. **Pages** — use the menu (⋮) next to the page selector to add a new page, rename or
    delete the current one. Page names must be unique within their profile.
-7. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or
+8. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or
    delete a profile. Each profile has its own pages and keys.
-8. **Stream Deck display** — use its button in the header to configure
+9. **Stream Deck display** — use its button in the header to configure
    the screen saver and what the physical deck shows after a clean exit.
-9. **About** — click the About button in the header for application details,
+10. **About** — click the About button in the header for application details,
    licensing and the GitHub link.
 
 If the selected key has unsaved edits, LinuxStreamDeck protects them before you
@@ -316,6 +336,37 @@ LinuxStreamDeck falls back to **Device default**.
 This state is applied while LinuxStreamDeck still owns the USB device during an
 orderly shutdown. A forced termination, system crash or power loss cannot
 guarantee that it will be written to the deck.
+
+### 📁 Group keys inside a folder
+
+A folder is a key that opens its own grid, so related actions can live together
+without spending a whole page on them.
+
+1. Select an empty key, set **Key type** to **Folder**, give it a **Label** (that
+   is the folder name) and optionally an **Icon** — the default is a folder
+   glyph. Press **Save**.
+2. **Double-click** the key on the grid to go inside (right-click → **Open
+   folder**, or the **Open folder** button in the editor, do the same). On the
+   physical deck a normal press opens it.
+3. Configure the keys inside exactly as anywhere else: any key type, drag & drop,
+   copy/paste, single-key export and import all work the same.
+4. The **first key of every folder is a reserved Back key** showing the folder
+   name. It cannot be configured, moved or overwritten, so the physical deck can
+   never enter a folder it is unable to leave.
+5. On screen, the path above the grid (`Page 1 ▸ Scenes ▸ Audio`) shows where you
+   are; click any step to jump straight back to it.
+
+Folders can hold folders, up to **five levels**. A folder key shows how many keys
+it holds as a small badge. Which folder is open is never saved: starting the
+application, changing page or switching profile always returns to the page root,
+while timers, stopwatches and toggle states inside a folder keep their own state
+per folder position.
+
+Copying, clearing or overwriting a folder that holds keys asks for confirmation
+first, and a folder whose type you want to change has to be cleared first, so its
+contents can never disappear silently. Exported `.lsdkey` files and `.lsdconfig`
+backups carry a folder's whole contents, including the icons and audio of the
+keys inside it.
 
 ### 🗂️ Navigate between pages from a key
 
@@ -477,7 +528,9 @@ full configuration.
 
 AI-assisted creation cannot propose **Run Command** (`sys.command`) or **Raw OBS
 Request** (`obs.raw`). Every response is validated locally against the installed
-action catalogue and converted into a preview. Nothing is executed or saved
+action catalogue and converted into a preview. Proposals with several actions
+also come with a **Step name** on each one, so the list reads as plain steps;
+the preview always shows that name next to the real action it runs. Nothing is executed or saved
 automatically: load the proposal into the existing editor, review every action
 and parameter, then press **Save** only if you want to keep it.
 
@@ -486,8 +539,9 @@ and parameter, then press **Save** only if you want to keep it.
 Use the profiles menu (⋮) in the header to choose **Export configuration** or
 **Import configuration**.
 
-- **Export** creates a portable `.lsdconfig` ZIP archive. Format v3 contains the
-  full JSON configuration, custom key icons, supported audio referenced by
+- **Export** creates a portable `.lsdconfig` ZIP archive. Format v4 contains the
+  full JSON configuration including folder keys and everything inside them,
+  custom key icons, supported audio referenced by
   **Play audio file** or a countdown timer's completion sound, screen saver and
   after-exit display settings, the selected custom exit image, and non-secret
   OBS settings, but never the OBS password or provider API keys.
@@ -505,8 +559,9 @@ Use the profiles menu (⋮) in the header to choose **Export configuration** or
   restored under `~/.config/linuxstreamdeck/imported-exit-images/`. Archive paths
   and sizes are validated before files are written. Brightness, screen saver,
   after-exit display and OBS settings are applied immediately, and OBS reconnects
-  with the imported settings. Current v3 plus older v1 and v2 exports are
-  accepted. The import keeps this computer's keyring credentials and ignores
+  with the imported settings. The current v4 plus older v1, v2 and v3 exports
+  are accepted; an older LinuxStreamDeck refuses a v4 file rather than
+  silently dropping its folders. The import keeps this computer's keyring credentials and ignores
   password fields in older exports. When moving to another computer, enter the
   OBS password and any provider API keys again.
 
@@ -517,6 +572,7 @@ Right-click a key in the grid and choose **Export key…** or **Import key…**.
 - **Export key** writes a `.lsdkey` ZIP archive with that key alone: its type,
   actions and parameters, appearance and label size, plus its custom icon and any
   audio referenced by **Play audio file** or a countdown timer's completion sound.
+  A folder key travels with every key inside it, and their assets too.
   Built-in `mdi:` icons stay as references and identical audio is stored once.
   The same size limits as a full export apply, and missing files produce a
   warning instead of failing the export.

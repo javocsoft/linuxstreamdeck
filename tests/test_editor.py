@@ -115,7 +115,10 @@ class ScreenSaverActivityTests(unittest.TestCase):
             app=SimpleNamespace(
                 deck=SimpleNamespace(
                     record_activity=lambda: calls.append("activity")
-                )
+                ),
+                controller=SimpleNamespace(
+                    is_reserved_key=lambda _index: False
+                ),
             ),
             _select=lambda index: calls.append(("select", index)),
         )
@@ -163,6 +166,11 @@ class KeyDragTests(unittest.TestCase):
         moves = []
         destinations = []
         window = SimpleNamespace(
+            app=SimpleNamespace(
+                controller=SimpleNamespace(
+                    is_reserved_key=lambda _index: False
+                )
+            ),
             _drag_source_index=11,
             _key_at_grid_point=lambda _x, _y: 1,
             _decode_key_drag=MainWindow._decode_key_drag,
@@ -188,6 +196,11 @@ class KeyDragTests(unittest.TestCase):
     def test_drop_rejects_foreign_or_stale_drag_data(self) -> None:
         moves = []
         window = SimpleNamespace(
+            app=SimpleNamespace(
+                controller=SimpleNamespace(
+                    is_reserved_key=lambda _index: False
+                )
+            ),
             _drag_source_index=4,
             _key_at_grid_point=lambda _x, _y: 9,
             _decode_key_drag=MainWindow._decode_key_drag,

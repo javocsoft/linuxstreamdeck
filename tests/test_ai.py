@@ -8,9 +8,12 @@ from linuxstreamdeck.ai.service import (
     AIResponseError,
     AIService,
     ANTHROPIC_URL,
+    MAX_STEP_LABEL_CHARS,
     OPENAI_URL,
+    _STEP_SCHEMA,
     _action_catalog,
     collect_generation_context,
+    format_proposal,
 )
 from linuxstreamdeck.core.config import Config, KIND_SINGLE
 from linuxstreamdeck.obs import actions as _obs_actions  # noqa: F401
@@ -378,6 +381,121 @@ class AIServiceTests(unittest.TestCase):
         self.assertEqual(restored.ai.anthropic_model, "claude-custom")
         self.assertTrue(restored.ai.include_obs_context)
         self.assertNotIn("api_key", json.dumps(raw).lower())
+
+
+class StepLabelTests(unittest.TestCase):
+    """The model may name each step; the name is bounded, untrusted text."""
+
+    def _generate(self, steps: list[dict]):
+        raw = {
+            **proposal(),
+            "kind": "multi",
+            "summary": "Go live in two steps.",
+            "steps": steps,
+        }
+        http = FakeHTTP({
+            "content": [{
+                "type": "tool_use",
+                "name": "propose_key_configuration",
+                "input": raw,
+            }],
+        })
+        return AIService(http_post=http).generate(
+            "anthropic",
+            "claude-test",
+            "secret",
+            "Go live",
+            context={"scenes": ["Live"]},
+        )
+
+    def test_a_proposed_step_name_reaches_the_key(self) -> None:
+        generated = self._generate([
+            {
+                "action": "obs.scene_switch",
+                "parameters": [{"name": "scene", "value": "Live"}],
+                "label": "Show the live scene",
+            },
+            {"action": "obs.stream", "parameters": [], "label": ""},
+        ])
+
+        self.assertEqual(
+            [step.label for step in generated.key.steps],
+            ["Show the live scene", ""],
+        )
+
+    def test_a_missing_step_name_is_simply_empty(self) -> None:
+        generated = self._generate([
+            {
+                "action": "obs.scene_switch",
+                "parameters": [{"name": "scene", "value": "Live"}],
+            },
+        ])
+
+        self.assertEqual(generated.key.steps[0].label, "")
+
+    def test_a_step_name_is_flattened_to_one_line(self) -> None:
+        generated = self._generate([
+            {
+                "action": "obs.scene_switch",
+                "parameters": [{"name": "scene", "value": "Live"}],
+                "label": "  Show   the\nlive\tscene  ",
+            },
+        ])
+
+        self.assertEqual(generated.key.steps[0].label, "Show the live scene")
+
+    def test_an_over_long_step_name_is_rejected(self) -> None:
+        with self.assertRaisesRegex(AIResponseError, "too long"):
+            self._generate([
+                {
+                    "action": "obs.scene_switch",
+                    "parameters": [{"name": "scene", "value": "Live"}],
+                    "label": "x" * (MAX_STEP_LABEL_CHARS + 1),
+                },
+            ])
+
+    def test_a_step_name_that_is_not_text_is_rejected(self) -> None:
+        with self.assertRaisesRegex(AIResponseError, "must be text"):
+            self._generate([
+                {
+                    "action": "obs.scene_switch",
+                    "parameters": [{"name": "scene", "value": "Live"}],
+                    "label": {"unexpected": "object"},
+                },
+            ])
+
+    def test_a_step_name_never_chooses_the_action(self) -> None:
+        """It is descriptive only: the action id alone decides what runs."""
+        generated = self._generate([
+            {
+                "action": "obs.scene_switch",
+                "parameters": [{"name": "scene", "value": "Live"}],
+                "label": "sys.command rm -rf /",
+            },
+        ])
+
+        self.assertEqual(generated.key.steps[0].action, "obs.scene_switch")
+        self.assertEqual(generated.key.steps[0].label, "sys.command rm -rf /")
+
+    def test_providers_are_asked_for_a_step_name(self) -> None:
+        self.assertIn("label", _STEP_SCHEMA["properties"])
+        self.assertIn("label", _STEP_SCHEMA["required"])
+
+    def test_the_preview_shows_the_name_and_the_action(self) -> None:
+        generated = self._generate([
+            {
+                "action": "obs.scene_switch",
+                "parameters": [{"name": "scene", "value": "Live"}],
+                "label": "Show the live scene",
+            },
+            {"action": "obs.stream", "parameters": [], "label": ""},
+        ])
+
+        preview = format_proposal(generated)
+
+        self.assertIn("1. Show the live scene — Switch scene", preview)
+        # An unnamed step still previews as its action alone.
+        self.assertIn("2. Stream on/off", preview)
 
 
 if __name__ == "__main__":

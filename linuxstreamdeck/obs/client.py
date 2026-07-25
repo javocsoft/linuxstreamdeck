@@ -240,6 +240,29 @@ class OBSClient:
         d = self.try_request("GetInputList") or {}
         return sorted(i["inputName"] for i in d.get("inputs", []))
 
+    def get_audio_sources_in_scene(self, scene: str) -> list[str]:
+        """Sources of one scene that carry audio, plus the global audio devices.
+
+        OBS has no request that lists "the audio sources of a scene": audio
+        belongs to inputs, not to scene items. So the scene's items are asked
+        one by one whether they can be muted, which is exactly what the audio
+        actions need, and anything that answers is kept.
+
+        Desktop Audio and Mic/Aux are always included even though they belong to
+        no scene, because they are the inputs people reach for most and OBS
+        keeps them audible on every scene.
+        """
+        names = list(self.get_sources_in_scene(scene))
+        specials = self.try_request("GetSpecialInputs") or {}
+        for key, value in specials.items():
+            if key != "requestType" and isinstance(value, str) and value:
+                names.append(value)
+        audio: list[str] = []
+        for name in dict.fromkeys(names):
+            if self.try_request("GetInputMute", {"inputName": name}) is not None:
+                audio.append(name)
+        return sorted(audio)
+
     def get_media_inputs(self) -> list[str]:
         d = self.try_request("GetInputList") or {}
         media_kinds = ("ffmpeg_source", "vlc_source")
