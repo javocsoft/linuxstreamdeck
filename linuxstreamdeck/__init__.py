@@ -2,4 +2,4 @@
 
 APP_ID = "com.javocsoft.LinuxStreamDeck"
 APP_NAME = "LinuxStreamDeck"
-VERSION = "0.2.2"
+VERSION = "0.2.3"
