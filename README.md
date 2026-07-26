@@ -37,7 +37,7 @@ implemented actions, no guessing. It runs, and it's useful.
 
 ## 🚀 Features
 
-- 🎬 **Deep OBS integration** — more complete than most Linux alternatives (see below).
+- 🎬 **Deep OBS integration** — covering nearly all of OBS’s features (see below).
 - 🔴 **Real-time feedback on the keys** — active scene highlighted, recording in red,
   streaming in green, muted mic marked… straight from obs-websocket events.
 - 🗂️ **Profiles & pages** — each profile keeps its own set of pages and keys; switch
