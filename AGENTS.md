@@ -57,6 +57,11 @@ TEST_CONFIG_DIR="$(mktemp -d)"
 LSD_CONFIG_DIR="$TEST_CONFIG_DIR" .venv/bin/python -m unittest discover -s tests -v
 ```
 
+`tests/test_invariants.py` is not a feature suite: it makes the silent rules of
+§5 fail loudly (BASIC font layout, `RENDER_LOCK`, the OBS request lock and the
+shutdown order). Treat a failure there as a real regression, never as a test that
+needs relaxing.
+
 Also verify behaviour with targeted isolated scripts when appropriate (see §6)
 and, for rendering, by composing key PNGs offscreen. Do **not** rely on launching
 the GUI to "see" a change (see §5).
@@ -109,8 +114,14 @@ AppStream cache for software centres, then reopen the software centre.
 Composition root is `app.py::LinuxStreamDeckApp`, which wires everything together
 and wraps a single-instance `Adw.Application`. Components communicate through a
 thread-safe **pub/sub `EventBus`**; UI never talks to the device or OBS directly.
-`LinuxStreamDeckApp` also owns shutdown: it stops controller workers before the
-HID manager and OBS client. `DeckManager.stop()` joins the screen-saver thread,
+`LinuxStreamDeckApp` also owns shutdown, in a fixed order: status icon,
+controller workers, HID manager, OBS client. Controller workers must stop before
+the HID manager so no render is submitted to a closed device, and the deck must
+stop before OBS so nothing is left waiting on a request that can no longer be
+answered. `_on_shutdown` also sets `_shutting_down` *before* stopping the icon,
+so `hides_on_close()` cannot intercept a quit already in progress. It reads like
+tidy-uppable boilerplate, so it is pinned by `ShutdownOrderTests` in
+`tests/test_invariants.py`. `DeckManager.stop()` joins the screen-saver thread,
 then the monitor thread, applies the configured clean-exit display and finally
 closes HID, so no background work outlives application teardown.
 
@@ -1110,6 +1121,17 @@ through the unsaved-change guard with `offer_save=False`, exactly like paste.
 These are hard-won and easy to reintroduce. Violating them causes intermittent,
 hard-to-diagnose failures.
 
+The four whose violation is *silent* — nothing crashes, nothing asserts, and the
+symptom only appears on some launches or under concurrency — are guarded by
+`tests/test_invariants.py`. That file tests no feature: it exists so these rules
+fail loudly instead of being enforced by prose alone. Each guard is
+**mutation-tested**, meaning it has been confirmed to fail when its invariant is
+deliberately broken; if you change one, re-confirm that, because a guard that
+cannot fail is worse than no guard. When mutation-testing by hand, purge
+`__pycache__` between runs: bytecode is invalidated on source mtime *and size*,
+so a revert that restores the same byte count within the same second is silently
+ignored and you will chase a ghost.
+
 1. **Pillow text layout must be BASIC.** Pillow's pip wheel bundles its *own*
    harfbuzz; used alongside GTK/Pango's system harfbuzz it intermittently draws
    **blank glyphs** (random per process — some launches all icons fine, others all
@@ -1125,6 +1147,11 @@ hard-to-diagnose failures.
    for the same reason: keep them expressed as `FONT_SIZE_DIVISORS` of the key
    height rather than absolute point sizes, so no choice can grow into an
    oversized mask.
+   *Guarded by* `BasicFontLayoutTests`, which records every `ImageFont.truetype`
+   call made while rendering an icon, key images, four screen-saver styles, the
+   startup sequence and the exit tiles, and fails if any of them omitted
+   `layout_engine`. Clear the cached font loaders first or a patched loader is
+   never reached.
 
 2. **Rendering is not thread-safe → `RENDER_LOCK`.** Pillow/FreeType is not
    thread-safe. Configured keys render on a worker, the screen saver renders on
@@ -1135,6 +1162,10 @@ hard-to-diagnose failures.
    `device/exit_display.py`) serializes drawing. It is reentrant so `compose()`
    can call `library.render` without deadlocking. The glyph cache is manual and
    **never caches failures** (safety net).
+   *Guarded by* `RenderLockTests`, which swaps the lock for a depth-tracking
+   proxy, patches `ImageDraw.Draw` to record anything drawn at depth 0, and also
+   pins that all five modules hold the *same* object: each imports it by value,
+   so a second lock would serialize nothing while still looking correct.
 
 3. **OBS requests must be fully serialized.** `obsws_python.ReqClient` uses a
    single websocket that is **not** thread-safe. In `obs/client.py` the `_lock`
@@ -1143,6 +1174,12 @@ hard-to-diagnose failures.
    editor dropdowns, and the render worker for `feedback()` calls like
    `obs.source_visibility` / filters that query OBS live). Overlap corrupts the
    protocol → hang at ~73% CPU and disconnect.
+   *Guarded by* `ObsRequestSerializationTests`, the only test that builds a real
+   `OBSClient` rather than a fake: a stub `send` blocks while a second thread
+   tries to get in, and a semaphore fails the test if two calls are ever inside
+   `send` at once, so it catches the overlap even if the timing shifts. It also
+   pins that a raising `send` releases the lock instead of wedging every later
+   request.
 
 4. **Single-instance app.** It is a single-instance `Adw.Application`. Editing
    `.py` files does **not** affect an already-running process, and relaunching
