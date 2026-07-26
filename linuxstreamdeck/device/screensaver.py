@@ -12,6 +12,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from ..core.config import DEFAULT_SCREENSAVER, SCREENSAVER_IDS
 from ..core.icons import RENDER_LOCK
+from .startup_animation import title_layout
 
 GRID_COLUMNS = 5
 FRAME_DELAY = 0.14
@@ -76,6 +77,15 @@ SPLIT_FLAP_WORDS = (
     "STAND BY FOR INPUT",
     "ALL SYSTEMS READY",
     "READY FOR TAKEOFF",
+)
+# What a deck too small for those spells instead. Truncating a longer word gave
+# a six-key Mini "LINUXS" and "STANDB", and a board that never becomes readable
+# is worse than a short word that does.
+SPLIT_FLAP_SHORT_WORDS = (
+    "LINUX",
+    "READY",
+    "ON AIR",
+    "LIVE",
 )
 SPLIT_FLAP_ALPHABET = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:-!"
 SPLIT_FLAP_SPIN = 2.6      # seconds of riffling before the last cell settles
@@ -873,11 +883,27 @@ def _hyperspace_canvas(size: tuple[int, int], elapsed: float) -> Image.Image:
     )
 
 
+def _flap_words(count: int) -> tuple[str, ...]:
+    """The words a board of `count` modules can actually spell.
+
+    The full phrases are exactly fifteen characters, for the 15-key deck they
+    were written for. A smaller board gets the short set rather than a cut-off
+    fragment of a long one.
+    """
+    full = tuple(word.replace(" ", "") for word in SPLIT_FLAP_WORDS)
+    if all(len(word) <= count for word in full):
+        return full
+    short = tuple(word.replace(" ", "") for word in SPLIT_FLAP_SHORT_WORDS)
+    fitting = tuple(word for word in short if len(word) <= count)
+    # A deck too small even for those still shows something rather than nothing.
+    return fitting or (full[0][:max(1, count)],)
+
+
 def _flap_word(elapsed: float, count: int) -> str:
     """The word on the board right now, centered in whatever grid this deck has."""
     cycle = SPLIT_FLAP_SPIN + SPLIT_FLAP_HOLD
-    word = SPLIT_FLAP_WORDS[int(elapsed / cycle) % len(SPLIT_FLAP_WORDS)]
-    return word.replace(" ", "")[:count].center(count)
+    words = _flap_words(count)
+    return words[int(elapsed / cycle) % len(words)].center(count)
 
 
 def _flap_state(
@@ -1193,13 +1219,16 @@ def _title_canvas(
     )
     mask = Image.new("L", size, 0)
     draw = ImageDraw.Draw(mask)
-    visible = min(len(TITLE), columns * rows)
-    for index, character in enumerate(TITLE[:visible]):
+    # Shared with the startup sequence: laid out for whatever grid exists, and
+    # shortened rather than cut when the full name does not fit. The position
+    # in reading order still drives the breathing offset, so the wave travels
+    # along the word and not along the keys.
+    for index, (cell, character) in enumerate(title_layout(columns, rows)):
         bbox = draw.textbbox((0, 0), character, font=font)
         character_width = bbox[2] - bbox[0]
         character_height = bbox[3] - bbox[1]
-        column = index % columns
-        row = index // columns
+        column = cell % columns
+        row = cell // columns
         x = (
             column * cell_width
             + (cell_width - character_width) // 2

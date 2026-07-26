@@ -13,6 +13,10 @@ from ..core.icons import RENDER_LOCK
 
 GRID_COLUMNS = 5
 TITLE = "LinuxStreamDeck"
+# Shorter forms for decks with too few keys to spell the full name, longest
+# first. A Mini has six keys, so it gets "Linux" rather than the fragment
+# "LinuxS" that simply cutting the name produced.
+TITLE_FORMS = (TITLE, "LinuxDeck", "Linux", "Deck")
 
 _FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -162,6 +166,44 @@ def startup_frames(
         )
 
     yield from frames
+
+
+def title_for(cells: int) -> str:
+    """The longest form of the name that fits in `cells` keys, or "".
+
+    Cutting the full name to length spelled fragments like "LinuxS" on a
+    six-key Mini. A shorter but complete word says far more.
+    """
+    for text in TITLE_FORMS:
+        if len(text) <= cells:
+            return text
+    return ""
+
+
+def title_layout(columns: int, rows: int) -> list[tuple[int, str]]:
+    """Which key each character of the name lands on, centered in the grid.
+
+    Returned in reading order, so the reveal still runs left to right whatever
+    the deck's shape. Shared with the `linuxstreamdeck` screen saver, which
+    would otherwise be a black screen on a deck too small for the full name.
+    """
+    columns = max(1, columns)
+    rows = max(1, rows)
+    title = title_for(columns * rows)
+    if not title:
+        return []
+    needed_rows = -(-len(title) // columns)
+    top = (rows - needed_rows) // 2
+    placed: list[tuple[int, str]] = []
+    for position, character in enumerate(title):
+        # The block is centered vertically, but each row starts at the left:
+        # these are a wrapped word, not centered lines, and a lone trailing
+        # character floating in the middle of a row reads as a mistake.
+        placed.append(
+            ((top + position // columns) * columns + position % columns,
+             character)
+        )
+    return placed
 
 
 def _frame(
@@ -314,16 +356,15 @@ def _title_canvas(
     text_mask = Image.new("L", size, 0)
     mask_draw = ImageDraw.Draw(text_mask)
     reveal_position = reveal * (len(TITLE) + 3) - 2
-    visible_characters = min(len(TITLE), columns * rows)
-    for index, character in enumerate(TITLE[:visible_characters]):
+    for index, (cell, character) in enumerate(title_layout(columns, rows)):
         local_reveal = _ease(reveal_position - index)
         if local_reveal <= 0:
             continue
         bbox = mask_draw.textbbox((0, 0), character, font=font)
         character_width = bbox[2] - bbox[0]
         character_height = bbox[3] - bbox[1]
-        column = index % columns
-        row = index // columns
+        column = cell % columns
+        row = cell // columns
         text_x = (
             column * cell_width
             + (cell_width - character_width) // 2
@@ -364,12 +405,12 @@ def _title_canvas(
 
     accent = Image.new("RGBA", size, (0, 0, 0, 0))
     accent_draw = ImageDraw.Draw(accent)
-    for index in range(visible_characters):
+    for index, (cell, _character) in enumerate(title_layout(columns, rows)):
         local_reveal = _ease(reveal_position - index)
         if local_reveal <= 0:
             continue
-        column = index % columns
-        row = index // columns
+        column = cell % columns
+        row = cell // columns
         line_width = int(cell_width * 0.42)
         line_x = column * cell_width + (cell_width - line_width) // 2
         line_y = (row + 1) * cell_height - max(8, cell_height // 7)

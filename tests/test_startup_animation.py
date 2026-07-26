@@ -175,7 +175,7 @@ class StartupAnimationPlaybackTests(unittest.TestCase):
             lambda _topic, _data: events.append("connected"),
         )
 
-        def animate(_deck, _key_count, _image_size) -> bool:
+        def animate(_deck, _key_count, _image_size, **_kwargs) -> bool:
             self.assertIsNone(self.manager.deck)
             self.assertIsNone(deck.callback)
             events.append("animation")
@@ -204,7 +204,7 @@ class StartupAnimationPlaybackTests(unittest.TestCase):
         deck = FakePhysicalDeck()
         self.manager.configure_exit_display(EXIT_DISPLAY_BLANK, "")
 
-        def cancel_animation(*_args) -> bool:
+        def cancel_animation(*_args, **_kwargs) -> bool:
             self.manager._stop.set()
             return False
 

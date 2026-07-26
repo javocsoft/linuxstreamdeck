@@ -105,6 +105,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._drag_source_index: int | None = None
         self._drag_destination_index: int | None = None
         self._last_key_click: tuple[int, float] | None = None
+        # Columns the on-screen grid is currently laid out in; see
+        # _build_key_grid. GRID_COLS is only the pre-connection default.
+        self._grid_columns = GRID_COLS
 
         css = Gtk.CssProvider()
         css.load_from_data(_CSS)
@@ -209,23 +212,12 @@ class MainWindow(Adw.ApplicationWindow):
         self._breadcrumb.add_css_class("breadcrumb")
         self._breadcrumb.set_margin_bottom(10)
         grid_box.append(self._breadcrumb)
-        grid = Gtk.Grid(row_spacing=10, column_spacing=10)
-        rows = (self.app.deck.key_count + GRID_COLS - 1) // GRID_COLS
-        for index in range(self.app.deck.key_count):
-            btn = Gtk.Button()
-            btn.add_css_class("deck-key")
-            pic = Gtk.Picture()
-            pic.set_size_request(KEY_PIXELS, KEY_PIXELS)
-            btn.set_child(pic)
-            btn.connect("clicked", self._on_key_clicked, index)
-            self._add_key_contextmenu(btn, index)
-            self._add_key_shortcuts(btn, index)
-            grid.attach(btn, index % GRID_COLS, index // GRID_COLS, 1, 1)
-            self._key_buttons.append(btn)
-            self._key_pictures.append(pic)
-        self._key_grid = grid
-        self._add_grid_dnd(grid)
-        grid_box.append(grid)
+        self._key_grid = Gtk.Grid(row_spacing=10, column_spacing=10)
+        # The drag controllers live on the grid itself, so they survive the
+        # rebuild that a deck of another shape triggers.
+        self._add_grid_dnd(self._key_grid)
+        self._build_key_grid()
+        grid_box.append(self._key_grid)
         # Wrapped and width-capped: the grid box is centered, so it takes the
         # width of its widest child. An unwrapped hint therefore made the box
         # wider than the window and ran off the edge.
@@ -259,6 +251,51 @@ class MainWindow(Adw.ApplicationWindow):
         self.set_content(view)
         self._update_status()
 
+    def _build_key_grid(self) -> None:
+        """Fill the grid with one button per key, in the deck's own columns.
+
+        Called again when a deck of another shape connects: the window is built
+        before anything is plugged in, so it starts on the MK.2 defaults and an
+        XL or a Mini has to reshape it.
+        """
+        grid = self._key_grid
+        while (child := grid.get_first_child()) is not None:
+            grid.remove(child)
+        self._key_buttons.clear()
+        self._key_pictures.clear()
+        self._grid_columns = max(1, int(self.app.deck.columns))
+        for index in range(max(1, int(self.app.deck.key_count))):
+            btn = Gtk.Button()
+            btn.add_css_class("deck-key")
+            pic = Gtk.Picture()
+            pic.set_size_request(KEY_PIXELS, KEY_PIXELS)
+            btn.set_child(pic)
+            btn.connect("clicked", self._on_key_clicked, index)
+            self._add_key_contextmenu(btn, index)
+            self._add_key_shortcuts(btn, index)
+            grid.attach(
+                btn,
+                index % self._grid_columns,
+                index // self._grid_columns,
+                1,
+                1,
+            )
+            self._key_buttons.append(btn)
+            self._key_pictures.append(pic)
+
+    def _on_deck_connected(self, _topic: str, data: dict) -> None:
+        """Reshape the on-screen grid if the deck that arrived is a different one."""
+        deck = self.app.deck
+        shape = (int(deck.key_count), max(1, int(deck.columns)))
+        if shape != (len(self._key_buttons), self._grid_columns):
+            # Every index the editor and the selection hold refers to the old
+            # grid, so both are dropped before the buttons are replaced.
+            self._clear_selection()
+            self._build_key_grid()
+            self._refresh_reserved_key()
+            self.app.controller.refresh()
+        self._update_status()
+
     def _connect_bus(self) -> None:
         bus = self.app.bus
         bus.subscribe("ui.key_image", self._on_key_image)
@@ -266,7 +303,8 @@ class MainWindow(Adw.ApplicationWindow):
         bus.subscribe("profile.changed", self._on_profile_changed)
         bus.subscribe("page.changed", lambda t, d: self._on_page_changed())
         bus.subscribe("folder.changed", lambda t, d: self._on_folder_changed())
-        for topic in ("deck.connected", "deck.disconnected",
+        bus.subscribe("deck.connected", self._on_deck_connected)
+        for topic in ("deck.disconnected",
                       "obs.connected", "obs.disconnected"):
             bus.subscribe(topic, lambda t, d: self._update_status())
         bus.subscribe("status", lambda t, d: self._flash_status(d.get("text", "")))

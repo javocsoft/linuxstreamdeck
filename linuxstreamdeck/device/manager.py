@@ -29,7 +29,12 @@ from .startup_animation import startup_frames
 log = logging.getLogger(__name__)
 
 SCAN_SECONDS = 3
+# Consecutive failed opens before saying so. A deck that has just been plugged
+# in often refuses the first attempt while it is still enumerating, and crying
+# wolf on that would be worse than staying quiet.
+OPEN_FAILURES_BEFORE_WARNING = 2
 DEFAULT_KEYS = 15            # Stream Deck MK.2
+DEFAULT_COLUMNS = 5          # ...and its 5x3 grid
 DEFAULT_IMAGE_SIZE = (72, 72)
 
 
@@ -52,6 +57,36 @@ def _device_name(device) -> str:
         return "Stream Deck"
 
 
+def _is_visual(device) -> bool:
+    """Whether the device has key displays at all.
+
+    The Stream Deck Pedal has three keys and no screens. Assumed true when the
+    driver does not say, because refusing a deck we simply failed to ask about
+    would be far worse than trying to draw on it.
+    """
+    try:
+        return bool(device.is_visual())
+    except Exception:
+        return True
+
+
+def _device_columns(device, key_count: int) -> int:
+    """Columns of the device's key grid, as `key_layout()` reports them.
+
+    Every full-deck image is split along this, so a wrong value scrambles the
+    screen saver, the startup sequence and the custom exit image across the
+    keys rather than merely looking odd.
+    """
+    try:
+        _rows, columns = device.key_layout()
+        columns = int(columns)
+    except Exception:
+        return min(DEFAULT_COLUMNS, max(1, key_count))
+    if columns < 1:
+        return min(DEFAULT_COLUMNS, max(1, key_count))
+    return columns
+
+
 class DeckManager:
     def __init__(
         self,
@@ -68,10 +103,19 @@ class DeckManager:
         self.brightness = brightness
         self.deck = None
         self.key_count = DEFAULT_KEYS
+        # Columns of the connected deck. Every full-deck image is laid out with
+        # it, so assuming 5 scrambled the art on a Mini (3) or an XL (8).
+        self.columns = DEFAULT_COLUMNS
         self.image_size = DEFAULT_IMAGE_SIZE
         # Which set of devices the "only one deck is used" notice was last
         # given for; see _report_extra_devices.
         self._reported_devices: tuple[str, ...] = ()
+        # Same idea for a deck we refuse: the scan retries every few seconds.
+        self._rejected_device: tuple[str, ...] = ()
+        # A deck that is present but will not open; see _note_open_failure.
+        self._failed_device = ""
+        self._failed_attempts = 0
+        self._reported_failure = ""
         self._lock = threading.Lock()   # HID writes are not reentrant
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -186,6 +230,52 @@ class DeckManager:
         log.warning(message)
         self.bus.emit("status", text=message)
 
+    def _reject_device(self, device) -> None:
+        """Say why a deck without displays is not taken, once per device."""
+        name = _device_name(device)
+        identity = (_device_id(device),)
+        if identity == self._rejected_device:
+            return
+        self._rejected_device = identity
+        message = (
+            f"{name} has no key displays, so it is not supported. "
+            "LinuxStreamDeck needs a deck with screens on its keys."
+        )
+        log.warning(message)
+        self.bus.emit("status", text=message)
+
+    def _note_open_failure(self, device) -> None:
+        """Say something when a deck is plugged in but will not open.
+
+        Until now the only sign was the deck never appearing, with the reason
+        buried in the log. The usual cause is the USB permission rule not being
+        installed, and the second is another program already holding the device
+        — a previous instance that never exited, most often.
+        """
+        identity = _device_id(device)
+        if identity != self._failed_device:
+            self._failed_device = identity
+            self._failed_attempts = 0
+        self._failed_attempts += 1
+        if self._failed_attempts < OPEN_FAILURES_BEFORE_WARNING:
+            return
+        if self._reported_failure == identity:
+            return
+        self._reported_failure = identity
+        message = (
+            f"{_device_name(device)} was found but could not be opened. "
+            "Check the USB permission rule (install-udev.sh, or reinstall the "
+            "package) and that no other program is using the deck."
+        )
+        log.warning(message)
+        self.bus.emit("status", text=message)
+
+    def _clear_open_failures(self) -> None:
+        """Forget the failures once a deck actually opens."""
+        self._failed_device = ""
+        self._failed_attempts = 0
+        self._reported_failure = ""
+
     def _try_open(self) -> None:
         try:
             from StreamDeck.DeviceManager import DeviceManager
@@ -204,20 +294,29 @@ class DeckManager:
                 if self._stop.is_set():
                     dev.close()
                     return
+                if not _is_visual(dev):
+                    # A Stream Deck Pedal has keys but no displays at all, and
+                    # most of this application is about what gets drawn.
+                    self._reject_device(dev)
+                    dev.close()
+                    return
                 dev.reset()
                 key_count = dev.key_count()
+                columns = _device_columns(dev, key_count)
                 fmt = dev.key_image_format()
                 image_size = tuple(fmt["size"])
                 if not self._play_startup_animation(
                     dev,
                     key_count,
                     image_size,
+                    columns=columns,
                 ):
                     if self._stop.is_set():
                         self._apply_exit_display(
                             dev,
                             key_count=key_count,
                             image_size=image_size,
+                            columns=columns,
                         )
                     dev.close()
                     return
@@ -225,19 +324,28 @@ class DeckManager:
                     raise OSError("Stream Deck disconnected during startup")
                 dev.set_key_callback(self._on_key)
                 self.deck = dev
+                self._clear_open_failures()
                 self.key_count = key_count
+                self.columns = columns
                 self.image_size = image_size
                 self.record_activity()
                 log.info(
-                    "Connected: %s (%d keys, %sx%s)",
-                    dev.deck_type(), self.key_count, *self.image_size,
+                    "Connected: %s (%d keys in %d columns, %sx%s)",
+                    dev.deck_type(), self.key_count, self.columns,
+                    *self.image_size,
                 )
                 self.bus.emit(
-                    "deck.connected", model=dev.deck_type(), keys=self.key_count
+                    "deck.connected",
+                    model=dev.deck_type(),
+                    keys=self.key_count,
+                    columns=self.columns,
                 )
                 return
             except Exception as e:
-                log.warning("Could not open %s: %s", dev, e)
+                # With the traceback: without it a TypeError from our own code
+                # reads exactly like a missing udev rule.
+                log.warning("Could not open %s: %s", dev, e, exc_info=True)
+                self._note_open_failure(dev)
                 try:
                     dev.close()
                 except Exception:
@@ -249,6 +357,7 @@ class DeckManager:
         key_count: int,
         image_size: tuple[int, int],
         native_converter=None,
+        columns: int = DEFAULT_COLUMNS,
     ) -> bool:
         """Play the exclusive pre-connection animation on an opened device."""
         last_brightness = None
@@ -261,6 +370,7 @@ class DeckManager:
                 key_count,
                 image_size,
                 self.brightness,
+                columns=columns,
             ):
                 frame_started = time.monotonic()
                 if self._stop.is_set():
@@ -383,11 +493,13 @@ class DeckManager:
         deck,
         key_count: int | None = None,
         image_size: tuple[int, int] | None = None,
+        columns: int | None = None,
     ) -> None:
         """Apply the selected persistent hardware state before closing HID."""
         mode = self._exit_display_mode
         count = self.key_count if key_count is None else key_count
         size = self.image_size if image_size is None else image_size
+        cols = self.columns if columns is None else columns
         if mode == EXIT_DISPLAY_DEFAULT:
             try:
                 deck.reset()
@@ -408,6 +520,7 @@ class DeckManager:
                     self._exit_display_image,
                     count,
                     size,
+                    columns=cols,
                 )
                 deck.set_brightness(self.brightness)
             for index, image in enumerate(images):
@@ -507,6 +620,7 @@ class DeckManager:
                         self.key_count,
                         self.image_size,
                         intensity,
+                        columns=self.columns,
                     )
                     self._show_screensaver_frame(frame)
                     remaining = frame.delay - (

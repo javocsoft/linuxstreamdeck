@@ -213,7 +213,7 @@ The `*` topic receives every event. `EventBus.dispatcher` is `GLib.idle_add` in
 the app, so subscribers always run on the GTK main thread even when the emit came
 from the deck read thread or the obs-websocket event thread.
 
-### One deck at a time
+### One deck at a time, but any shape of deck
 
 `DeckManager._try_open()` enumerates every Stream Deck and opens the **first**
 one; the rest are ignored. `_report_extra_devices()` says so on the bus instead
@@ -223,18 +223,58 @@ scan runs every `SCAN_SECONDS` for as long as nothing is connected, and it never
 opens a device just to name it — a serial number needs an open handle, and
 opening a deck disturbs the USB bus (see §5.19).
 
-Supporting more than one deck is **not** a matter of looping here. The rendering
-layer is already device-agnostic (`screensaver_frame()`, `startup_frames()` and
-`exit_image_tiles()` all take `key_count`, `key_size` and `columns`), but three
-things assume a single device and would fail *silently* rather than loudly:
-`deck.key` carries no device identity, so a press on one deck would run the
-other's key; `RuntimeKey` has no device field, so toggles, clocks, gestures and
-execution controls would be shared between decks; and `app.py` builds one
-manager, one controller and one window rather than a collection. Adding the
-device dimension to the bus and to `RuntimeKey` while there is still one deck is
-the safe order — it is verifiable against the existing suite — and what two
-decks should actually do (mirror, separate profiles, bound to a serial) is a
-configuration design question that has to come first.
+**Geometry comes from the device, never from a constant.** `_device_columns()`
+reads `key_layout()` and `DeckManager.columns` carries it to every full-deck
+renderer: `startup_frames()`, `screensaver_frame()` and `exit_image_tiles()` all
+split their canvas along it. Assuming five columns scrambled the screen saver,
+the startup sequence and the custom exit image on every model that is not the
+15-key original — a Mini has three columns, an XL eight. Per-key rendering was
+always fine, because `compose()` takes the real key size, and every HID write
+goes through `PILHelper.to_native_key_format()`, which applies each model's own
+size, flip and rotation.
+
+`MainWindow` builds its grid through `_build_key_grid()` rather than once at
+startup: the window exists before anything is plugged in, so it opens on the
+MK.2 defaults and `_on_deck_connected` reshapes it when a deck of another shape
+arrives, dropping the selection first because every index the editor holds
+refers to the old grid. `GRID_COLS` is only the pre-connection default.
+
+**Anything that spreads text one character per key has to shrink, not truncate.**
+`startup_animation.title_layout()` places the name across whatever grid exists,
+picking the longest entry of `TITLE_FORMS` that fits — a six-key Mini gets
+`Linux`, not the fragment `LinuxS` that cutting the name to length produced. The
+block is centered vertically but each row starts at the left, because these are
+a wrapped word rather than centered lines. The `linuxstreamdeck` screen saver
+shares that helper: it is nothing *but* the title, so returning an empty layout
+there would be a black screen that looks broken.
+
+The Split-Flap Board has the same problem and its own answer:
+`_flap_words()` falls back to `SPLIT_FLAP_SHORT_WORDS` when the fifteen-character
+phrases do not fit, because a board that spells `LINUXS` and `STANDB` never
+becomes readable.
+
+A deck with no key displays is refused outright: `_is_visual()` gates it and
+`_reject_device()` explains why, once per device. The Stream Deck Pedal has three
+keys and no screens, and most of this application is about what gets drawn. When
+the driver cannot answer, the deck is **assumed** visual — refusing one we merely
+failed to ask about would be worse than trying to draw on it.
+
+**Every broad handler in this module keeps its traceback.** `_try_open()` catches
+`Exception` on purpose — it drives a hotplug loop over hardware that fails for a
+dozen legitimate reasons — but it logs with `exc_info=True`, because without it a
+`TypeError` from our own code reads exactly like a missing udev rule and costs a
+bisection to find. `OpenFailureLoggingTests` pins that, and it is mutation-tested.
+`_note_open_failure()` also surfaces a status message after
+`OPEN_FAILURES_BEFORE_WARNING` consecutive failures on the same device: the
+reason used to live only in the log, so the symptom was a deck that silently
+never appeared. It waits for a second failure because a deck just plugged in
+often refuses the first attempt while it is still enumerating.
+
+Everything above is verified in simulation for every model the library knows
+(`tests/test_multi_deck.py`), but only the 15-key original has been run on real
+hardware. Supporting more than one deck at once is a different problem: `deck.key`
+carries no device identity, `RuntimeKey` has no device field, and `app.py` builds
+one manager, one controller and one window rather than a collection.
 
 ### Physical deck startup and connection ordering
 
