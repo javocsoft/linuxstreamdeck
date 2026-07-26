@@ -161,5 +161,194 @@ class AudioSourceLookupTests(unittest.TestCase):
         self.assertEqual(self.client.get_audio_sources_in_scene("Live"), [])
 
 
+class GroupedSources:
+    """A scene tree the way obs-websocket v5 actually reports one.
+
+    A group is a scene item of the scene, but its children are not: they are
+    only reachable through GetGroupSceneItemList, keyed by the group's name,
+    and GetSceneItemId only answers for the container that directly holds the
+    source.
+    """
+
+    def __init__(self, scenes: dict[str, list], groups: dict[str, list[str]]):
+        self.scenes = scenes
+        self.groups = groups
+        self.asked: list[tuple[str, dict | None]] = []
+        self.state = SimpleNamespace(current_scene="Live")
+        self.connected = True
+        self._next_id = 100
+
+    def request(self, name: str, data: dict | None = None):
+        self.asked.append((name, data))
+        data = data or {}
+        if name == "GetSceneItemList":
+            return {"sceneItems": self._items(data["sceneName"])}
+        if name == "GetGroupSceneItemList":
+            group = data["sceneName"]
+            if group not in self.groups:
+                raise RuntimeError(f"{group} is not a group")
+            return {
+                "sceneItems": [
+                    {"sourceName": child} for child in self.groups[group]
+                ]
+            }
+        if name == "GetSceneItemId":
+            container, source = data["sceneName"], data["sourceName"]
+            held = (
+                self.groups[container]
+                if container in self.groups
+                else [
+                    item["sourceName"] for item in self._items(container)
+                ]
+            )
+            if source not in held:
+                # What OBS answers for a source the container does not hold.
+                raise RuntimeError(f"{source} not found in {container}")
+            self._next_id += 1
+            return {"sceneItemId": self._next_id}
+        if name in ("GetSceneItemEnabled",):
+            return {"sceneItemEnabled": True}
+        return {}
+
+    def try_request(self, name: str, data: dict | None = None):
+        try:
+            return self.request(name, data)
+        except Exception:
+            return None
+
+    def _items(self, scene: str) -> list[dict]:
+        return [
+            {"sourceName": entry, "isGroup": entry in self.groups}
+            for entry in self.scenes.get(scene, [])
+        ]
+
+
+class GroupedSourceTests(unittest.TestCase):
+    """A source inside a group must be listed, and must still be operable.
+
+    Only the group used to appear in the editor's Source dropdown, so nothing
+    inside it could be picked at all.
+    """
+
+    def setUp(self) -> None:
+        self.obs = GroupedSources(
+            scenes={"Live": ["Camera", "Overlays", "Music"]},
+            groups={"Overlays": ["Logo", "Lower third"]},
+        )
+        self.client = OBSClient(SimpleNamespace())
+        self.client.request = self.obs.request        # type: ignore[method-assign]
+        self.client.try_request = self.obs.try_request  # type: ignore[method-assign]
+        self.client.state = self.obs.state
+        # `feedback()` returns early on a disconnected client.
+        self.client.connected = True
+
+    def test_sources_inside_a_group_are_listed(self) -> None:
+        self.assertEqual(
+            self.client.get_sources_in_scene("Live"),
+            ["Camera", "Overlays", "Logo", "Lower third", "Music"],
+        )
+
+    def test_the_group_itself_is_still_offered(self) -> None:
+        """Toggling a whole group is a normal thing to want."""
+        self.assertIn("Overlays", self.client.get_sources_in_scene("Live"))
+
+    def test_children_follow_their_group_in_the_list(self) -> None:
+        listed = self.client.get_sources_in_scene("Live")
+        self.assertEqual(
+            listed.index("Logo") - listed.index("Overlays"), 1
+        )
+
+    def test_a_scene_with_no_groups_is_unchanged(self) -> None:
+        self.obs.scenes["Plain"] = ["Camera", "Music"]
+        self.assertEqual(
+            self.client.get_sources_in_scene("Plain"), ["Camera", "Music"]
+        )
+
+    def test_a_source_in_two_groups_is_listed_once(self) -> None:
+        self.obs.scenes["Live"] = ["Overlays", "More"]
+        self.obs.groups["More"] = ["Logo", "Ticker"]
+        self.assertEqual(
+            self.client.get_sources_in_scene("Live"),
+            ["Overlays", "Logo", "Lower third", "More", "Ticker"],
+        )
+
+    def test_a_top_level_source_resolves_against_the_scene(self) -> None:
+        container, item_id = self.client.find_scene_item("Live", "Camera")
+
+        self.assertEqual(container, "Live")
+        self.assertIsInstance(item_id, int)
+
+    def test_a_grouped_source_resolves_against_its_group(self) -> None:
+        """OBS addresses group children by the group name, not the scene."""
+        container, item_id = self.client.find_scene_item("Live", "Logo")
+
+        self.assertEqual(container, "Overlays")
+        self.assertIsInstance(item_id, int)
+
+    def test_an_unknown_source_is_reported_clearly(self) -> None:
+        with self.assertRaises(LookupError) as caught:
+            self.client.find_scene_item("Live", "Nothing")
+
+        self.assertIn("Nothing", str(caught.exception))
+
+    def test_an_empty_scene_falls_back_to_the_current_one(self) -> None:
+        container, _ = self.client.find_scene_item("", "Camera")
+
+        self.assertEqual(container, "Live")
+
+    def test_showing_a_grouped_source_targets_its_group(self) -> None:
+        """The whole point: the action has to work on what it now lists."""
+        action = action_registry.get("obs.source_visibility")
+
+        action.execute(
+            context(self.client),
+            {"scene": "Live", "source": "Logo", "mode": "show"},
+        )
+
+        applied = [
+            data for name, data in self.obs.asked if name == "SetSceneItemEnabled"
+        ]
+        self.assertEqual(len(applied), 1)
+        self.assertEqual(applied[0]["sceneName"], "Overlays")
+        self.assertTrue(applied[0]["sceneItemEnabled"])
+
+    def test_feedback_reads_a_grouped_source_without_raising(self) -> None:
+        action = action_registry.get("obs.source_visibility")
+
+        result = action.feedback(
+            context(self.client), {"scene": "Live", "source": "Logo"}
+        )
+
+        self.assertEqual(result, {"active": True})
+
+    def test_feedback_on_a_missing_source_is_silent(self) -> None:
+        action = action_registry.get("obs.source_visibility")
+
+        self.assertIsNone(
+            action.feedback(
+                context(self.client), {"scene": "Live", "source": "Gone"}
+            )
+        )
+
+    def test_audio_inputs_inside_a_group_are_offered(self) -> None:
+        """The audio list is built on the same walk, so it inherits the fix."""
+        asked: list[str] = []
+
+        def try_request(name: str, data: dict | None = None):
+            if name == "GetInputMute":
+                asked.append(data["inputName"])
+                return {"inputMuted": False} if data["inputName"] == "Logo" else None
+            if name == "GetSpecialInputs":
+                return {}
+            return self.obs.try_request(name, data)
+
+        self.client.try_request = try_request  # type: ignore[method-assign]
+
+        self.assertEqual(
+            self.client.get_audio_sources_in_scene("Live"), ["Logo"]
+        )
+        self.assertIn("Logo", asked)
+
+
 if __name__ == "__main__":
     unittest.main()

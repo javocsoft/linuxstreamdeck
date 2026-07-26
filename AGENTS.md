@@ -646,6 +646,24 @@ anything — stays outside the expander on purpose. It is a safety statement abo
 what the feature does, not configuration, so it must be readable without
 expanding anything.
 
+**A group's children are not items of the scene.** OBS reports a group as one
+scene item and hides everything inside it: `GetSceneItemList` never mentions the
+children, and `GetSceneItemId` against the scene fails for them, because OBS
+addresses them with the **group's** name in place of the scene's. Both halves of
+that have to be handled together, or the feature is broken either way round:
+
+- `get_sources_in_scene()` walks each `isGroup` item through
+  `GetGroupSceneItemList` and lists its children after it, keeping the group
+  itself selectable and de-duplicating a source that sits in two groups. Without
+  this the editor offered only the group, so nothing inside it could be picked.
+- `find_scene_item()` returns the **container** that actually holds a source,
+  not the scene, trying the scene first and then its groups. Every later
+  scene-item request must be addressed to that container. Listing nested sources
+  without this would offer sources that then fail on press.
+
+OBS does not allow a group inside a group, so one level is the whole tree.
+`get_audio_sources_in_scene()` is built on the same walk and inherits the fix.
+
 The **Audio** actions scope their input list to a scene:
 `OBSClient.get_audio_sources_in_scene()` takes the scene's items, adds the
 special inputs from `GetSpecialInputs` (Desktop Audio, Mic/Aux belong to no

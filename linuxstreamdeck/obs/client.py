@@ -285,10 +285,76 @@ class OBSClient:
         return d.get("profiles", [])
 
     def get_sources_in_scene(self, scene: str) -> list[str]:
+        """Every source of a scene, including the ones inside its groups.
+
+        A group is a scene item like any other, and its children are **not**
+        items of the scene at all: they only appear through
+        `GetGroupSceneItemList`, keyed by the group's own name. Listing the
+        scene alone therefore showed the group and hid everything in it.
+
+        The group itself stays in the list — toggling a whole group is a normal
+        thing to want — and its children follow it, so the order reads like the
+        OBS sources panel. OBS does not allow a group inside a group, so one
+        level is the entire tree.
+        """
         if not scene:
             scene = self.state.current_scene
         d = self.try_request("GetSceneItemList", {"sceneName": scene}) or {}
-        return [i["sourceName"] for i in d.get("sceneItems", [])]
+        names: list[str] = []
+        for item in d.get("sceneItems", []):
+            name = item.get("sourceName", "")
+            if not name:
+                continue
+            names.append(name)
+            if item.get("isGroup"):
+                names.extend(self._group_children(name))
+        # The same source may sit in more than one group; keep its first place.
+        return list(dict.fromkeys(names))
+
+    def _group_children(self, group: str) -> list[str]:
+        d = self.try_request("GetGroupSceneItemList", {"sceneName": group}) or {}
+        return [
+            item["sourceName"]
+            for item in d.get("sceneItems", [])
+            if item.get("sourceName")
+        ]
+
+    def _groups_in_scene(self, scene: str) -> list[str]:
+        d = self.try_request("GetSceneItemList", {"sceneName": scene}) or {}
+        return [
+            item["sourceName"]
+            for item in d.get("sceneItems", [])
+            if item.get("isGroup") and item.get("sourceName")
+        ]
+
+    def find_scene_item(self, scene: str, source: str) -> tuple[str, int]:
+        """The container actually holding `source`, and its scene item id.
+
+        OBS addresses a group's children with the **group's** name in place of
+        the scene's, so asking the scene for a nested source simply fails. The
+        container is returned rather than the scene because every later
+        scene-item request has to be addressed to it too.
+        """
+        if not scene:
+            scene = self.state.current_scene
+        source = source or ""
+        try:
+            found = self.request(
+                "GetSceneItemId", {"sceneName": scene, "sourceName": source}
+            )
+            return scene, int(found["sceneItemId"])
+        except Exception:
+            # Not a direct item of the scene: it may live in one of its groups.
+            pass
+        for group in self._groups_in_scene(scene):
+            try:
+                found = self.request(
+                    "GetSceneItemId", {"sceneName": group, "sourceName": source}
+                )
+                return group, int(found["sceneItemId"])
+            except Exception:
+                continue
+        raise LookupError(f"'{source}' is not in scene '{scene}'")
 
     def get_filters_of_source(self, source: str) -> list[str]:
         d = self.try_request("GetSourceFilterList", {"sourceName": source}) or {}

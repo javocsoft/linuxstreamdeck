@@ -379,11 +379,13 @@ class SourceVisibility(Action):
     ]
 
     def _item_id(self, ctx, p) -> tuple[str, int]:
-        scene = p.get("scene") or ctx.obs.state.current_scene
-        d = ctx.obs.request(
-            "GetSceneItemId", {"sceneName": scene, "sourceName": p.get("source", "")}
+        # Resolved through the client, because a source inside a group is not
+        # an item of the scene: it answers to the group's name instead, and
+        # every request below has to be addressed to whatever holds it.
+        return ctx.obs.find_scene_item(
+            p.get("scene") or ctx.obs.state.current_scene,
+            p.get("source", ""),
         )
-        return scene, d["sceneItemId"]
 
     def execute(self, ctx, p):
         scene, item_id = self._item_id(ctx, p)
