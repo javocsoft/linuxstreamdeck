@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import math
+import random
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from ..core.config import DEFAULT_SCREENSAVER, SCREENSAVER_IDS
 from ..core.icons import RENDER_LOCK
@@ -27,6 +28,54 @@ _FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
     "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
 )
+
+# Fonts that may carry half-width katakana, for the Matrix Code rain. None of
+# them is a dependency: `_matrix_alphabet()` falls back to Latin and digits when
+# the machine has no Japanese font, so the style always renders.
+_CJK_FONT_CANDIDATES = (
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansJP-Regular.otf",
+    "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
+    "/usr/share/fonts/truetype/vlgothic/VL-Gothic-Regular.ttf",
+    "/usr/share/fonts/truetype/takao-gothic/TakaoPGothic.ttf",
+    "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf",
+    "/usr/share/fonts/OTF/NotoSansCJK-Regular.ttc",
+)
+
+# The film's glyph set: half-width katakana, digits and a few symbols.
+MATRIX_KATAKANA = "".join(chr(code) for code in range(0xFF66, 0xFF9E))
+MATRIX_SYMBOLS = "0123456789:=*+-<>|"
+# Latin shapes narrow enough to read as code when no katakana is installed.
+MATRIX_FALLBACK = "ACDEFHIJKLMNPRSTUVWXYZ"
+# How fast a single cell swaps its glyph, in changes per second. Each cell gets
+# its own rate inside this range, so the screen mutates cell by cell instead of
+# every glyph changing on the same tick.
+MATRIX_CHURN_RANGE = (1.6, 4.6)
+
+# Ember Field. Its noise is generated once from this seed and then only
+# scrolled, so a given `elapsed` always paints the same flame.
+EMBER_SEED = 0x5EED
+EMBER_FLARE_CYCLES = 0.13
+
+# Hyperspace. Stars are spread by the golden angle so no two share a spoke.
+HYPERSPACE_STARS = 108
+HYPERSPACE_GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
+HYPERSPACE_SURGE_CYCLES = 0.08
+
+# Split-Flap Board. Every word is laid out one character per key, padded or cut
+# to whatever grid the deck actually has.
+SPLIT_FLAP_WORDS = (
+    "LINUXSTREAMDECK",
+    "STAND BY FOR INPUT",
+    "ALL SYSTEMS READY",
+    "READY FOR TAKEOFF",
+)
+SPLIT_FLAP_ALPHABET = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:-!"
+SPLIT_FLAP_SPIN = 2.6      # seconds of riffling before the last cell settles
+SPLIT_FLAP_HOLD = 3.4      # seconds the finished word stays up
+SPLIT_FLAP_RATE = 5.5      # how many flaps a cell still has to turn, squared
 
 
 @dataclass(frozen=True)
@@ -62,7 +111,16 @@ def screensaver_frame(
         "aurora_flow": _aurora_canvas,
         "orbital_core": _orbital_canvas,
         "circuit_pulse": _circuit_canvas,
+        "ember_field": _ember_canvas,
+        "hyperspace": _hyperspace_canvas,
+        "matrix_code": _matrix_canvas,
         "hal_9000": _hal_canvas,
+        "split_flap": lambda size, now: _split_flap_canvas(
+            size,
+            now,
+            cols,
+            rows,
+        ),
         "linuxstreamdeck": lambda size, now: _title_canvas(
             size,
             now,
@@ -76,6 +134,12 @@ def screensaver_frame(
         "aurora_flow": 0.72 + 0.13 * _wave(elapsed * 0.20),
         "orbital_core": 0.78 + 0.12 * _wave(elapsed * 0.32),
         "circuit_pulse": 0.70 + 0.18 * _wave(elapsed * 0.42),
+        # Both ride their own animation's wave, so the device brightness
+        # surges with the flame and with the jump instead of against them.
+        "ember_field": 0.68 + 0.18 * _wave(elapsed * EMBER_FLARE_CYCLES),
+        "hyperspace": 0.70 + 0.18 * _wave(elapsed * HYPERSPACE_SURGE_CYCLES),
+        "matrix_code": 0.66 + 0.10 * _wave(elapsed * 0.24),
+        "split_flap": 0.66 + 0.08 * _wave(elapsed * 0.18),
         # Deliberately on the same slow wave as the iris, so the device
         # brightness breathes with the eye instead of against it.
         "hal_9000": 0.52 + 0.24 * _wave(elapsed * HAL_BREATH_CYCLES),
@@ -502,6 +566,380 @@ def _circuit_canvas(size: tuple[int, int], elapsed: float) -> Image.Image:
     ).convert("RGB")
 
 
+@lru_cache(maxsize=8)
+def _noise_strip(seed: int, cells: int, size: tuple[int, int]) -> Image.Image:
+    """Smooth value noise, twice `size` tall and seamless top to bottom.
+
+    Built once per layer and then only scrolled, because `screensaver_frame` is
+    a pure function of `elapsed`: `Image.effect_noise()` draws from Pillow's own
+    generator and answers differently on every call, which would both flicker
+    and stop the same moment painting the same frame.
+
+    The grid repeats its first row and column in its last, so upscaling it makes
+    a tile that meets itself without a seam; stacking that tile twice gives a
+    strip any vertical offset can be cropped out of.
+    """
+    width, height = size
+    rng = random.Random(seed)
+    values = [[rng.randrange(256) for _ in range(cells)] for _ in range(cells)]
+    raw = bytes(
+        values[y % cells][x % cells]
+        for y in range(cells + 1)
+        for x in range(cells + 1)
+    )
+    tile = Image.frombytes("L", (cells + 1, cells + 1), raw).resize(
+        size, Image.Resampling.BICUBIC
+    )
+    strip = Image.new("L", (width, height * 2))
+    strip.paste(tile, (0, 0))
+    strip.paste(tile, (0, height))
+    return strip
+
+
+@lru_cache(maxsize=4)
+def _ember_falloff(size: tuple[int, int]) -> Image.Image:
+    """Full strength along the bottom edge, nothing at the top."""
+    width, height = size
+    ramp = Image.new("L", (1, height))
+    draw = ImageDraw.Draw(ramp)
+    for y in range(height):
+        # Curved, so the flame keeps a hot base and thin licking tips, while
+        # still climbing far enough to reach the top row of keys.
+        draw.point((0, y), fill=round(255 * (y / max(1, height - 1)) ** 1.65))
+    return ramp.resize(size, Image.Resampling.BILINEAR)
+
+
+@lru_cache(maxsize=1)
+def _ember_palette() -> bytes:
+    """Intensity to flame colour: black, deep red, orange, yellow, white."""
+    stops = (
+        (0, (0, 0, 0)),
+        (40, (26, 0, 0)),
+        (96, (150, 20, 4)),
+        (160, (238, 104, 12)),
+        (212, (255, 194, 58)),
+        (255, (255, 248, 220)),
+    )
+    table = bytearray()
+    for value in range(256):
+        lower = max(s for s in stops if s[0] <= value)
+        upper = min((s for s in stops if s[0] >= value), default=stops[-1])
+        span = upper[0] - lower[0]
+        ratio = 0.0 if span == 0 else (value - lower[0]) / span
+        table.extend(
+            round(start + (end - start) * ratio)
+            for start, end in zip(lower[1], upper[1])
+        )
+    return bytes(table)
+
+
+def _ember_canvas(size: tuple[int, int], elapsed: float) -> Image.Image:
+    """Flame climbing the deck: three noise layers scrolling at three speeds."""
+    width, height = size
+    layers = (
+        # seed, cells, speed in canvas heights per second, weight
+        (EMBER_SEED, 7, 0.30, 1.0),
+        (EMBER_SEED + 1, 13, 0.46, 0.55),
+        (EMBER_SEED + 2, 23, 0.72, 0.30),
+    )
+    flame: Image.Image | None = None
+    for seed, cells, speed, weight in layers:
+        strip = _noise_strip(seed, cells, size)
+        offset = int(elapsed * speed * height) % height
+        layer = strip.crop((0, offset, width, offset + height))
+        flame = layer if flame is None else Image.blend(flame, layer, weight / 2)
+
+    flame = ImageChops.multiply(flame, _ember_falloff(size))
+    # A slow swell, so the whole bed of fire surges and settles.
+    flare = 1.30 + 0.55 * _wave(elapsed * EMBER_FLARE_CYCLES)
+    flame = flame.point(lambda value: min(255, round(value * flare)))
+    fire = flame.convert("P")
+    fire.putpalette(_ember_palette())
+    canvas = fire.convert("RGBA")
+
+    # Embers lifting off the flame into the dark above it, each on its own loop
+    # and drifting sideways as it climbs.
+    # Drawn as a mask and colored afterwards, never as blurred RGBA: blurring
+    # RGBA mixes the black of its transparent pixels into the colour, which
+    # turned these embers into olive rings instead of warm points of light.
+    trace = Image.new("L", size, 0)
+    draw = ImageDraw.Draw(trace)
+    radius = max(1.5, height / 90)
+    for index in range(20):
+        rise = 0.20 + (index % 7) * 0.05
+        progress = (elapsed * rise + index * 0.137) % 1.0
+        x = (
+            index * 97.3 + math.sin(elapsed * 0.7 + index) * width * 0.04
+        ) % width
+        y = height * (1.0 - progress)
+        # Brightest just off the flame, cooling to nothing near the top.
+        level = (1.0 - progress) ** 1.4
+        draw.ellipse(
+            (x - radius, y - radius * 1.6, x + radius, y + radius * 1.6),
+            fill=round(255 * level),
+        )
+    trace = trace.filter(ImageFilter.GaussianBlur(max(1, height // 110)))
+    sparks = Image.new("RGBA", size, (0, 0, 0, 0))
+    sparks.paste((255, 206, 96, 255), (0, 0), trace)
+    return Image.alpha_composite(canvas, sparks).convert("RGB")
+
+
+def _scatter(index: int, salt: int) -> float:
+    """A stable, well-spread 0..1 for an index, with no linear drift.
+
+    Hyperspace needs this rather than `index * some_fraction`: its angles are
+    already a linear sequence, so a linear phase correlates with them and every
+    star lands on one curve — at `elapsed` 0 the whole field collapsed into a
+    spiral, and the saver starts at 0 every time it wakes.
+    """
+    return (((index + 1) * 2654435761) ^ (salt * 40503)) % 65521 / 65521.0
+
+
+def _hyperspace_canvas(size: tuple[int, int], elapsed: float) -> Image.Image:
+    """Stars accelerating out of the vanishing point and stretching to streaks."""
+    width, height = size
+    canvas = Image.new("RGBA", size, (0, 0, 0, 255))
+    center = (width * 0.5, height * 0.5)
+    # Far enough that a star leaves by the corner, not by the nearest edge.
+    reach = math.hypot(width, height) * 0.5
+    unit = min(width, height)
+    surge = 0.72 + 0.60 * _wave(elapsed * HYPERSPACE_SURGE_CYCLES)
+
+    field = Image.new("RGBA", size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(field)
+    for index in range(HYPERSPACE_STARS):
+        angle = index * HYPERSPACE_GOLDEN_ANGLE
+        speed = 0.19 + _scatter(index, 2) * 0.34
+        progress = (elapsed * speed * surge + _scatter(index, 1)) % 1.0
+        trail = max(0.0, progress - 0.06)
+        # Squared travel: slow near the middle, tearing past at the edge, which
+        # is what turns a moving dot into a streak without faking motion blur.
+        near = reach * trail ** 2.4
+        far = reach * progress ** 2.4
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        # Fades in out of the vanishing point instead of popping into being.
+        level = min(1.0, progress * 3.4)
+        warm = index % 9 == 0
+        color = (
+            round((255 if warm else 205) * level),
+            round((228 if warm else 226) * level),
+            round((196 if warm else 255) * level),
+            round(255 * level),
+        )
+        draw.line(
+            (
+                (center[0] + cos_a * near, center[1] + sin_a * near),
+                (center[0] + cos_a * far, center[1] + sin_a * far),
+            ),
+            fill=color,
+            width=max(1, round(unit * 0.007 * (0.35 + progress))),
+        )
+
+    glow = field.filter(ImageFilter.GaussianBlur(max(2, round(unit * 0.02))))
+    glow.putalpha(glow.getchannel("A").point(lambda value: int(value * 0.6)))
+    canvas = Image.alpha_composite(canvas, glow)
+
+    core = Image.new("RGBA", size, (0, 0, 0, 0))
+    core_radius = unit * 0.06 * (0.8 + 0.35 * _wave(elapsed * 0.3))
+    ImageDraw.Draw(core).ellipse(
+        _circle(center, core_radius), fill=(150, 205, 255, 130)
+    )
+    core = core.filter(ImageFilter.GaussianBlur(max(4, round(unit * 0.07))))
+    return Image.alpha_composite(
+        Image.alpha_composite(canvas, core),
+        field,
+    ).convert("RGB")
+
+
+def _flap_word(elapsed: float, count: int) -> str:
+    """The word on the board right now, centered in whatever grid this deck has."""
+    cycle = SPLIT_FLAP_SPIN + SPLIT_FLAP_HOLD
+    word = SPLIT_FLAP_WORDS[int(elapsed / cycle) % len(SPLIT_FLAP_WORDS)]
+    return word.replace(" ", "")[:count].center(count)
+
+
+def _flap_state(
+    index: int, count: int, moment: float, letters: str
+) -> tuple[str, str, float]:
+    """What module `index` shows at `moment`: outgoing, incoming and flip.
+
+    `flip` runs 0 to 1 through one leaf turning, and is exactly 1 when the
+    module has stopped on its character.
+    """
+    # Staggered, so the word assembles across the deck rather than landing all
+    # at once.
+    settles = SPLIT_FLAP_SPIN * (0.30 + 0.70 * index / max(1, count - 1))
+    target = SPLIT_FLAP_ALPHABET.find(letters[index])
+    target = target if target >= 0 else 0
+    remaining = max(0.0, settles - moment)
+    # Squared, so a module slows down as it closes on its character.
+    position = remaining * remaining * SPLIT_FLAP_RATE
+    turns = int(position)
+    size_of = len(SPLIT_FLAP_ALPHABET)
+    return (
+        SPLIT_FLAP_ALPHABET[(target - turns - 1) % size_of],
+        SPLIT_FLAP_ALPHABET[(target - turns) % size_of],
+        # Counts down to the target, so the last leaf still animates into place
+        # and `position == 0` is the module at rest.
+        1.0 - (position - turns),
+    )
+
+
+def _split_flap_canvas(
+    size: tuple[int, int],
+    elapsed: float,
+    columns: int,
+    rows: int,
+) -> Image.Image:
+    """One flap module per key, riffling to a word and settling left to right."""
+    width, height = size
+    canvas = Image.new("RGBA", size, (0, 0, 0, 255))
+    cell_width = width // max(1, columns)
+    cell_height = height // max(1, rows)
+    count = max(1, columns * rows)
+
+    letters = _flap_word(elapsed, count)
+    moment = elapsed % (SPLIT_FLAP_SPIN + SPLIT_FLAP_HOLD)
+
+    board = Image.new("RGBA", size, (0, 0, 0, 0))
+    for index in range(count):
+        outgoing, incoming, flip = _flap_state(index, count, moment, letters)
+        board.paste(
+            _flap_module(
+                (cell_width, cell_height), outgoing, incoming, flip
+            ),
+            ((index % columns) * cell_width, (index // columns) * cell_height),
+        )
+
+    glow = board.filter(ImageFilter.GaussianBlur(max(2, cell_height // 14)))
+    glow.putalpha(glow.getchannel("A").point(lambda value: int(value * 0.35)))
+    return Image.alpha_composite(
+        Image.alpha_composite(canvas, glow),
+        board,
+    ).convert("RGB")
+
+
+def _flap_module(
+    cell: tuple[int, int], outgoing: str, incoming: str, flip: float
+) -> Image.Image:
+    """One module: the new glyph above the seam, the old below, flap between.
+
+    That is how a real board reads mid-turn — the leaf that is falling still
+    carries the *old* character on its way down and the *new* one on its way
+    back up — and it is what stops this looking like letters simply changing.
+    """
+    cell_width, cell_height = cell
+    module = Image.new("RGBA", cell, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(module)
+    inset = max(1, cell_height // 24)
+    draw.rounded_rectangle(
+        (inset, inset, cell_width - inset - 1, cell_height - inset - 1),
+        radius=max(2, cell_height // 9),
+        fill=(19, 15, 11, 255),
+    )
+    seam = cell_height // 2
+    amber = (255, 176, 42, 255)
+
+    top = _flap_glyph(incoming, cell).crop((0, 0, cell_width, seam))
+    module.paste(amber, (0, 0), top)
+    # At rest both halves are the same character. The old one only shows below
+    # the seam while the leaf carrying the new one is still on its way down —
+    # leaving it there when settled spelled every word with mismatched halves.
+    bottom = _flap_glyph(
+        incoming if flip >= 1.0 else outgoing, cell
+    ).crop((0, seam, cell_width, cell_height))
+    module.paste(amber, (0, seam), bottom)
+
+    # The leaf in motion, foreshortening to nothing as it passes horizontal.
+    if flip < 1.0:
+        if flip < 0.5:
+            leaf = _flap_glyph(outgoing, cell).crop((0, 0, cell_width, seam))
+            leaf_height = max(1, round(seam * (1.0 - flip * 2)))
+            offset = seam - leaf_height
+        else:
+            leaf = _flap_glyph(incoming, cell).crop(
+                (0, seam, cell_width, cell_height)
+            )
+            leaf_height = max(1, round(seam * (flip - 0.5) * 2))
+            offset = seam
+        leaf = leaf.resize(
+            (cell_width, leaf_height), Image.Resampling.BILINEAR
+        )
+        panel = Image.new("RGBA", (cell_width, leaf_height), (26, 20, 14, 255))
+        module.paste(panel, (0, offset))
+        module.paste(amber, (0, offset), leaf)
+
+    draw.line((0, seam, cell_width, seam), fill=(0, 0, 0, 255), width=1)
+    return module
+
+
+def _matrix_canvas(size: tuple[int, int], elapsed: float) -> Image.Image:
+    """Columns of glyphs raining down black, each with a white-hot leading cell.
+
+    Unlike `digital_rain`, which is abstract cyan dashes, this one is actual
+    characters: half-width katakana where a Japanese font is installed, Latin
+    and digits where none is.
+    """
+    width, height = size
+    canvas = Image.new("RGBA", size, (0, 0, 0, 255))
+    # Twelve rows over the deck: denser reads more like the film, but the deck
+    # is only 72 px per key and the glyphs stop being legible on the hardware.
+    cell_height = max(8, height // 12)
+    cell_width = max(6, round(cell_height * 0.74))
+    columns = max(1, width // cell_width)
+    rows = max(1, height // cell_height)
+    alphabet = _matrix_alphabet()
+    cell = (cell_width, cell_height)
+
+    rain = Image.new("RGBA", size, (0, 0, 0, 0))
+    for column in range(columns):
+        # Everything about a column is derived from its index, so a given
+        # `elapsed` always paints the same frame.
+        speed = 3.4 + (column * 7 % 11) * 0.55        # cells per second
+        trail = 7 + (column * 5 % 9)
+        cycle = rows + trail + 5
+        head = int((elapsed * speed + column * 3.7) % cycle) - trail
+        x = column * cell_width
+
+        for step in range(trail):
+            row = head - step
+            if not 0 <= row < rows:
+                continue
+            if step == 0:
+                # The leading cell is almost white; it is what reads as the
+                # front of the stream rather than just the brightest green.
+                color = (208, 255, 214)
+            else:
+                fade = 1.0 - (step - 1) / max(1, trail - 1)
+                color = (
+                    round(24 * fade),
+                    round(58 + 197 * fade),
+                    round(28 + 58 * fade),
+                )
+            seed = column * 71 + row * 131
+            low, high = MATRIX_CHURN_RANGE
+            rate = low + (seed % 7) / 6 * (high - low)
+            churn = int(elapsed * rate + seed % 13 * 0.31)
+            glyph = alphabet[(seed + churn * 37) % len(alphabet)]
+            rain.paste(
+                (*color, 255),
+                (x, row * cell_height),
+                _matrix_glyph(glyph, cell),
+            )
+
+    # The film mirrors its glyphs. Flipping the finished layer does that for
+    # every one of them at no cost: it also swaps the column order, which is
+    # invisible because each column is seeded from its own index anyway.
+    rain = rain.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+
+    glow = rain.filter(ImageFilter.GaussianBlur(max(2, cell_height // 3)))
+    glow.putalpha(glow.getchannel("A").point(lambda value: int(value * 0.55)))
+    return Image.alpha_composite(
+        Image.alpha_composite(canvas, glow),
+        rain,
+    ).convert("RGB")
+
+
 def _hal_canvas(size: tuple[int, int], elapsed: float) -> Image.Image:
     """A single red camera eye, centered and still, breathing on pure black.
 
@@ -718,6 +1156,100 @@ def _path_trail(
 
 def _wave(cycles: float) -> float:
     return 0.5 + 0.5 * math.sin(cycles * math.tau)
+
+
+def _glyph_ink(font, char: str) -> Image.Image:
+    image = Image.new("L", (48, 48), 0)
+    ImageDraw.Draw(image).text((8, 8), char, font=font, fill=255)
+    return image
+
+
+def _draws_katakana(font) -> bool:
+    """Whether a font really has the glyph or is substituting `.notdef`.
+
+    `getbbox()` cannot tell: a Latin-only font answers with a perfectly good
+    box for any codepoint at all, because it measures the empty rectangle it
+    puts there instead. So the glyph is drawn next to an unassigned private-use
+    codepoint, which nothing has: if the font drew the same thing twice, it has
+    neither, and accepting it would fill the rain with tofu boxes.
+    """
+    sample = _glyph_ink(font, MATRIX_KATAKANA[0])
+    if sample.getbbox() is None:
+        return False
+    notdef = _glyph_ink(font, "")
+    return ImageChops.difference(sample, notdef).getbbox() is not None
+
+
+@lru_cache(maxsize=1)
+def _matrix_font_path() -> str:
+    """A local font that really has half-width katakana, or "" if none does."""
+    for path in _CJK_FONT_CANDIDATES:
+        if not Path(path).exists():
+            continue
+        try:
+            font = ImageFont.truetype(
+                path, 16, layout_engine=ImageFont.Layout.BASIC
+            )
+            usable = _draws_katakana(font)
+        except Exception:
+            continue
+        if usable:
+            return path
+    return ""
+
+
+@lru_cache(maxsize=1)
+def _matrix_alphabet() -> str:
+    """What the rain is made of, given the fonts this machine actually has."""
+    katakana = MATRIX_KATAKANA if _matrix_font_path() else MATRIX_FALLBACK
+    return katakana + MATRIX_SYMBOLS
+
+
+@lru_cache(maxsize=16)
+def _matrix_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    path = _matrix_font_path()
+    if path:
+        try:
+            return ImageFont.truetype(
+                path, size, layout_engine=ImageFont.Layout.BASIC
+            )
+        except Exception:
+            pass
+    return _font(size)
+
+
+def _glyph_mask(char: str, cell: tuple[int, int], font) -> Image.Image:
+    """One glyph centered in a cell, as a grayscale mask.
+
+    Frames colorize these instead of drawing text: painting text per cell per
+    frame is far too slow once a frame has hundreds of cells, and the alphabets
+    involved are small enough that every glyph ever needed stays cached.
+    """
+    cell_width, cell_height = cell
+    mask = Image.new("L", cell, 0)
+    box = font.getbbox(char)
+    if box is None:
+        return mask
+    ImageDraw.Draw(mask).text(
+        (
+            (cell_width - (box[2] - box[0])) / 2 - box[0],
+            (cell_height - (box[3] - box[1])) / 2 - box[1],
+        ),
+        char,
+        font=font,
+        fill=255,
+    )
+    return mask
+
+
+@lru_cache(maxsize=256)
+def _matrix_glyph(char: str, cell: tuple[int, int]) -> Image.Image:
+    return _glyph_mask(char, cell, _matrix_font(max(6, round(cell[1] * 0.92))))
+
+
+@lru_cache(maxsize=256)
+def _flap_glyph(char: str, cell: tuple[int, int]) -> Image.Image:
+    return _glyph_mask(char, cell, _font(max(8, round(cell[1] * 0.62))))
 
 
 @lru_cache(maxsize=24)

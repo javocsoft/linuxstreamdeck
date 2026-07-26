@@ -21,7 +21,7 @@ from linuxstreamdeck.device.screensaver import TITLE, screensaver_frame
 
 class ScreenSaverFrameTests(unittest.TestCase):
     def test_every_installed_style_fills_the_deck_and_animates(self) -> None:
-        self.assertEqual(len(SCREENSAVER_CHOICES), 7)
+        self.assertEqual(len(SCREENSAVER_CHOICES), 11)
 
         for style, _name, _description in SCREENSAVER_CHOICES:
             first = screensaver_frame(style, 0.0, 15, (72, 72), 47)
@@ -75,6 +75,324 @@ class ScreenSaverFrameTests(unittest.TestCase):
         )
         total_pixels = 15 * 72 * 72
         self.assertGreater(black_pixels / total_pixels, 0.70)
+
+
+class EmberScreenSaverTests(unittest.TestCase):
+    """Flame climbing the deck, built from noise that must never be random."""
+
+    @staticmethod
+    def _frame(elapsed: float, intensity: int = 100):
+        return screensaver_frame("ember_field", elapsed, 15, (72, 72), intensity)
+
+    @staticmethod
+    def _mean(image) -> list[float]:
+        return ImageStat.Stat(image).mean
+
+    def test_the_style_is_installed(self) -> None:
+        self.assertIn(
+            "ember_field", [choice[0] for choice in SCREENSAVER_CHOICES]
+        )
+
+    def test_the_flame_is_warm(self) -> None:
+        red, green, blue = self._mean(_deck_image(self._frame(1.3).images))
+
+        self.assertGreater(red, 40)
+        self.assertGreater(red, green * 1.5)
+        self.assertGreater(green, blue)
+
+    def test_it_burns_from_the_bottom_up(self) -> None:
+        images = self._frame(1.3).images
+        rows = [
+            sum(self._mean(images[column + row * 5])[0] for column in range(5))
+            for row in range(3)
+        ]
+
+        self.assertGreater(rows[2], rows[1])
+        self.assertGreater(rows[1], rows[0])
+
+    def test_the_same_moment_always_paints_the_same_frame(self) -> None:
+        """The whole reason its noise is seeded rather than generated."""
+        for before, after in zip(self._frame(2.0).images, self._frame(2.0).images):
+            self.assertIsNone(ImageChops.difference(before, after).getbbox())
+
+    def test_the_noise_is_rebuilt_identically_from_its_seed(self) -> None:
+        """A random tile would flicker and break that determinism."""
+        from linuxstreamdeck.device import screensaver as module
+
+        first = module._noise_strip(module.EMBER_SEED, 7, (72, 72)).copy()
+        module._noise_strip.cache_clear()
+        self.addCleanup(module._noise_strip.cache_clear)
+        second = module._noise_strip(module.EMBER_SEED, 7, (72, 72))
+
+        self.assertIsNone(ImageChops.difference(first, second).getbbox())
+
+    def test_the_noise_meets_itself_without_a_seam(self) -> None:
+        """It is cropped at any offset, so its top edge has to match its bottom."""
+        from linuxstreamdeck.device import screensaver as module
+
+        strip = module._noise_strip(module.EMBER_SEED, 7, (72, 72))
+        self.addCleanup(module._noise_strip.cache_clear)
+        top = strip.crop((0, 0, 72, 1))
+        wrapped = strip.crop((0, 72, 72, 73))
+
+        self.assertIsNone(ImageChops.difference(top, wrapped).getbbox())
+
+
+class HyperspaceScreenSaverTests(unittest.TestCase):
+    """Stars stretching out of the vanishing point."""
+
+    @staticmethod
+    def _frame(elapsed: float, intensity: int = 100):
+        return screensaver_frame("hyperspace", elapsed, 15, (72, 72), intensity)
+
+    def test_the_style_is_installed(self) -> None:
+        self.assertIn(
+            "hyperspace", [choice[0] for choice in SCREENSAVER_CHOICES]
+        )
+
+    def test_the_field_surrounds_the_vanishing_point_from_the_first_frame(
+        self,
+    ) -> None:
+        """The saver starts at 0 every time it wakes, so 0 has to look right.
+
+        Phases derived linearly from the star index lined up with the angles,
+        which are linear too, and the whole field collapsed onto one spiral —
+        leaving entire quadrants of the deck empty.
+        """
+        deck = _deck_image(self._frame(0.0).images)
+        half_width, half_height = deck.width // 2, deck.height // 2
+        quadrants = (
+            (0, 0, half_width, half_height),
+            (half_width, 0, deck.width, half_height),
+            (0, half_height, half_width, deck.height),
+            (half_width, half_height, deck.width, deck.height),
+        )
+
+        for box in quadrants:
+            self.assertIsNotNone(
+                deck.crop(box).getbbox(), f"quadrant {box} is empty"
+            )
+
+    def test_the_vanishing_point_is_the_brightest_part_of_the_deck(self) -> None:
+        """Everything radiates from the middle key, so that is where it packs."""
+        deck = _deck_image(self._frame(3.0).images)
+        middle = ImageStat.Stat(deck.crop((144, 72, 216, 144))).mean[2]
+
+        for box in ((0, 72, 72, 144), (288, 72, 360, 144),
+                    (144, 0, 216, 72), (144, 144, 216, 216)):
+            self.assertGreater(middle, ImageStat.Stat(deck.crop(box)).mean[2])
+
+    def test_the_streaks_reach_the_outer_keys(self) -> None:
+        """A warp that only lit the middle would just be a blinking dot."""
+        images = self._frame(3.0).images
+
+        for corner in (0, 4, 10, 14):
+            self.assertIsNotNone(
+                images[corner].getbbox(), f"key {corner} is empty"
+            )
+
+    def test_the_same_moment_always_paints_the_same_frame(self) -> None:
+        for before, after in zip(self._frame(2.0).images, self._frame(2.0).images):
+            self.assertIsNone(ImageChops.difference(before, after).getbbox())
+
+
+class SplitFlapScreenSaverTests(unittest.TestCase):
+    """One flap module per key, riffling to a word and settling."""
+
+    def setUp(self) -> None:
+        from linuxstreamdeck.device import screensaver as module
+
+        self.module = module
+
+    @staticmethod
+    def _frame(elapsed: float, intensity: int = 100):
+        return screensaver_frame("split_flap", elapsed, 15, (72, 72), intensity)
+
+    def _states(self, moment: float, count: int = 15):
+        letters = self.module._flap_word(0.0, count)
+        return [
+            self.module._flap_state(index, count, moment, letters)
+            for index in range(count)
+        ]
+
+    def test_the_style_is_installed(self) -> None:
+        self.assertIn(
+            "split_flap", [choice[0] for choice in SCREENSAVER_CHOICES]
+        )
+
+    def test_every_word_fills_the_deck_exactly(self) -> None:
+        for word in self.module.SPLIT_FLAP_WORDS:
+            self.assertEqual(len(word.replace(" ", "")), 15, word)
+
+    def test_the_board_settles_on_the_word(self) -> None:
+        letters = self.module._flap_word(0.0, 15)
+        self.assertEqual(letters, "LINUXSTREAMDECK")
+
+        for index, (_out, incoming, flip) in enumerate(
+            self._states(self.module.SPLIT_FLAP_SPIN)
+        ):
+            self.assertEqual(incoming, letters[index])
+            self.assertEqual(flip, 1.0)
+
+    def test_the_modules_are_still_turning_at_the_start(self) -> None:
+        turning = [
+            incoming
+            for _out, incoming, flip in self._states(0.0)
+            if flip < 1.0
+        ]
+
+        self.assertEqual(len(turning), 15)
+
+    def test_the_word_assembles_from_the_left(self) -> None:
+        """A staggered settle, not the whole board landing at once."""
+        midway = self._states(self.module.SPLIT_FLAP_SPIN * 0.6)
+        settled = [index for index, state in enumerate(midway) if state[2] == 1.0]
+
+        self.assertTrue(settled, "nothing had settled halfway through")
+        self.assertLess(max(settled), 14, "everything settled at once")
+        self.assertEqual(settled, list(range(len(settled))))
+
+    def test_the_words_cycle(self) -> None:
+        cycle = self.module.SPLIT_FLAP_SPIN + self.module.SPLIT_FLAP_HOLD
+        shown = [
+            self.module._flap_word(cycle * step + 0.1, 15)
+            for step in range(len(self.module.SPLIT_FLAP_WORDS))
+        ]
+
+        self.assertEqual(len(set(shown)), len(self.module.SPLIT_FLAP_WORDS))
+
+    def test_a_settled_module_shows_one_character_in_both_halves(self) -> None:
+        """It used to keep the previous character below the seam, which spelled
+        every word with mismatched halves."""
+        settled = self.module._flap_module((72, 72), "Q", "A", 1.0)
+        clean = self.module._flap_module((72, 72), "A", "A", 1.0)
+
+        self.assertIsNone(ImageChops.difference(settled, clean).getbbox())
+
+    def test_a_turning_module_does_show_both_characters(self) -> None:
+        mid_turn = self.module._flap_module((72, 72), "Q", "A", 0.25)
+        clean = self.module._flap_module((72, 72), "A", "A", 1.0)
+
+        self.assertIsNotNone(ImageChops.difference(mid_turn, clean).getbbox())
+
+    def test_a_smaller_deck_still_gets_a_full_board(self) -> None:
+        frame = screensaver_frame("split_flap", 3.0, 6, (72, 72), 60, columns=3)
+
+        self.assertEqual(len(frame.images), 6)
+        self.assertTrue(all(image.getbbox() is not None for image in frame.images))
+
+
+class MatrixScreenSaverTests(unittest.TestCase):
+    """Columns of real glyphs raining down black, not abstract dashes."""
+
+    def setUp(self) -> None:
+        from linuxstreamdeck.device import screensaver as module
+
+        self.module = module
+        self.addCleanup(self._clear_font_caches)
+        self._clear_font_caches()
+
+    def _clear_font_caches(self) -> None:
+        for cached in (
+            self.module._matrix_font_path,
+            self.module._matrix_alphabet,
+            self.module._matrix_font,
+            self.module._matrix_glyph,
+        ):
+            cached.cache_clear()
+
+    @staticmethod
+    def _frame(elapsed: float, intensity: int = 100):
+        return screensaver_frame("matrix_code", elapsed, 15, (72, 72), intensity)
+
+    def test_the_style_is_installed(self) -> None:
+        self.assertIn(
+            "matrix_code", [choice[0] for choice in SCREENSAVER_CHOICES]
+        )
+
+    def test_the_rain_is_green_on_black(self) -> None:
+        red, green, blue = ImageStat.Stat(
+            _deck_image(self._frame(0.9).images)
+        ).mean
+
+        self.assertGreater(green, 6)
+        self.assertGreater(green, red * 3)
+        self.assertGreater(green, blue * 2)
+
+    def test_it_reaches_every_key_rather_than_one_corner(self) -> None:
+        images = self._frame(0.9).images
+
+        lit = sum(1 for image in images if image.getbbox() is not None)
+        self.assertGreaterEqual(lit, 12)
+
+    def test_the_leading_cell_of_a_stream_is_near_white(self) -> None:
+        """What reads as the front of the stream, not just brighter green."""
+        deck = _deck_image(self._frame(0.9).images)
+        whitest = max(
+            deck.getcolors(maxcolors=360 * 216),
+            key=lambda entry: min(entry[1]),
+        )[1]
+
+        self.assertGreater(min(whitest), 150)
+
+    def test_the_same_moment_always_paints_the_same_frame(self) -> None:
+        """Frames are generated from `elapsed`, so they cannot drift."""
+        for before, after in zip(self._frame(1.4).images, self._frame(1.4).images):
+            self.assertIsNone(ImageChops.difference(before, after).getbbox())
+
+    def test_the_glyphs_mutate_without_the_whole_screen_changing(self) -> None:
+        first = _deck_image(self._frame(2.0).images)
+        # A twelfth of a second: far too short for a stream to advance a cell,
+        # so any change is glyphs swapping in place.
+        second = _deck_image(self._frame(2.08).images)
+
+        self.assertIsNotNone(ImageChops.difference(first, second).getbbox())
+        changed = ImageChops.difference(first, second).convert("L")
+        moved = sum(1 for value in changed.histogram()[24:])
+        self.assertGreater(moved, 0)
+
+    def test_katakana_is_used_when_a_japanese_font_is_installed(self) -> None:
+        if not self.module._matrix_font_path():
+            self.skipTest("no Japanese font on this machine")
+
+        self.assertIn(
+            self.module.MATRIX_KATAKANA[0], self.module._matrix_alphabet()
+        )
+
+    def test_it_still_renders_with_no_japanese_font_at_all(self) -> None:
+        """The .deb only suggests one, so most machines may not have it."""
+        with patch.object(self.module, "_CJK_FONT_CANDIDATES", ()):
+            self._clear_font_caches()
+            alphabet = self.module._matrix_alphabet()
+            frame = self._frame(0.9)
+
+            self.assertEqual(self.module._matrix_font_path(), "")
+            self.assertNotIn(self.module.MATRIX_KATAKANA[0], alphabet)
+            self.assertIn("A", alphabet)
+            self.assertTrue(
+                any(image.getbbox() is not None for image in frame.images),
+                "the fallback alphabet rendered nothing at all",
+            )
+
+    def test_a_font_without_katakana_is_not_accepted(self) -> None:
+        """Being on disk is not enough; it has to draw the glyph."""
+        with patch.object(
+            self.module,
+            "_CJK_FONT_CANDIDATES",
+            self.module._FONT_CANDIDATES,     # Latin-only DejaVu and friends
+        ):
+            self._clear_font_caches()
+            self.assertEqual(self.module._matrix_font_path(), "")
+
+
+def _deck_image(images) -> "object":
+    """The 15 key images reassembled into the 5x3 canvas they were split from."""
+    from PIL import Image
+
+    deck = Image.new("RGB", (5 * 72, 3 * 72))
+    for index, image in enumerate(images):
+        deck.paste(image, ((index % 5) * 72, (index // 5) * 72))
+    return deck
 
 
 class HalScreenSaverTests(unittest.TestCase):

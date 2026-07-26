@@ -180,6 +180,7 @@ Homepage: $HOMEPAGE
 Installed-Size: $SIZE_KB
 Depends: python3 (>= 3.10), ca-certificates, python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-secret-1, gir1.2-gstreamer-1.0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gnome-keyring, libhidapi-libusb0, python3-pil, python3-websocket
 Recommends: ydotool, playerctl
+Suggests: fonts-noto-cjk
 Description: Elgato Stream Deck controller for Linux with OBS Studio integration
  LinuxStreamDeck is a GTK4/Libadwaita desktop application to control the Elgato
  Stream Deck on Linux, built around full OBS Studio integration (obs-websocket

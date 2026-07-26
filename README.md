@@ -72,7 +72,7 @@ implemented actions, no guessing. It runs, and it's useful.
   Duplicate any key with right-click → Copy/Paste (or `Ctrl+C`/`Ctrl+V`).
 - 🖥️ **Virtual deck** — the on-screen grid mirrors the physical device, so you can
   configure and test everything **without the hardware even connected**.
-- 🌌 **Animated full-deck screen saver** — choose from seven coordinated effects,
+- 🌌 **Animated full-deck screen saver** — choose from eleven coordinated effects,
   set the idle delay and independent light intensity, and preview them on both
   the virtual and physical decks.
 - 📴 **Display after exit** — leave the physical deck on its firmware standby
@@ -313,12 +313,27 @@ the physical Stream Deck; the virtual deck always shows the configured keys.
 ### 🌌 Configure the animated screen saver
 
 Click the **Stream Deck display** button in the header to enable an animation
-after the selected idle period. Choose **Neon Pipes**, **Digital Rain**,
-**Aurora Flow**, **Orbital Core**, **Circuit Pulse**, **HAL 9000** — a single
-red camera eye watching from the middle of the deck, breathing slowly and
-casting its light on the keys around it — or **LinuxStreamDeck**, which breathes
-the name softly across a black full-deck background. The idle delay accepts 1 to
-1440 minutes. **Light intensity** ranges from 5 to
+after the selected idle period. The idle delay accepts 1 to 1440 minutes.
+
+| Effect | What it looks like |
+| --- | --- |
+| **Neon Pipes** | Retro glowing pipes grow and turn across the whole deck. |
+| **Digital Rain** | Cyan data trails fall through a dark digital grid. |
+| **Aurora Flow** | Blue, violet and teal light waves drift slowly. |
+| **Orbital Core** | A core with rotating rings and orbiting particles. |
+| **Circuit Pulse** | Energy pulses travel a circuit-board network. |
+| **Ember Field** | Flames climb from the bottom of the deck, embers lifting off into the dark. |
+| **Hyperspace** | Stars accelerate out of the middle key and stretch into streaks. |
+| **Matrix Code** | Columns of mirrored glyphs rain down, each stream led by a white-hot character. |
+| **HAL 9000** | One red camera eye watching from the middle, breathing and lighting the keys around it. |
+| **Split-Flap Board** | Every key becomes a flap module, riffling and settling into a word. |
+| **LinuxStreamDeck** | The name breathing softly across a black full-deck background. |
+
+**Matrix Code** draws half-width katakana where a Japanese font is installed and
+falls back to Latin letters and digits where none is, so it always works. If you
+want the authentic glyphs, install one: `sudo apt install fonts-noto-cjk`. The
+`.deb` only *suggests* that package rather than recommending it, so installing
+LinuxStreamDeck does not drag in 91 MB of fonts. **Light intensity** ranges from 5 to
 100% and is independent of the normal deck brightness.
 
 **Preview now** starts the selected effect immediately on the physical and

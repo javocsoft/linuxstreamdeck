@@ -97,9 +97,29 @@ SCREENSAVER_CHOICES = (
         "Energy pulses travel through a refined circuit-board network.",
     ),
     (
+        "ember_field",
+        "Ember Field",
+        "Flames climb from the bottom of the deck and flare in the dark.",
+    ),
+    (
+        "hyperspace",
+        "Hyperspace",
+        "Stars stretch into streaks as the deck jumps to light speed.",
+    ),
+    (
+        "matrix_code",
+        "Matrix Code",
+        "Green glyph columns rain down a black screen and mutate as they fall.",
+    ),
+    (
         "hal_9000",
         "HAL 9000",
         "A lone red camera eye breathing calmly, lighting the keys around it.",
+    ),
+    (
+        "split_flap",
+        "Split-Flap Board",
+        "Amber flap modules riffle and settle, one character per key.",
     ),
     (
         "linuxstreamdeck",

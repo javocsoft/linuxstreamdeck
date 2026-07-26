@@ -69,7 +69,10 @@ GNOME Keyring, GStreamer plus its base/good plugins, Pillow, hidapi,
 websocket-client and `ca-certificates` come from apt `Depends`. `ydotool` (key
 injection) and `playerctl` (media transport) are `Recommends`, so apt installs
 them by default while the package still installs where they are unavailable and
-the app degrades to a status message. AI provider HTTPS
+the app degrades to a status message. `fonts-noto-cjk` is only a `Suggests`: it
+supplies the katakana of the **Matrix Code** screen saver, which falls back to
+Latin without it, and 91 MB of fonts is far too much to pull in by default for
+one animation. AI provider HTTPS
 calls and the local audio wrapper use the Python standard library / system GI
 bindings, so there is no additional pip dependency. The launcher
 `/usr/bin/linuxstreamdeck` runs the system `python3` with those paths on
@@ -225,20 +228,84 @@ current configured brightness in `finally` on every exit path.
 | Field | Range/default | Meaning |
 | --- | --- | --- |
 | `enabled` | `False` | Start automatically after inactivity. |
-| `style` | `neon_pipes` | One of the seven installed animation IDs. |
+| `style` | `neon_pipes` | One of the eleven installed animation IDs. |
 | `idle_minutes` | 1-1440, default 5 | Delay since the last tracked physical or virtual-deck activity. |
 | `intensity` | 5-100, default 35 | Screen-saver brightness, independent of normal deck brightness. |
 
 The available ID/display-name pairs are `neon_pipes` / **Neon Pipes**,
 `digital_rain` / **Digital Rain**, `aurora_flow` / **Aurora Flow**,
 `orbital_core` / **Orbital Core**, `circuit_pulse` / **Circuit Pulse**,
-`hal_9000` / **HAL 9000** and `linuxstreamdeck` / **LinuxStreamDeck**. An unknown
+`ember_field` / **Ember Field**, `hyperspace` / **Hyperspace**,
+`matrix_code` / **Matrix Code**, `hal_9000` / **HAL 9000**,
+`split_flap` / **Split-Flap Board** and
+`linuxstreamdeck` / **LinuxStreamDeck**. An unknown
 persisted ID falls back to Neon Pipes. Adding a style means three edits that must
 stay together: the tuple in `SCREENSAVER_CHOICES`, the renderer in the
 `renderers` table and its entry in `brightness_factors` — a style present in the
 first but missing from either table raises a `KeyError` on the frame that
 selects it. Nothing else enumerates them: the settings dialog builds its list
 from `SCREENSAVER_CHOICES`.
+
+**Ember Field** is procedural on purpose. The obvious way to do fire is the
+Doom algorithm, where each frame is derived from the previous one, and **that
+cannot work here**: `screensaver_frame()` is a pure function of `elapsed`, so
+nothing may accumulate between frames. It instead scrolls three `_noise_strip()`
+layers at three speeds under a `_ember_falloff()` gradient and maps the result
+through `_ember_palette()` with `point()`, which keeps it all at C level.
+`Image.effect_noise()` is equally unusable — it draws from Pillow's own
+generator and answers differently on every call. `_noise_strip()` therefore
+seeds its own `random.Random`, and repeats the grid's first row and column in
+its last so the upscaled tile meets itself without a seam and any vertical
+offset can be cropped out of a double-height strip.
+
+Its embers are drawn as an **`L` mask that is blurred and colored afterwards**,
+never as blurred RGBA. Blurring RGBA mixes the black of its transparent pixels
+into the colour, which turned them into olive rings instead of warm points of
+light. The larger glow layers elsewhere get away with it because they are blurred
+copies of content in the same hue; small isolated sprites do not.
+
+**Hyperspace** spaces its stars by the golden angle and takes each star's phase
+and speed from `_scatter()`, a multiplicative hash — **not** from a linear
+function of the index. The angles are already a linear sequence, so a linear
+phase correlates with them and every star lands on one curve: the field
+collapsed into a spiral at `elapsed` 0, which is exactly when the saver starts
+every time it wakes. Travel is squared, so a star crawls near the middle and
+tears past at the edge, which is what stretches it into a streak without faking
+motion blur.
+
+**Split-Flap Board** is the one style whose grid is the point: one module per
+key, so the physical gaps between keys read as the gaps between modules.
+`_flap_word()` picks and centres the word, `_flap_state()` returns
+`(outgoing, incoming, flip)` for one module, and `_flap_module()` draws it. Both
+helpers are pure so the timing can be asserted without rendering.
+
+Its one real trap is what a module shows **at rest**: both halves have to be the
+*same* character. The old one only lingers below the seam while the leaf
+carrying the new one is still falling — keeping it there when settled spells
+every word with mismatched halves, and the board never becomes readable. `flip`
+counts down to exactly `1.0` at rest, so `flip >= 1.0` is the test for it.
+
+**Matrix Code** is the only style that draws real characters, which makes it the
+only one with a font problem. It wants half-width katakana (`MATRIX_KATAKANA`,
+U+FF66-U+FF9D), and no font carrying them is a dependency: `fonts-noto-cjk` is a
+`Suggests` of the `.deb`, not a `Recommends`, because apt would then pull 91 MB
+of fonts for one screen saver. `_matrix_alphabet()` therefore falls back to
+`MATRIX_FALLBACK` (Latin plus digits) and the style always renders.
+
+Detecting a usable font is the subtle part. **`getbbox()` cannot answer it**: a
+Latin-only font returns a perfectly good box for any codepoint, because it
+measures the empty rectangle it substitutes. `_draws_katakana()` instead draws
+the glyph next to an unassigned private-use codepoint and compares the two
+renderings; a font that drew the same thing twice has neither, and accepting it
+would fill the rain with tofu boxes. Keep that check — the obvious `getbbox()`
+version accepts DejaVu.
+
+Two more things there are deliberate. Glyphs are pre-rendered once into cached
+grayscale masks (`_matrix_glyph`) that a frame only colorizes, because drawing
+text per cell per frame is far too slow for the hundreds of cells a frame paints.
+And the film's mirrored glyphs come from flipping the **finished** rain layer
+rather than each glyph: that also reverses the column order, which is invisible
+because every column is seeded from its own index anyway.
 
 **HAL 9000** is the one style that is a single still object rather than a moving
 field: one red camera eye centered on black, whose iris breathes on a slow wave
