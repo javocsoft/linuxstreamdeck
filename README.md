@@ -83,9 +83,9 @@ implemented actions, no guessing. It runs, and it's useful.
 - 📴 **Display after exit** — leave the physical deck on its firmware standby
   image, turn every key fully off, or keep one custom image across the full grid
   after LinuxStreamDeck closes cleanly.
-- ✨ **Physical deck startup animation** — a newly connected 15-key deck wakes
-  with a short full-deck sequence and spells `LinuxStreamDeck` across its keys
-  before loading your configured page.
+- ✨ **Physical deck startup animation** — a newly connected deck wakes with a
+  short full-deck sequence and spells its name across the keys, using the
+  longest form that fits the grid, before loading your configured page.
 - 🔌 **Auto-reconnect & hotplug** — connects to OBS on its own and picks up the deck when
   you plug it in. Adapts to the deck's own key layout — Mini, Original/MK.2, XL,
   Neo or Stream Deck + — and lays the screen savers, startup sequence and exit
@@ -139,8 +139,31 @@ Media control goes through **MPRIS** (`playerctl`) and the session mixer
 media keys. **Open application** can also close the app on a long press, and
 shows a lit key while it is running.
 
+## 🎛️ Supported devices
+
+LinuxStreamDeck reads the key layout from the device, so it lays every full-deck
+image out across the grid your deck actually has.
+
+| Device | Keys | Grid | |
+| --- | --- | --- | --- |
+| Stream Deck Mini | 6 | 3 × 2 | ✅ |
+| Stream Deck Neo | 8 | 4 × 2 | ✅ |
+| Stream Deck Original / MK.2 | 15 | 5 × 3 | ✅ tested on hardware |
+| Stream Deck + | 8 | 4 × 2 | ✅ keys only — the dials and touchscreen are not used |
+| Stream Deck XL | 32 | 8 × 4 | ✅ |
+| Stream Deck Pedal | 3 | — | ❌ no key displays |
+
+One deck at a time: with several connected it uses the first and says so in the
+status bar.
+
+> Every layout is verified in simulation, but the only model I own and can test
+> on real hardware is the 15-key Original. If you have another one and something
+> looks wrong, please [open an issue](https://github.com/javocsoft/linuxstreamdeck/issues).
+
 ## 📦 Requirements
 
+- A supported Stream Deck (see above) — or none at all: the virtual deck works
+  without hardware
 - Linux desktop (Pop!_OS / Ubuntu 24.04 or similar), Python ≥ 3.10
 - OBS Studio 28+ with the WebSocket server enabled (*Tools → WebSocket Server Settings*)
 - Secret Service through GNOME Keyring (installed by the `.deb` or `./build.sh --apt`)
@@ -319,11 +342,13 @@ automatic backup in `config.json.bak`). Point `LSD_CONFIG_DIR` somewhere else to
 
 ### ✨ Physical deck startup
 
-When LinuxStreamDeck opens a physical 15-key deck, it plays a short 33-frame
-wake, energy burst, title, hold and fade sequence. The 15 letters of
-`LinuxStreamDeck` appear one per key, from left to right and top to bottom:
-`Linux` / `Strea` / `mDeck`. The animation ends on black, then your configured
-keys replace it.
+When LinuxStreamDeck opens a physical deck, it plays a short 33-frame wake,
+energy burst, title, hold and fade sequence. The name appears one letter per key,
+from left to right and top to bottom, centered in whatever grid the deck has: on
+the 15-key Original that is `Linux` / `Strea` / `mDeck`. A deck too small for the
+full name shows the longest form that fits — `Linux` on a Mini — rather than a
+cut-off fragment. The animation ends on black, then your configured keys replace
+it.
 
 The sequence never raises the hardware above your configured brightness and
 restores that setting when it finishes. Closing the application cancels startup

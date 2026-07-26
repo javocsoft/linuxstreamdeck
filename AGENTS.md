@@ -18,8 +18,13 @@ it is fully usable and testable **without the physical hardware connected**.
 - **Key dependencies:** `streamdeck` (python-elgato-streamdeck, HID), `pillow`
   (key image composition), `obsws-python` (obs-websocket v5 client), GStreamer
   1.0 `playbin` (local audio playback).
-- **Target device:** Stream Deck Original V2 (`0fd9:006d`), 15 keys, 5 columns,
-  keys rendered at 72×72 px. The grid layout constant lives in `ui/window.py`.
+- **Target devices:** every Stream Deck with key displays — Mini (3x2), Neo
+  (4x2), Original/MK.2 (5x3, `0fd9:006d`), Stream Deck + (4x2, keys only) and XL
+  (8x4). The Pedal has no displays and is refused. Geometry comes from
+  `key_layout()` at connection time, never from a constant: `GRID_COLS` in
+  `ui/window.py` and `GRID_COLUMNS` in the renderers are only the
+  pre-connection default. Only the 15-key Original is tested on real hardware;
+  the rest are verified in simulation (`tests/test_multi_deck.py`).
 - **License:** GPL-3.0-or-later. **Author:** JavocSoft.
 - **Repo:** github.com/javocsoft/linuxstreamdeck
 
@@ -279,10 +284,11 @@ one manager, one controller and one window rather than a collection.
 ### Physical deck startup and connection ordering
 
 `device/startup_animation.py::startup_frames()` creates a 33-frame offscreen
-sequence for the physical 15-key, 5×3 deck: wake/energy wave, burst, progressive
-title, hold, fade and a final black frame. The 15-character
-`LinuxStreamDeck` title is assigned one character per key in row-major order:
-`Linux` / `Strea` / `mDeck`. Frame brightness changes smoothly but
+sequence for whatever grid the connected deck has: wake/energy wave, burst,
+progressive title, hold, fade and a final black frame. `title_layout()` assigns
+the name one character per key in row-major order — on the 15-key 5×3 deck that
+is `Linux` / `Strea` / `mDeck` — shortening it through `TITLE_FORMS` rather than
+cutting it when the grid is smaller. Frame brightness changes smoothly but
 `_scaled_brightness()` never exceeds the user's configured target.
 
 `DeckManager` plays the sequence directly on a newly opened device from the
