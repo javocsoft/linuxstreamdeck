@@ -107,11 +107,9 @@ class UnsavedResponseTests(unittest.TestCase):
 
 
 class ScreenSaverActivityTests(unittest.TestCase):
-    def test_virtual_key_interaction_records_activity_before_selection(
-        self,
-    ) -> None:
-        calls = []
-        window = SimpleNamespace(
+    @staticmethod
+    def _window(calls: list) -> SimpleNamespace:
+        return SimpleNamespace(
             app=SimpleNamespace(
                 deck=SimpleNamespace(
                     record_activity=lambda: calls.append("activity")
@@ -121,11 +119,135 @@ class ScreenSaverActivityTests(unittest.TestCase):
                 ),
             ),
             _select=lambda index: calls.append(("select", index)),
+            open_folder=lambda index: calls.append(("open", index)),
+            _last_key_click=None,
         )
+
+    def test_virtual_key_interaction_records_activity_before_selection(
+        self,
+    ) -> None:
+        calls = []
+        window = self._window(calls)
 
         MainWindow._on_key_clicked(window, None, 6)
 
         self.assertEqual(calls, ["activity", ("select", 6)])
+
+    def test_a_second_quick_click_opens_the_key_instead_of_reselecting(
+        self,
+    ) -> None:
+        """Double-clicking a folder on the virtual deck goes inside it."""
+        calls = []
+        window = self._window(calls)
+
+        MainWindow._on_key_clicked(window, None, 6)
+        MainWindow._on_key_clicked(window, None, 6)
+
+        self.assertEqual(
+            calls, ["activity", ("select", 6), "activity", ("open", 6)]
+        )
+
+    def test_a_third_click_starts_a_new_pair(self) -> None:
+        """Otherwise it would reopen the folder that was just entered."""
+        calls = []
+        window = self._window(calls)
+
+        for _ in range(3):
+            MainWindow._on_key_clicked(window, None, 6)
+
+        self.assertEqual(calls[-1], ("select", 6))
+
+
+class PasteActionOntoKeyTests(unittest.TestCase):
+    """The copied step can also become a whole single-action key."""
+
+    def setUp(self) -> None:
+        from linuxstreamdeck.ui.steps import STEP_CLIPBOARD
+
+        STEP_CLIPBOARD.clear()
+        self.addCleanup(STEP_CLIPBOARD.clear)
+        self.clipboard = STEP_CLIPBOARD
+        self.pasted: list[tuple[int, KeyConfig]] = []
+        self.status: list[str] = []
+        self.window = SimpleNamespace(
+            selected=4,
+            app=SimpleNamespace(
+                bus=SimpleNamespace(
+                    emit=lambda _t, **d: self.status.append(d.get("text", ""))
+                ),
+                controller=SimpleNamespace(
+                    is_reserved_key=lambda _i: False,
+                    paste_key=lambda i, kc: self.pasted.append((i, kc)),
+                ),
+            ),
+            editor=SimpleNamespace(load=lambda _i: None),
+            # Both guards pass straight through here; they have their own tests.
+            _confirm_unsaved_changes=lambda _d, go, offer_save=True: go(),
+            _replacing_folder=lambda _i, _d, go: go(),
+        )
+        # The real one, so what it writes to the controller is under test.
+        self.window._apply_paste_action = (
+            lambda i, kc: MainWindow._apply_paste_action(self.window, i, kc)
+        )
+
+    def _paste(self, index: int) -> None:
+        MainWindow._paste_action(self.window, index)
+
+    def test_pasting_makes_a_single_action_key(self) -> None:
+        self.clipboard.set(
+            ActionStep(
+                action="sys.wait",
+                params={"duration": "00:05"},
+                label="Breathe",
+            )
+        )
+
+        self._paste(4)
+
+        (index, key), = self.pasted
+        self.assertEqual(index, 4)
+        self.assertEqual(key.kind, "single")
+        self.assertEqual(key.action, "sys.wait")
+        self.assertEqual(key.params["duration"], "00:05")
+
+    def test_the_step_name_does_not_become_the_key_label(self) -> None:
+        """A key's own label lives in Appearance, as when pasted on its editor."""
+        self.clipboard.set(ActionStep(action="obs.record", label="Roll camera"))
+
+        self._paste(4)
+
+        self.assertEqual(self.pasted[0][1].label, "")
+
+    def test_pasting_with_nothing_copied_says_so(self) -> None:
+        self._paste(4)
+
+        self.assertEqual(self.pasted, [])
+        self.assertEqual(self.status, ["No action copied"])
+
+    def test_the_back_key_of_a_folder_is_never_replaced(self) -> None:
+        self.clipboard.set(ActionStep(action="obs.record"))
+        self.window.app.controller.is_reserved_key = lambda _i: True
+
+        self._paste(0)
+
+        self.assertEqual(self.pasted, [])
+
+    def test_the_status_names_the_action_that_landed(self) -> None:
+        self.clipboard.set(ActionStep(action="obs.record"))
+
+        self._paste(4)
+
+        self.assertEqual(self.status, ["Pasted “Record on/off” into key 5"])
+
+    def test_pasting_does_not_consume_the_copy(self) -> None:
+        """The same action can go onto several keys in a row."""
+        self.clipboard.set(ActionStep(action="obs.record"))
+
+        self._paste(4)
+        self.window.selected = 5
+        self._paste(5)
+
+        self.assertEqual([i for i, _kc in self.pasted], [4, 5])
 
 
 class KeyDragTests(unittest.TestCase):

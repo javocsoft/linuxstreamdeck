@@ -324,7 +324,13 @@ class EditorPanel(Gtk.Box):
                 on_change=self._update_single_icon_preview,
             )
             self.single_editor.load(ActionStep(action=kc.action, params=kc.params))
+            # No list row to right-click, so the editor itself carries the menu.
+            self.single_editor.enable_context_menu()
             self.body.append(self.single_editor)
+            self.body.append(self._hint(
+                "Right-click it to copy this action, or to paste one copied "
+                "from another key."
+            ))
             self.body.append(Gtk.Separator())
             self.app_main = AppearanceBox("Appearance")
             self.app_main.load(
@@ -338,7 +344,9 @@ class EditorPanel(Gtk.Box):
 
         elif kind == KIND_MULTI:
             self.body.append(self._hint(
-                "They run in order when pressed. Add a «Wait» action for pauses."
+                "They run in order when pressed. Add a «Wait» action for "
+                "pauses. Right-click an action to copy it, or the list to "
+                "paste one at the end."
             ))
             self.multi_list = StepList(
                 self.app,

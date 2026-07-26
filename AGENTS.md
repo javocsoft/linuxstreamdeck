@@ -525,7 +525,7 @@ never hide behind a friendly name what the key would actually do.
 
 Each `StepList` row is a `Gtk.Expander` whose **title is a widget**
 (`set_label_widget`): a drag handle, the hexpanding title label and the move /
-duplicate / remove buttons, so none of them needs the step to be opened first.
+copy / remove buttons, so none of them needs the step to be opened first.
 Rows also reorder by drag and drop, with one source/target pair per row in the
 **bubble** phase — capture would swallow the clicks of those very buttons and
 the expander's own toggle. Each row must also drop GtkExpander's **own**
@@ -539,7 +539,7 @@ like the key grid's, and a drop **moves** the step to that position rather than
 swapping two. Because the title is a widget, renaming a row sets
 `editor._title`, not `Gtk.Expander.set_label()`; `step_title()` reads it back.
 
-`StepList` rebuilds all of its rows whenever one is added, duplicated, moved or
+`StepList` rebuilds all of its rows whenever one is added, pasted, moved or
 removed, which makes two things easy to get wrong. It must call
 `_remember_expansion()` first, so each row keeps the state the **user** gave it
 rather than the one it was created with — otherwise adding a step silently
@@ -548,13 +548,80 @@ explicitly before re-wrapping it, instead of relying on the previous expander
 being garbage collected: anything still holding that expander (a queued reveal,
 a handler) leaves the editor attached to it and the rebuild fails with
 `gtk_box_append: assertion 'gtk_widget_get_parent (child) == NULL' failed`.
-`_reveal()` scrolls a newly added or duplicated step into view on a low-priority
+`_reveal()` scrolls a newly added or pasted step into view on a low-priority
 idle and resolves the expander **late**, so a rebuild in between scrolls to the
 current row. Reordering and removing instead go through
 `_rebuild_keeping_scroll()`, and `_move()` hands focus back to the same arrow on
 the row's new position: `GtkViewport:scroll-to-focus` is on by default, so the
-button being destroyed mid-click is what threw the list back to the top. Note that a collapsed `GtkExpander` keeps its child out of the
-traversable widget tree, so tests must walk down from `get_child()`.
+button being destroyed mid-click is what threw the list back to the top. That
+grab must be wrapped in a callback returning `False`: `grab_focus()` answers
+`True` when it succeeds, and `GLib.idle_add(button.grab_focus, …)` therefore
+kept the source alive and re-ran it for the rest of the session. Note that a
+collapsed `GtkExpander` keeps its child out of the traversable widget tree, so
+tests must walk down from `get_child()`.
+
+### Copying a step between action lists
+
+`STEP_CLIPBOARD` (a module-level `_StepClipboard` in `ui/steps.py`) holds **one**
+copied `ActionStep`. It cannot live on a `StepList`: `EditorPanel._build_body()`
+rebuilds every list whenever the selected key or the key type changes, so a copy
+kept there could never reach another list, let alone another key. It stores and
+returns a fresh copy each time, so pasting twice cannot share one `params` dict,
+and it refuses a step with no action.
+
+The row header's copy button only fills that clipboard; nothing is inserted
+until a paste. Right-clicking a **row** offers everything that row can do —
+*Copy action* and *Paste action*, then *Move up* / *Move down* / *Move to top* /
+*Move to bottom*, then *Remove action* — with `None` between the groups standing
+for a separator. A paste lands at that row's index, pushing it down
+(`_add(..., position=)`); the move entries reuse `_move()` and `_reorder()`, and
+each is disabled where it would do nothing, so the only row of a list can only be
+copied, pasted onto or removed. Right-clicking the **list** beside its rows
+offers only *Paste action*, at the end. A right click inside a parameter entry
+reaches neither: the entry claims it first and shows its own text menu.
+
+While a row menu is open its row carries the `menu-target` CSS class, because the
+popover covers part of the list and the entries act on a row the pointer has
+already left. `_set_menu_row()` holds that row as a **widget, not an index**: an
+entry may reorder the list, and the highlight has to come off whatever it went
+on. `_ContextMenu.show(..., on_close=)` clears it however the menu ends —
+choosing an entry, dismissing it, or a `_rebuild()` closing it.
+
+A pasted row arrives **collapsed** — `_add(..., expand=False)` followed by an
+explicit `_reveal()`. It is scrolled into view but never opened: the copy is
+already configured, so expanding it would only push the rest of the list out of
+sight. Adding a *new* step still opens, because that one has to be filled in.
+
+Both gestures are in the bubble phase and both see the same click, so the row's
+answer has to win twice over. `_on_row_menu()` claims the sequence, which should
+already deny the list's gesture, **and** raises `_row_menu_click`, which
+`_on_list_menu()` checks before showing anything; it is cleared on the following
+idle, so the next click works normally. Do not drop the flag and rely on
+claiming alone, and do not resolve the row from `Gtk.Widget.pick()` instead:
+`pick()` answers `None` on an unmapped widget, which makes that path impossible
+to verify without showing a window. `row_menu_items()` / `list_menu_items()` /
+`StepEditor.menu_items()` build the entries as plain `(label, enabled, callback)`
+tuples, so a test can assert them without popping up a popover.
+
+A single-action key has no row to right-click, so `EditorPanel` calls
+`StepEditor.enable_context_menu()` on its editor; pasting there replaces the
+action and its parameters, and drops the step name, which only a list can show.
+That is opt-in precisely because a `StepEditor` inside a list must let the right
+click bubble to its row.
+
+The same copy can also become a whole key: the grid's context menu carries
+**Paste action** (`win.key-paste-action`), enabled from `STEP_CLIPBOARD`, which
+`MainWindow._paste_action()` turns into a `KIND_SINGLE` `KeyConfig` and applies
+through the usual `DeckController.paste_key()`. It goes through the same guards
+as pasting a key — the unsaved-change dialog with `offer_save=False`, and
+`_replacing_folder()` — and it refuses the reserved Back slot. It drops the step
+name for the same reason the single-action editor does, and it leaves the
+clipboard filled, so one action can be dropped onto several keys in a row.
+
+`_ContextMenu` keeps at most one popover, parented to the row it was opened on.
+Since every `StepList` rebuild destroys those rows, `_rebuild()` closes it first,
+and `close()` is idempotent — it also runs from the popover's `closed` signal, so
+dismissing the menu by clicking away cannot strand it either.
 
 Every `ActionStep` also carries an optional `label`: a name shown in the editor's
 step list instead of the action name, so a long sequence stays readable. It is
@@ -690,6 +757,16 @@ root on every page, profile and configuration change, because those indices woul
 otherwise address a different grid. `folder.changed` carries `path` and the
 `folder_trail()` of `(path, name)` pairs that the window renders as a clickable
 breadcrumb.
+
+On the virtual deck a folder opens by **double-clicking** its key. `MainWindow`
+times that from the button's own `clicked` signal (`_last_key_click` plus the
+pure `_completes_double_click()`), never from an extra `Gtk.GestureClick` on the
+key button: a `GtkButton` claims the primary-button sequence on press, which
+cancels any other primary gesture on the same widget, so such a gesture never
+reaches `n_press == 2`. The secondary-button context menu on those same buttons
+is unaffected, because `GtkButton` never claims that sequence. The second click
+is consumed, so a third one starts a new pair instead of reopening the folder
+just entered.
 
 Transient state therefore keys on `RuntimeKey` — `(profile, page, folder path,
 key index)` — so the same index inside a folder is a different key from the one

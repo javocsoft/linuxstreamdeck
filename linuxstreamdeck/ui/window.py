@@ -4,6 +4,7 @@ to test without hardware) + key editor + status bar."""
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,15 +16,21 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
 from .. import APP_NAME  # noqa: E402
+from ..core import actions as action_registry  # noqa: E402
+from ..core.config import KIND_SINGLE, KeyConfig  # noqa: E402
 from .about import AboutDialog  # noqa: E402
 from .editor import EditorPanel  # noqa: E402
 from .obs_settings import ObsSettingsDialog  # noqa: E402
 from .screensaver_settings import ScreenSaverSettingsDialog  # noqa: E402
+from .steps import STEP_CLIPBOARD  # noqa: E402
 
 log = logging.getLogger(__name__)
 
 GRID_COLS = 5
 KEY_PIXELS = 96
+
+# How long a second click on the same key still counts as a double click.
+DOUBLE_CLICK_SECONDS = 0.4
 
 _CSS = b"""
 .deck-key {
@@ -46,11 +53,34 @@ _CSS = b"""
     background-color: alpha(@accent_bg_color, 0.14);
     border-radius: 6px;
 }
+/* The row a right-click menu is acting on, while that menu is open. */
+.step-row.menu-target {
+    background-color: alpha(@accent_bg_color, 0.22);
+    border-radius: 6px;
+}
 .step-remove { color: @error_color; }
 .step-remove:hover { background-color: alpha(@error_color, 0.15); }
+/* Right-click copy/paste menu of an action list (ui/steps.py). */
+.step-menu button { padding: 4px 12px; min-height: 26px; }
 """
 
 _KEY_DRAG_PREFIX = "linuxstreamdeck-key:"
+
+
+def action_name(action_id: str) -> str:
+    """What an action is called, falling back to its id if it is gone."""
+    action = action_registry.get(action_id)
+    return action.name if action is not None else action_id
+
+
+def _completes_double_click(
+    previous: tuple[int, float] | None, index: int, now: float
+) -> bool:
+    """Whether a click on `index` at `now` closes a double click on that key."""
+    if previous is None:
+        return False
+    last_index, last_time = previous
+    return last_index == index and now - last_time <= DOUBLE_CLICK_SECONDS
 
 
 class MainWindow(Adw.ApplicationWindow):
@@ -69,6 +99,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._clipboard = None            # copied KeyConfig (for pasting)
         self._drag_source_index: int | None = None
         self._drag_destination_index: int | None = None
+        self._last_key_click: tuple[int, float] | None = None
 
         css = Gtk.CssProvider()
         css.load_from_data(_CSS)
@@ -180,7 +211,6 @@ class MainWindow(Adw.ApplicationWindow):
             btn.connect("clicked", self._on_key_clicked, index)
             self._add_key_contextmenu(btn, index)
             self._add_key_shortcuts(btn, index)
-            self._add_key_activation(btn, index)
             grid.attach(btn, index % GRID_COLS, index // GRID_COLS, 1, 1)
             self._key_buttons.append(btn)
             self._key_pictures.append(pic)
@@ -235,24 +265,31 @@ class MainWindow(Adw.ApplicationWindow):
             self._key_pictures[index].set_paintable(texture)
 
     def _on_key_clicked(self, btn, index: int) -> None:
+        """Single click selects the key; a second one opens it if it is a folder.
+
+        The double click is timed from "clicked" rather than detected with an
+        extra Gtk.GestureClick: a GtkButton claims the primary-button sequence
+        on press, which cancels any other primary gesture on the same widget, so
+        that gesture never reached n_press == 2. The secondary-button context
+        menu is unaffected, because GtkButton never claims that one.
+        """
         self.app.deck.record_activity()
         if self.app.controller.is_reserved_key(index):
             # The Back key is navigation, not a configurable key.
+            self._last_key_click = None
             self._leave_folder()
+            return
+        now = time.monotonic()
+        double = _completes_double_click(self._last_key_click, index, now)
+        # Consumed on a double click, so a third one starts a new pair instead
+        # of opening the folder that was just entered.
+        self._last_key_click = None if double else (index, now)
+        if double:
+            self.open_folder(index)
             return
         self._select(index)
 
     # ---------- folders ----------
-
-    def _add_key_activation(self, btn: Gtk.Button, index: int) -> None:
-        """Double-click opens a folder; a single click still selects the key."""
-        gesture = Gtk.GestureClick(button=Gdk.BUTTON_PRIMARY)
-        gesture.connect("pressed", self._on_key_pressed, index)
-        btn.add_controller(gesture)
-
-    def _on_key_pressed(self, _gesture, n_press: int, _x, _y, index: int) -> None:
-        if n_press == 2:
-            self.open_folder(index)
 
     def open_folder(self, index: int) -> None:
         """Enter the folder held by a key, protecting unsaved editor changes."""
@@ -484,6 +521,7 @@ class MainWindow(Adw.ApplicationWindow):
         menu.append("Open folder", "win.key-open")
         menu.append("Copy", "win.key-copy")
         menu.append("Paste", "win.key-paste")
+        menu.append("Paste action", "win.key-paste-action")
         menu.append("Clear key", "win.key-clear")
         portable_menu = Gio.Menu()
         portable_menu.append("Export key…", "win.key-export")
@@ -495,6 +533,7 @@ class MainWindow(Adw.ApplicationWindow):
         for name, cb in (("key-open", self._open_selected_folder),
                          ("key-copy", self._copy_selected),
                          ("key-paste", self._paste_selected),
+                         ("key-paste-action", self._paste_action_selected),
                          ("key-clear", self._clear_selected),
                          ("key-export", self._export_selected),
                          ("key-import", self._import_selected),
@@ -954,6 +993,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._key_actions["key-paste"].set_enabled(
             self._clipboard is not None and controller.fits_here(self._clipboard)
         )
+        self._key_actions["key-paste-action"].set_enabled(
+            STEP_CLIPBOARD.has_step()
+        )
         pop = self._key_popover
         if pop.get_parent() is not None:
             pop.unparent()
@@ -1017,6 +1059,46 @@ class MainWindow(Adw.ApplicationWindow):
         if self.selected == index:
             self.editor.load(index)
         self.app.bus.emit("status", text=f"Pasted into key {index + 1}")
+
+    def _paste_action(self, index: int) -> None:
+        """Turn a key into a single-action key running the copied step.
+
+        The step's name is deliberately dropped: it names a row in an action
+        list, and a key's own label lives in Appearance, exactly as when the
+        same step is pasted onto a single-action editor.
+        """
+        step = STEP_CLIPBOARD.get()
+        if step is None:
+            self.app.bus.emit("status", text="No action copied")
+            return
+        if self.app.controller.is_reserved_key(index):
+            return
+        key = KeyConfig(kind=KIND_SINGLE, action=step.action, params=step.params)
+
+        def paste() -> None:
+            self._replacing_folder(
+                index,
+                f"replacing Key {index + 1}",
+                lambda: self._apply_paste_action(index, key),
+            )
+
+        if self.selected == index:
+            self._confirm_unsaved_changes(
+                f"replacing Key {index + 1} with the copied action",
+                paste,
+                offer_save=False,
+            )
+        else:
+            paste()
+
+    def _apply_paste_action(self, index: int, key: KeyConfig) -> None:
+        self.app.controller.paste_key(index, key)
+        if self.selected == index:
+            self.editor.load(index)
+        name = action_name(key.action)
+        self.app.bus.emit(
+            "status", text=f"Pasted “{name}” into key {index + 1}"
+        )
 
     def clear_key(self, index: int) -> None:
         """Empty a key, confirming unsaved edits and discarded folders first."""
@@ -1216,6 +1298,10 @@ class MainWindow(Adw.ApplicationWindow):
     def _paste_selected(self):
         if self.selected is not None:
             self._paste_key(self.selected)
+
+    def _paste_action_selected(self):
+        if self.selected is not None:
+            self._paste_action(self.selected)
 
     def _clear_selected(self):
         if self.selected is not None:

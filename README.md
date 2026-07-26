@@ -240,12 +240,27 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
    the parameters (dropdowns are populated **live from OBS**) and press **Save**.
    In a list of actions, each step also takes an optional **Step name**; the list
    then shows that name instead of the action, which makes a long sequence much
-   easier to follow. Every row carries **move up**, **move down**, **duplicate** —
-   which appends a copy at the end of the list, ready to adjust — and **remove**,
-   all on the row itself, so nothing has to be opened first. Rows can also be
-   **dragged by their handle** to any position. A newly added or duplicated step
-   opens and scrolls into view, and the rows you opened or collapsed stay as you
-   left them.
+   easier to follow. Every row carries **move up**, **move down**, **copy** and
+   **remove**, all on the row itself, so nothing has to be opened first. Rows can
+   also be **dragged by their handle** to any position. A newly added step opens
+   and scrolls into view, and the rows you opened or collapsed stay as you left
+   them.
+   **Right-click a row** for everything it can do: **Copy action** and **Paste
+   action**, **Move up** / **Move down** / **Move to top** / **Move to bottom**,
+   and **Remove action**. The row stays highlighted while the menu is open, so
+   it is always clear which one the entries act on, and entries that would do
+   nothing are greyed out.
+   **Copy an action from one list to another** — press the row's copy button, or
+   use **Copy action**. Then right-click wherever it should go: on a row to
+   insert it there, pushing that row down, or anywhere else in the list to add it
+   at the end. A pasted row is scrolled into view but stays closed, since it is
+   already configured. The copy survives switching lists, key types and keys, so
+   it can go into the ON list of a toggle, into a different gesture's list, or
+   into another key entirely — including a **Single action** key, whose editor
+   takes the same right-click menu and replaces its action with the copied one.
+   To turn a whole key into that action, right-click it on the grid and choose
+   **Paste action**: the key becomes a Single action key running it, and the copy
+   stays available for the next key.
 3. Under **Icon**, pick one from the built-in library, use your own image, or keep the
    action's default. When inherited, the Appearance preview shows the same default
    icon as the deck without turning it into a custom override. Add a **Label** only

@@ -564,5 +564,35 @@ class FolderPageRenameTests(unittest.TestCase):
         )
 
 
+class DoubleClickTests(unittest.TestCase):
+    """Entering a folder from the virtual deck without the editor button.
+
+    The window times the double click from GtkButton's own "clicked" signal: an
+    extra Gtk.GestureClick on the same button never saw the second press,
+    because GtkButton claims the primary sequence on the first one.
+    """
+
+    def setUp(self) -> None:
+        from linuxstreamdeck.ui.window import (
+            DOUBLE_CLICK_SECONDS,
+            _completes_double_click,
+        )
+
+        self.completes = _completes_double_click
+        self.window = DOUBLE_CLICK_SECONDS
+
+    def test_the_first_click_on_a_key_is_never_a_double_click(self) -> None:
+        self.assertFalse(self.completes(None, 3, 100.0))
+
+    def test_two_quick_clicks_on_the_same_key_open_it(self) -> None:
+        self.assertTrue(self.completes((3, 100.0), 3, 100.0 + self.window / 2))
+
+    def test_a_slow_second_click_only_selects(self) -> None:
+        self.assertFalse(self.completes((3, 100.0), 3, 100.0 + self.window + 0.01))
+
+    def test_clicking_two_different_keys_quickly_opens_neither(self) -> None:
+        self.assertFalse(self.completes((3, 100.0), 4, 100.01))
+
+
 if __name__ == "__main__":
     unittest.main()

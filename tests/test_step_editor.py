@@ -63,8 +63,34 @@ class FakeObs:
         return []
 
 
+class FakeBus:
+    """Records the status messages the step widgets emit."""
+
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def emit(self, topic: str, **data) -> None:
+        if topic == "status":
+            self.messages.append(data.get("text", ""))
+
+
 def fake_app(obs: FakeObs) -> SimpleNamespace:
-    return SimpleNamespace(obs=obs, config=Config())
+    return SimpleNamespace(obs=obs, config=Config(), bus=FakeBus())
+
+
+# A context menu is a list of (label, enabled, callback), with None for a
+# separator. These read one back the way the popover builder does.
+
+def menu_labels(items) -> list:
+    return [None if item is None else item[0] for item in items]
+
+
+def menu_entries(items) -> dict[str, bool]:
+    return {label: enabled for label, enabled, _cb in filter(None, items)}
+
+
+def menu_callback(items, label: str):
+    return next(cb for name, _e, cb in filter(None, items) if name == label)
 
 
 @unittest.skipUnless(HAS_DISPLAY, "GTK needs a display to build widgets")
@@ -382,18 +408,24 @@ def _contains(container: Gtk.Widget, widget: Gtk.Widget) -> bool:
 
 
 @unittest.skipUnless(HAS_DISPLAY, "GTK needs a display to build widgets")
-class StepDuplicateTests(unittest.TestCase):
-    def setUp(self) -> None:
-        from linuxstreamdeck.ui.steps import StepList
+class StepCopyPasteTests(unittest.TestCase):
+    """Copying puts a step aside; pasting decides where it lands."""
 
-        self.list = StepList(fake_app(FakeObs()))
+    def setUp(self) -> None:
+        from linuxstreamdeck.ui.steps import STEP_CLIPBOARD, StepList
+
+        STEP_CLIPBOARD.clear()
+        self.addCleanup(STEP_CLIPBOARD.clear)
+        self.clipboard = STEP_CLIPBOARD
+        self.app = fake_app(FakeObs())
+        self.list = StepList(self.app)
 
     def _titles(self) -> list[str]:
         return [
             self.list.step_title(i) for i in range(len(self.list._editors))
         ]
 
-    def test_a_duplicate_is_appended_with_the_same_settings(self) -> None:
+    def _load_two(self) -> None:
         self.list.load(
             [
                 ActionStep(action="obs.record", label="Roll camera"),
@@ -401,38 +433,115 @@ class StepDuplicateTests(unittest.TestCase):
             ]
         )
 
-        self.list._duplicate(0)
+    def test_copying_inserts_nothing_by_itself(self) -> None:
+        self._load_two()
 
-        steps = self.list.get_steps()
+        self.list._copy(0)
+
+        self.assertEqual(len(self.list.get_steps()), 2)
+        self.assertTrue(self.clipboard.has_step())
+
+    def test_pasting_on_a_row_pushes_that_row_down(self) -> None:
+        self._load_two()
+
+        self.list._copy(0)
+        self.list._paste(1)
+
         self.assertEqual(
-            [(s.action, s.label) for s in steps],
+            [(s.action, s.label) for s in self.list.get_steps()],
             [
                 ("obs.record", "Roll camera"),
-                ("sys.wait", ""),
                 ("obs.record", "Roll camera"),
+                ("sys.wait", ""),
             ],
         )
 
-    def test_a_duplicate_copies_the_parameters(self) -> None:
+    def test_pasting_with_no_position_appends(self) -> None:
+        self._load_two()
+
+        self.list._copy(0)
+        self.list._paste(None)
+
+        self.assertEqual(
+            [s.action for s in self.list.get_steps()],
+            ["obs.record", "sys.wait", "obs.record"],
+        )
+
+    def test_a_paste_carries_the_parameters(self) -> None:
         self.list.load(
             [ActionStep(action="sys.wait", params={"duration": "00:07"})]
         )
 
-        self.list._duplicate(0)
+        self.list._copy(0)
+        self.list._paste(0)
 
-        steps = self.list.get_steps()
-        self.assertEqual(steps[1].params["duration"], "00:07")
+        self.assertEqual(self.list.get_steps()[0].params["duration"], "00:07")
 
-    def test_editing_a_duplicate_leaves_the_original_alone(self) -> None:
+    def test_editing_a_pasted_step_leaves_the_original_alone(self) -> None:
         self.list.load([ActionStep(action="obs.record", label="Roll camera")])
 
-        self.list._duplicate(0)
+        self.list._copy(0)
+        self.list._paste(None)
         self.list._editors[1].label_entry.set_text("Stop camera")
 
-        steps = self.list.get_steps()
-        self.assertEqual([s.label for s in steps], ["Roll camera", "Stop camera"])
+        self.assertEqual(
+            [s.label for s in self.list.get_steps()],
+            ["Roll camera", "Stop camera"],
+        )
 
-    def test_a_duplicate_opens_and_leaves_the_others_as_they_were(self) -> None:
+    def test_the_copy_outlives_the_list_it_came_from(self) -> None:
+        """The point of the change: paste into another key's list."""
+        from linuxstreamdeck.ui.steps import StepList
+
+        self._load_two()
+        self.list._copy(0)
+
+        other = StepList(self.app)
+        other.load([ActionStep(action="obs.stream")])
+        other._paste(0)
+
+        self.assertEqual(
+            [(s.action, s.label) for s in other.get_steps()],
+            [("obs.record", "Roll camera"), ("obs.stream", "")],
+        )
+
+    def test_pasting_twice_gives_two_independent_steps(self) -> None:
+        self.list.load(
+            [ActionStep(action="sys.wait", params={"duration": "00:07"})]
+        )
+
+        self.list._copy(0)
+        self.list._paste(None)
+        self.list._paste(None)
+        self.list._editors[1].label_entry.set_text("Second")
+
+        self.assertEqual(
+            [s.label for s in self.list.get_steps()], ["", "Second", ""]
+        )
+
+    def test_pasting_nothing_does_nothing(self) -> None:
+        self._load_two()
+
+        self.list._paste(0)
+
+        self.assertEqual(len(self.list.get_steps()), 2)
+
+    def test_an_empty_step_is_never_copied(self) -> None:
+        """It would only offer a paste that adds nothing."""
+        self.clipboard.set(ActionStep())
+
+        self.assertFalse(self.clipboard.has_step())
+        self.assertIsNone(self.clipboard.get())
+
+    def test_copying_an_index_that_is_gone_does_nothing(self) -> None:
+        self.list.load([ActionStep(action="obs.record")])
+
+        self.list._copy(5)
+
+        self.assertFalse(self.clipboard.has_step())
+
+    def test_a_pasted_step_stays_collapsed(self) -> None:
+        """The copy is already configured; opening it would push the list down."""
         self.list.load(
             [
                 ActionStep(action="obs.record"),
@@ -440,20 +549,269 @@ class StepDuplicateTests(unittest.TestCase):
             ]
         )
 
-        self.list._duplicate(0)
+        self.list._copy(0)
+        self.list._paste(1)
+
+        self.assertEqual(
+            [editor._expander.get_expanded() for editor in self.list._editors],
+            [False, False, False],
+        )
+        self.assertEqual(self._titles(), [
+            "1. Record on/off", "2. Record on/off", "3. Stream on/off",
+        ])
+
+    def test_a_paste_leaves_the_rows_the_user_opened_open(self) -> None:
+        self.list.load(
+            [
+                ActionStep(action="obs.record"),
+                ActionStep(action="obs.stream"),
+            ]
+        )
+        self.list._editors[1]._expander.set_expanded(True)
+
+        self.list._copy(0)
+        self.list._paste(0)
 
         self.assertEqual(
             [editor._expander.get_expanded() for editor in self.list._editors],
             [False, False, True],
         )
-        self.assertEqual(self._titles()[2], "3. Record on/off")
 
-    def test_duplicating_an_index_that_is_gone_does_nothing(self) -> None:
+    def test_paste_is_offered_only_once_something_is_copied(self) -> None:
+        self._load_two()
+
+        self.assertIs(menu_entries(self.list.row_menu_items(0))["Paste action"], False)
+        self.assertIs(menu_entries(self.list.list_menu_items())["Paste action"], False)
+
+        self.list._copy(0)
+
+        self.assertIs(menu_entries(self.list.row_menu_items(0))["Paste action"], True)
+        self.assertIs(menu_entries(self.list.list_menu_items())["Paste action"], True)
+
+    def test_the_row_menu_carries_copy_move_and_remove(self) -> None:
+        self.list.load(
+            [
+                ActionStep(action="obs.record"),
+                ActionStep(action="obs.stream"),
+                ActionStep(action="sys.wait"),
+            ]
+        )
+
+        self.assertEqual(
+            menu_labels(self.list.row_menu_items(1)),
+            [
+                "Copy action", "Paste action", None,
+                "Move up", "Move down", "Move to top", "Move to bottom", None,
+                "Remove action",
+            ],
+        )
+
+    def test_the_move_entries_are_disabled_at_the_ends(self) -> None:
+        self.list.load(
+            [
+                ActionStep(action="obs.record"),
+                ActionStep(action="obs.stream"),
+                ActionStep(action="sys.wait"),
+            ]
+        )
+
+        first = menu_entries(self.list.row_menu_items(0))
+        middle = menu_entries(self.list.row_menu_items(1))
+        last = menu_entries(self.list.row_menu_items(2))
+
+        self.assertEqual(
+            [first["Move up"], first["Move to top"]], [False, False]
+        )
+        self.assertEqual(
+            [first["Move down"], first["Move to bottom"]], [True, True]
+        )
+        self.assertTrue(all(middle[name] for name in (
+            "Move up", "Move down", "Move to top", "Move to bottom"
+        )))
+        self.assertEqual(
+            [last["Move down"], last["Move to bottom"]], [False, False]
+        )
+        self.assertEqual(
+            [last["Move up"], last["Move to top"]], [True, True]
+        )
+
+    def test_the_only_row_of_a_list_cannot_be_moved_anywhere(self) -> None:
         self.list.load([ActionStep(action="obs.record")])
 
-        self.list._duplicate(5)
+        only = menu_entries(self.list.row_menu_items(0))
 
-        self.assertEqual(len(self.list.get_steps()), 1)
+        self.assertFalse(any(only[name] for name in (
+            "Move up", "Move down", "Move to top", "Move to bottom"
+        )))
+        self.assertTrue(only["Remove action"])
+
+    def test_the_move_entries_reorder_the_list(self) -> None:
+        self.list.load(
+            [
+                ActionStep(action="obs.record", label="one"),
+                ActionStep(action="obs.stream", label="two"),
+                ActionStep(action="sys.wait", label="three"),
+            ]
+        )
+
+        menu_callback(self.list.row_menu_items(2), "Move to top")()
+        self.assertEqual(
+            [s.label for s in self.list.get_steps()], ["three", "one", "two"]
+        )
+
+        menu_callback(self.list.row_menu_items(0), "Move to bottom")()
+        self.assertEqual(
+            [s.label for s in self.list.get_steps()], ["one", "two", "three"]
+        )
+
+        menu_callback(self.list.row_menu_items(0), "Move down")()
+        self.assertEqual(
+            [s.label for s in self.list.get_steps()], ["two", "one", "three"]
+        )
+
+        menu_callback(self.list.row_menu_items(2), "Move up")()
+        self.assertEqual(
+            [s.label for s in self.list.get_steps()], ["two", "three", "one"]
+        )
+
+    def test_the_remove_entry_deletes_that_row(self) -> None:
+        self.list.load(
+            [
+                ActionStep(action="obs.record", label="one"),
+                ActionStep(action="obs.stream", label="two"),
+            ]
+        )
+
+        menu_callback(self.list.row_menu_items(0), "Remove action")()
+
+        self.assertEqual([s.label for s in self.list.get_steps()], ["two"])
+
+    def test_both_the_rows_and_the_list_answer_a_right_click(self) -> None:
+        self._load_two()
+
+        def secondary(widget) -> list:
+            return [
+                c for c in widget.observe_controllers()
+                if isinstance(c, Gtk.GestureClick) and c.get_button() == 3
+            ]
+
+        self.assertEqual(len(secondary(self.list)), 1)
+        for editor in self.list._editors:
+            self.assertEqual(len(secondary(editor._expander)), 1)
+
+    def test_a_row_menu_is_not_replaced_by_the_list_menu(self) -> None:
+        """Both gestures see one click; the row's answer has to win.
+
+        Claiming should already stop the list gesture, but the copy entry is
+        too important to rest on GTK's claiming order alone.
+        """
+        self._load_two()
+        shown = []
+        self.list._menu = SimpleNamespace(
+            show=lambda _w, _x, _y, items, on_close=None: shown.append(
+                menu_labels(items)
+            ),
+            close=lambda: None,
+        )
+        gesture = SimpleNamespace(
+            set_state=lambda _state: None, get_widget=lambda: self.list
+        )
+
+        self.list._on_row_menu(gesture, 1, 0, 0, 0)
+        self.list._on_list_menu(gesture, 1, 0, 0)
+
+        self.assertEqual(len(shown), 1)
+        self.assertIn("Copy action", shown[0])
+
+    def test_the_list_menu_works_again_on_the_next_click(self) -> None:
+        self._load_two()
+        shown = []
+        self.list._menu = SimpleNamespace(
+            show=lambda _w, _x, _y, items, on_close=None: shown.append(
+                menu_labels(items)
+            ),
+            close=lambda: None,
+        )
+        gesture = SimpleNamespace(
+            set_state=lambda _state: None, get_widget=lambda: self.list
+        )
+
+        self.list._on_row_menu(gesture, 1, 0, 0, 0)
+        # The idle that runs between two clicks releases the guard.
+        self.list._clear_row_menu_click()
+        self.list._on_list_menu(gesture, 1, 0, 0)
+
+        self.assertEqual(shown[-1], ["Paste action"])
+
+    def test_the_right_clicked_row_is_marked_until_the_menu_closes(self) -> None:
+        """The menu covers part of the list, so which row it acts on must show."""
+        self._load_two()
+        closers = []
+        self.list._menu = SimpleNamespace(
+            show=lambda _w, _x, _y, _items, on_close=None: closers.append(on_close),
+            close=lambda: None,
+        )
+        row = self.list._editors[1]._expander
+        gesture = SimpleNamespace(
+            set_state=lambda _state: None, get_widget=lambda: row
+        )
+
+        self.list._on_row_menu(gesture, 1, 0, 0, 1)
+        self.assertTrue(row.has_css_class("menu-target"))
+
+        closers[0]()
+        self.assertFalse(row.has_css_class("menu-target"))
+
+    def test_only_one_row_is_marked_at_a_time(self) -> None:
+        self._load_two()
+        first = self.list._editors[0]._expander
+        second = self.list._editors[1]._expander
+
+        self.list._set_menu_row(first)
+        self.list._set_menu_row(second)
+
+        self.assertFalse(first.has_css_class("menu-target"))
+        self.assertTrue(second.has_css_class("menu-target"))
+
+    def test_copying_says_where_the_copy_can_go(self) -> None:
+        self._load_two()
+
+        self.list._copy(0)
+
+        self.assertIn("Roll camera", self.app.bus.messages[-1])
+        self.assertIn("right-click", self.app.bus.messages[-1])
+
+    def test_a_single_action_editor_copies_and_pastes_too(self) -> None:
+        """A key with no list is still a paste destination."""
+        from linuxstreamdeck.ui.steps import StepEditor
+
+        source = StepEditor(self.app)
+        source.load(ActionStep(action="sys.wait", params={"duration": "00:09"}))
+        source.copy_step()
+
+        target = StepEditor(self.app)
+        target.load(ActionStep(action="obs.record"))
+        target.paste_step()
+
+        step = target.get_step()
+        self.assertEqual(step.action, "sys.wait")
+        self.assertEqual(step.params["duration"], "00:09")
+
+    def test_a_step_name_is_dropped_when_pasted_on_a_single_action_key(
+        self,
+    ) -> None:
+        """It has no list row to name, and its own label lives in Appearance."""
+        from linuxstreamdeck.ui.steps import StepEditor
+
+        self.list.load([ActionStep(action="obs.record", label="Roll camera")])
+        self.list._copy(0)
+
+        target = StepEditor(self.app)
+        target.paste_step()
+
+        self.assertEqual(target.get_step().label, "")
+        # The clipboard still carries it, for a list that can show it.
+        self.assertEqual(self.clipboard.get().label, "Roll camera")
 
 
 @unittest.skipUnless(HAS_DISPLAY, "GTK needs a display to build widgets")
@@ -490,7 +848,7 @@ class StepRowLayoutTests(unittest.TestCase):
             [
                 "Move up",
                 "Move down",
-                "Duplicate this action at the end of the list",
+                "Copy this action; right-click any action list to paste it",
                 "Remove action",
             ],
         )
@@ -550,7 +908,7 @@ class StepRowLayoutTests(unittest.TestCase):
         header = self._header_children(0)
 
         self.assertEqual(
-            [controls["up"], controls["down"], controls["duplicate"],
+            [controls["up"], controls["down"], controls["copy"],
              controls["delete"]],
             header[2:],
         )

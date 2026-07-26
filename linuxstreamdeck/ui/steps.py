@@ -45,6 +45,122 @@ LOCAL_CHOICE_SOURCES = frozenset({"pages", "deck_profiles", "applications"})
 _STEP_DRAG_PREFIX = "linuxstreamdeck-step:"
 
 
+class _StepClipboard:
+    """The one copied step, shared by every action editor on screen.
+
+    It deliberately does not live on a StepList: the editor rebuilds all of its
+    lists whenever the selected key or the key type changes, so a copy held
+    there could never be pasted into another list, let alone another key.
+    """
+
+    def __init__(self) -> None:
+        self._step: ActionStep | None = None
+
+    def has_step(self) -> bool:
+        return self._step is not None
+
+    def get(self) -> ActionStep | None:
+        """A fresh copy, so pasting twice cannot share one params dict."""
+        return _copy_step(self._step)
+
+    def set(self, step: ActionStep | None) -> None:
+        # A step with no action is what an empty row reads as; copying it would
+        # only offer a paste that adds nothing.
+        self._step = _copy_step(step) if step is not None and step.action else None
+
+    def clear(self) -> None:
+        self._step = None
+
+
+def _copy_step(step: ActionStep | None) -> ActionStep | None:
+    if step is None:
+        return None
+    return ActionStep(action=step.action, params=dict(step.params), label=step.label)
+
+
+STEP_CLIPBOARD = _StepClipboard()
+
+
+def _report_copied(app, name: str) -> None:
+    # Copying changes nothing on screen, so the status bar is the only sign it
+    # worked, and the only place to say where the copy can go.
+    app.bus.emit(
+        "status",
+        text=f"Copied “{name}”; right-click an action list to paste it",
+    )
+
+
+def _report_pasted(app, name: str) -> None:
+    app.bus.emit("status", text=f"Pasted “{name}”")
+
+
+class _ContextMenu:
+    """One right-click menu at a time, unparented as soon as it closes.
+
+    The rows it is shown on are destroyed by every StepList rebuild, so it must
+    never outlive its anchor; `close()` is therefore idempotent and is called
+    both when the menu is dismissed and before a rebuild.
+    """
+
+    def __init__(self) -> None:
+        self._popover: Gtk.Popover | None = None
+        self._on_close = None
+
+    def show(
+        self, anchor: Gtk.Widget, x: float, y: float, items, on_close=None
+    ) -> Gtk.Popover:
+        """Pop up `items` at the pointer.
+
+        Each item is `(label, enabled, callback)`, or `None` for a separator.
+        `on_close` runs whenever the menu goes away, however it goes away.
+        """
+        self.close()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_size_request(180, -1)
+        for item in items:
+            if item is None:
+                box.append(Gtk.Separator(margin_top=3, margin_bottom=3))
+                continue
+            label, enabled, callback = item
+            button = Gtk.Button(label=label)
+            button.add_css_class("flat")
+            button.set_sensitive(enabled)
+            if isinstance(child := button.get_child(), Gtk.Label):
+                child.set_xalign(0)
+            button.connect("clicked", self._activate, callback)
+            box.append(button)
+        popover = Gtk.Popover(child=box, has_arrow=False)
+        popover.add_css_class("step-menu")
+        popover.set_parent(anchor)
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        popover.set_pointing_to(rect)
+        # Dismissing it by clicking away must not leave it parented to a row the
+        # list may rebuild later.
+        popover.connect("closed", lambda _p: GLib.idle_add(self.close))
+        self._popover = popover
+        self._on_close = on_close
+        popover.popup()
+        return popover
+
+    def _activate(self, _button, callback) -> None:
+        # Closed first: the callback usually rebuilds the list, which destroys
+        # the row this menu is parented to.
+        self.close()
+        callback()
+
+    def close(self) -> bool:
+        popover, self._popover = self._popover, None
+        on_close, self._on_close = self._on_close, None
+        if popover is not None:
+            popover.popdown()
+            if popover.get_parent() is not None:
+                popover.unparent()
+        if on_close is not None:
+            on_close()
+        return False
+
+
 def rgba_to_hex(rgba: Gdk.RGBA) -> str:
     return "#{:02x}{:02x}{:02x}".format(
         int(rgba.red * 255), int(rgba.green * 255), int(rgba.blue * 255)
@@ -155,6 +271,7 @@ class StepEditor(Gtk.Box):
         # rebuilt in place when its options change (see _repopulate).
         self._param_rows: dict[str, Gtk.Box] = {}
         self._building = False
+        self._menu = _ContextMenu()
 
         cats = registry.by_category()
         self._cat_names = [c for c in CATEGORY_ORDER if c in cats] + [
@@ -226,6 +343,39 @@ class StepEditor(Gtk.Box):
         # Renaming updates the list entry as it is typed.
         if not self._building and self._on_change:
             self._on_change()
+
+    # ---------- copy / paste ----------
+
+    def enable_context_menu(self) -> None:
+        """Offer copy/paste on a step that is not part of a list.
+
+        A single-action key has no row to right-click, so the menu goes on the
+        editor itself. Inside a StepList the row owns the menu instead, which is
+        why this is opt-in rather than always installed.
+        """
+        gesture = Gtk.GestureClick(button=Gdk.BUTTON_SECONDARY)
+        gesture.connect("pressed", self._on_context_menu)
+        self.add_controller(gesture)
+
+    def _on_context_menu(self, gesture, _n_press: int, x: float, y: float) -> None:
+        self._menu.show(gesture.get_widget(), x, y, self.menu_items())
+
+    def menu_items(self) -> list[tuple[str, bool, object]]:
+        return [
+            ("Copy action", self._current_action() is not None, self.copy_step),
+            ("Paste action", STEP_CLIPBOARD.has_step(), self.paste_step),
+        ]
+
+    def copy_step(self) -> None:
+        STEP_CLIPBOARD.set(self.get_step())
+        _report_copied(self.app, self.display_name())
+
+    def paste_step(self) -> None:
+        """Replace this step with the copied one. `load` reports the change."""
+        step = STEP_CLIPBOARD.get()
+        if step is not None:
+            self.load(step)
+            _report_pasted(self.app, self.display_name())
 
     # ---------- selection ----------
 
@@ -517,6 +667,9 @@ class StepList(Gtk.Box):
         self._editors: list[StepEditor] = []
         self._drag_step: int | None = None
         self._drop_step: int | None = None
+        self._menu = _ContextMenu()
+        self._row_menu_click = False
+        self._menu_row: Gtk.Expander | None = None
 
         self._list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.append(self._list_box)
@@ -524,6 +677,12 @@ class StepList(Gtk.Box):
         add.set_icon_name("list-add-symbolic")
         add.connect("clicked", lambda _b: self._add(ActionStep(), expand=True))
         self.append(add)
+
+        # Right-clicking the list itself, rather than one of its rows, pastes at
+        # the end.
+        menu = Gtk.GestureClick(button=Gdk.BUTTON_SECONDARY)
+        menu.connect("pressed", self._on_list_menu)
+        self.add_controller(menu)
 
     def load(self, steps: list[ActionStep]) -> None:
         self._editors.clear()
@@ -557,25 +716,54 @@ class StepList(Gtk.Box):
         icon.set_draw_func(draw)
         return icon
 
-    def _add(self, step: ActionStep, expand: bool, rebuild: bool = True) -> None:
+    def _add(
+        self,
+        step: ActionStep,
+        expand: bool,
+        rebuild: bool = True,
+        position: int | None = None,
+    ) -> None:
+        """Append a step, or insert it at `position`, pushing that row down."""
         editor = StepEditor(self.app, show_label=True)
         editor.load(step)
         editor._on_change = self._editors_changed
         editor._want_expand = expand  # type: ignore[attr-defined]
-        self._editors.append(editor)
+        if position is None:
+            self._editors.append(editor)
+        else:
+            self._editors.insert(max(0, min(position, len(self._editors))), editor)
         if rebuild:
             self._rebuild()
             self._notify_change()
             if expand:
                 self._reveal(editor)
 
-    def _duplicate(self, index: int) -> None:
-        """Copy a step to the end of the list, as a base for the next one."""
+    # --- copy / paste ---
+
+    def _copy(self, index: int) -> None:
+        """Put a step on the shared clipboard; nothing is inserted yet."""
         if not 0 <= index < len(self._editors):
             return
-        self._add(self._editors[index].get_step(), expand=True)
+        self._editors[index].copy_step()
+
+    def _paste(self, index: int | None) -> None:
+        """Insert the copied step at `index`, or at the end when it is None."""
+        step = STEP_CLIPBOARD.get()
+        if step is None:
+            return
+        position = (
+            len(self._editors) if index is None
+            else max(0, min(index, len(self._editors)))
+        )
+        # Collapsed like every other row: the copy is already configured, so
+        # opening it would only push the rest of the list out of view.
+        self._add(step, expand=False, position=position)
+        self._reveal(self._editors[position])
+        _report_pasted(self.app, self._editors[position].display_name())
 
     def _rebuild(self) -> None:
+        # A menu is parented to a row that is about to be destroyed.
+        self._menu.close()
         # Rebuilding recreates every expander, so what the user opened or closed
         # by hand has to be read back first. Without this, adding a step
         # restored the state each row had when it was created, silently
@@ -666,6 +854,7 @@ class StepList(Gtk.Box):
         exp.add_css_class("step-row")
         self._disable_hover_expand(exp)
         self._add_row_dnd(exp, i)
+        self._add_row_menu(exp, i)
 
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
                           margin_start=8, margin_top=4, margin_bottom=6)
@@ -697,9 +886,11 @@ class StepList(Gtk.Box):
         down.set_tooltip_text("Move down")
         down.set_sensitive(i < len(self._editors) - 1)
         down.connect("clicked", lambda _b: self._move(i, +1))
-        duplicate = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
-        duplicate.set_tooltip_text("Duplicate this action at the end of the list")
-        duplicate.connect("clicked", lambda _b: self._duplicate(i))
+        copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+        copy.set_tooltip_text(
+            "Copy this action; right-click any action list to paste it"
+        )
+        copy.connect("clicked", lambda _b: self._copy(i))
         delete = Gtk.Button(child=self._delete_icon())
         delete.set_tooltip_text("Remove action")
         # Flat like its neighbours, but red: "destructive-action" paints a solid
@@ -707,12 +898,12 @@ class StepList(Gtk.Box):
         # normal text color.
         delete.add_css_class("step-remove")
         delete.connect("clicked", lambda _b: self._delete(i))
-        for button in (up, down, duplicate, delete):
+        for button in (up, down, copy, delete):
             button.add_css_class("flat")
             header.append(button)
         # Kept so focus can be handed to the replacement after a rebuild.
         editor._controls = {  # type: ignore[attr-defined]
-            "up": up, "down": down, "duplicate": duplicate, "delete": delete,
+            "up": up, "down": down, "copy": copy, "delete": delete,
         }
         return header
 
@@ -727,6 +918,77 @@ class StepList(Gtk.Box):
         for controller in list(row.observe_controllers()):
             if isinstance(controller, Gtk.DropControllerMotion):
                 row.remove_controller(controller)
+
+    # --- context menu (right-click) ---
+
+    def _add_row_menu(self, row: Gtk.Expander, i: int) -> None:
+        gesture = Gtk.GestureClick(button=Gdk.BUTTON_SECONDARY)
+        gesture.connect("pressed", self._on_row_menu, i)
+        row.add_controller(gesture)
+
+    def _on_row_menu(self, gesture, _n_press: int, x: float, y: float, i: int) -> None:
+        """Copy or paste onto one row.
+
+        A right click inside a parameter entry never gets here: the entry claims
+        it first and shows its own text menu, which is what it should do.
+        """
+        # Claiming should already deny the list's gesture, one step further up
+        # the bubble chain. `_row_menu_click` does not depend on that: bubble
+        # delivery reaches this row before the list, and both handlers run in
+        # the same event delivery, so the flag is set before the list reads it.
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        self._row_menu_click = True
+        GLib.idle_add(self._clear_row_menu_click)
+        row = gesture.get_widget()
+        # Highlighted until the menu goes away, so it is never in doubt which
+        # row the entries act on — the menu itself covers part of the list.
+        self._set_menu_row(row)
+        self._menu.show(
+            row, x, y, self.row_menu_items(i),
+            on_close=lambda: self._set_menu_row(None),
+        )
+
+    def _set_menu_row(self, row: Gtk.Expander | None) -> None:
+        # The row is held as a widget, not an index: a menu entry may reorder
+        # the list, and the highlight must come off whatever it went on.
+        if self._menu_row is not None:
+            self._menu_row.remove_css_class("menu-target")
+        self._menu_row = row
+        if row is not None:
+            row.add_css_class("menu-target")
+
+    def _clear_row_menu_click(self) -> bool:
+        self._row_menu_click = False
+        return False
+
+    def _on_list_menu(self, gesture, _n_press: int, x: float, y: float) -> None:
+        """Right-clicking the list beside its rows pastes at the end."""
+        if self._row_menu_click:
+            # A row already answered this very click; replacing its menu with
+            # the paste-at-the-end one would drop the copy entry.
+            return
+        self._menu.show(gesture.get_widget(), x, y, self.list_menu_items())
+
+    def row_menu_items(self, i: int) -> list:
+        """Everything right-clicking row `i` offers, `None` being a separator."""
+        last = len(self._editors) - 1
+        return [
+            ("Copy action", 0 <= i <= last, lambda: self._copy(i)),
+            ("Paste action", STEP_CLIPBOARD.has_step(), lambda: self._paste(i)),
+            None,
+            ("Move up", i > 0, lambda: self._move(i, -1)),
+            ("Move down", 0 <= i < last, lambda: self._move(i, +1)),
+            ("Move to top", i > 0, lambda: self._reorder(i, 0)),
+            ("Move to bottom", 0 <= i < last, lambda: self._reorder(i, last)),
+            None,
+            ("Remove action", 0 <= i <= last, lambda: self._delete(i)),
+        ]
+
+    def list_menu_items(self) -> list:
+        """What right-clicking the list itself offers: paste at the end."""
+        return [
+            ("Paste action", STEP_CLIPBOARD.has_step(), lambda: self._paste(None)),
+        ]
 
     # --- drag & drop reordering ---
 
@@ -853,11 +1115,22 @@ class StepList(Gtk.Box):
         if not 0 <= index < len(self._editors):
             return
         button = getattr(self._editors[index], "_controls", {}).get(name)
-        if button is not None:
-            # After the pending layout, so the new row can actually take it.
-            GLib.idle_add(button.grab_focus, priority=GLib.PRIORITY_LOW)
+        if button is None:
+            return
+
+        def take_focus() -> bool:
+            # Wrapped rather than handed to idle_add directly: grab_focus
+            # answers True when it succeeds, and a source that returns True is
+            # kept, so the focus grab would repeat for the rest of the session.
+            button.grab_focus()
+            return False
+
+        # After the pending layout, so the new row can actually take it.
+        GLib.idle_add(take_focus, priority=GLib.PRIORITY_LOW)
 
     def _delete(self, i: int) -> None:
+        if not 0 <= i < len(self._editors):
+            return
         del self._editors[i]
         self._rebuild_keeping_scroll()
         self._notify_change()
