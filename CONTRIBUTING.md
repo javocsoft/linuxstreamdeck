@@ -38,6 +38,26 @@ Important project rules include:
 - Edit canonical agent prompts only under `agent-definitions/`; the Claude and
   Codex adapters are generated.
 
+## On AI-assisted development
+
+Parts of this project were written with AI assistance. That is visible in the
+repository rather than hidden: `AGENTS.md` and `CLAUDE.md` are the operational
+guides those tools follow, and they are the same guides a human contributor
+should read.
+
+This is not "vibe coding" in the sense of accepting generated code without
+reading it. The architecture and the design decisions are deliberate, and the
+project is held to them by its test suite — in particular
+`tests/test_invariants.py`, which tests no feature at all and exists solely to
+make the threading and rendering rules of `AGENTS.md` fail loudly instead of
+silently. Each of its guards is mutation-tested: confirmed to fail when the rule
+it protects is deliberately broken.
+
+**Contributions are judged on the contribution, not on how you produced it.**
+Use AI, don't use AI — nobody will ask, and there is no way to tell. What is
+asked is what it has always been: the tests pass, the rules above are respected,
+the change is focused, and the documentation is updated when behaviour changes.
+
 ## Set up the development environment
 
 From the repository root:
