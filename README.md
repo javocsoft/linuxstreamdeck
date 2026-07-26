@@ -547,6 +547,14 @@ proposal. Choose the provider and model, enter your own provider API key, and
 describe the result you want. API access is billed separately by the selected
 provider; it is not included with LinuxStreamDeck.
 
+The dialog opens on whichever part you still need. The first time, the provider
+settings are open and waiting for an API key. Once one is stored they fold into a
+single row that states what will be used — *Claude · claude-haiku-4-5 · API key
+saved · OBS context on* — so the description field is the first thing you see and
+the first thing focused. Click that row whenever you want the settings back.
+**Generate proposal** is pinned to the bottom of the dialog and is always
+visible.
+
 Each provider API key is stored separately in the desktop Secret Service (GNOME
 Keyring). Keys are never written to `config.json`, its backup, or a configuration
 export. If the selected provider already has a key, the dialog shows a fixed,

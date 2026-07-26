@@ -604,6 +604,37 @@ When a saved key is displayed, its fixed read-only mask is only a presence
 indicator. The request must use the separately held stored key, never the mask.
 Replacing, returning to the saved key, and forgetting it are explicit UI actions.
 
+`AIKeyDialog` is laid out around the fact that its configuration is set up once
+and its description field is used every time. Provider, model, API key and the
+context switch live inside one `Adw.ExpanderRow`, and the primary action sits in
+an `Adw.ToolbarView` bottom bar rather than at the end of the scrolled page.
+Measured at the default 580x820, that took the request page from 936 px of
+content in a 773 px viewport — description field starting 487 px down, Generate
+button entirely below the fold — to 606 px in a 727 px viewport, which needs no
+scrolling at all.
+
+Four rules keep it from feeling like something is hidden or moving:
+
+- **The folded row restates the whole configuration** in its title and subtitle
+  (`_refresh_summary()`): provider, model, key state, context and billing. A bare
+  "Settings" row is the version that leaves people hunting.
+- **The opening state is decided once**, in `_settle_opening_state()`, from what
+  the keyring holds: folded with the description focused when
+  `_configuration_ready()`, expanded with the API key focused when not. It is
+  guarded by `_settings_settled` so a later lookup — a provider switch triggers
+  one — can never fold the settings away while they are being used.
+- **Validation opens what it complains about.** `_generate()` expands the row
+  before reporting a missing API key, or the message points at a field nobody
+  can see.
+- **`_show_page()` moves the content stack and the action stack together.** The
+  bottom bar is shared by both pages, so switching only one leaves the wrong
+  buttons under the wrong page.
+
+The reassurance under **Describe the key** — that a proposal never runs or saves
+anything — stays outside the expander on purpose. It is a safety statement about
+what the feature does, not configuration, so it must be readable without
+expanding anything.
+
 The **Audio** actions scope their input list to a scene:
 `OBSClient.get_audio_sources_in_scene()` takes the scene's items, adds the
 special inputs from `GetSpecialInputs` (Desktop Audio, Mic/Aux belong to no

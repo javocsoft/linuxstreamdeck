@@ -24,7 +24,9 @@ from ..ai.service import (  # noqa: E402
 log = logging.getLogger(__name__)
 
 SAVED_API_KEY_MASK = "************"
-PROMPT_INITIAL_HEIGHT = 260
+# The configuration folds away once it is usable, so the description field can
+# open at a size worth typing into instead of being cut off by the fold.
+PROMPT_INITIAL_HEIGHT = 420
 PROMPT_MIN_HEIGHT = 180
 PROMPT_MAX_HEIGHT = 700
 
@@ -48,6 +50,11 @@ class AIKeyDialog(Adw.Window):
         self._showing_saved_key = False
         self._key_lookup_id = 0
         self._generation_id = 0
+        # Whether the opening state has been settled yet. It is decided once,
+        # from what is stored, and never again: folding the settings away while
+        # the user is looking at them is exactly what makes a dialog feel like
+        # it moved under the cursor.
+        self._settings_settled = False
         self._current_provider = app.config.ai.provider
         self._models = {
             "openai": app.config.ai.openai_model,
@@ -62,21 +69,36 @@ class AIKeyDialog(Adw.Window):
         self.stack.add_named(self._build_request_page(), "request")
         self.stack.add_named(self._build_preview_page(), "preview")
         view.set_content(self.stack)
+
+        # The action of each page is pinned here rather than left at the end of
+        # the scrolled content, where the button that does the dialog's whole
+        # job sat below the fold on every open.
+        self.action_stack = Gtk.Stack()
+        self.action_stack.add_named(self._build_request_actions(), "request")
+        self.action_stack.add_named(self._build_preview_actions(), "preview")
+        view.add_bottom_bar(self.action_stack)
         self.set_content(view)
 
         self.connect("close-request", self._on_close_request)
         self._load_api_key()
 
+    def _show_page(self, name: str) -> None:
+        """Move both the content and its pinned action bar together."""
+        self.stack.set_visible_child_name(name)
+        self.action_stack.set_visible_child_name(name)
+
     def _build_request_page(self) -> Adw.PreferencesPage:
         page = Adw.PreferencesPage()
 
-        provider_group = Adw.PreferencesGroup(
-            title="Provider",
-            description=(
-                "API usage is billed by the selected provider. The API key is "
-                "stored in your desktop keyring and is never exported."
-            ),
-        )
+        # One row standing in for the whole configuration. Its title and
+        # subtitle carry the complete state, so nothing has to be expanded to
+        # know what will be used: a bare "Settings" row is what would leave
+        # someone wondering where everything went.
+        settings_group = Adw.PreferencesGroup()
+        self.settings = Adw.ExpanderRow(title="Provider", subtitle="")
+        self.settings.set_expanded(False)
+        settings_group.add(self.settings)
+
         self.provider = Adw.ComboRow(title="AI provider")
         self.provider.set_model(
             Gtk.StringList.new([PROVIDER_LABELS[item] for item in PROVIDERS])
@@ -93,14 +115,15 @@ class AIKeyDialog(Adw.Window):
             title="Model",
             text=self._models[self._current_provider],
         )
+        self.model.connect("changed", lambda *_a: self._refresh_summary())
         self.api_key = Adw.PasswordEntryRow(title="API key")
-        provider_group.add(self.provider)
-        provider_group.add(self.model)
-        provider_group.add(self.api_key)
+        self.api_key.connect("changed", lambda *_a: self._refresh_summary())
+        self.settings.add_row(self.provider)
+        self.settings.add_row(self.model)
+        self.settings.add_row(self.api_key)
 
         self.key_status = Gtk.Label(wrap=True, xalign=0)
         self.key_status.add_css_class("dim-label")
-        provider_group.add(self.key_status)
         self.forget_key = Gtk.Button(
             label="Forget saved API key",
             halign=Gtk.Align.START,
@@ -116,27 +139,44 @@ class AIKeyDialog(Adw.Window):
         key_actions = Gtk.Box(spacing=8)
         key_actions.append(self.replace_key)
         key_actions.append(self.forget_key)
-        provider_group.add(key_actions)
-        page.add(provider_group)
 
-        context_group = Adw.PreferencesGroup(
-            title="Optional context",
-            description=(
-                "When enabled, only OBS and page names are sent. Passwords, "
-                "commands and the full configuration are never included."
+        keyring_note = Gtk.Label(
+            label=(
+                "The API key is stored in your desktop keyring and is never "
+                "exported."
             ),
+            wrap=True,
+            xalign=0,
         )
+        keyring_note.add_css_class("dim-label")
+        key_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=8,
+            margin_top=10,
+            margin_bottom=10,
+            margin_start=12,
+            margin_end=12,
+        )
+        key_box.append(keyring_note)
+        key_box.append(self.key_status)
+        key_box.append(key_actions)
+        self.settings.add_row(key_box)
+
         self.include_context = Adw.SwitchRow(
             title="Include OBS and page names",
             subtitle=(
-                "Helps the model use exact scene, source, input and page names."
+                "Only OBS and page names are sent. Passwords, commands and the "
+                "full configuration are never included."
             ),
         )
         self.include_context.set_active(
             self.app.config.ai.include_obs_context
         )
-        context_group.add(self.include_context)
-        page.add(context_group)
+        self.include_context.connect(
+            "notify::active", lambda *_a: self._refresh_summary()
+        )
+        self.settings.add_row(self.include_context)
+        page.add(settings_group)
 
         prompt_group = Adw.PreferencesGroup(
             title="Describe the key",
@@ -169,21 +209,101 @@ class AIKeyDialog(Adw.Window):
         self.prompt_container.append(self.prompt_resize_handle)
         prompt_group.add(self.prompt_container)
         page.add(prompt_group)
+        return page
 
-        actions = Adw.PreferencesGroup()
-        progress = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
+    def _build_request_actions(self) -> Gtk.Widget:
+        box = Gtk.Box(
+            spacing=10,
+            margin_top=6,
+            margin_bottom=6,
+            margin_start=12,
+            margin_end=12,
+        )
         self.spinner = Gtk.Spinner()
-        self.status = Gtk.Label(wrap=True, xalign=0)
+        self.status = Gtk.Label(wrap=True, xalign=0, hexpand=True)
         self.status.add_css_class("dim-label")
-        progress.append(self.spinner)
-        progress.append(self.status)
-        actions.add(progress)
-        self.generate = Gtk.Button(label="Generate proposal", margin_top=6)
+        box.append(self.spinner)
+        box.append(self.status)
+        self.generate = Gtk.Button(label="Generate proposal")
         self.generate.add_css_class("suggested-action")
         self.generate.connect("clicked", self._generate)
-        actions.add(self.generate)
-        page.add(actions)
-        return page
+        box.append(self.generate)
+        return box
+
+    def _build_preview_actions(self) -> Gtk.Widget:
+        box = Gtk.Box(
+            spacing=8,
+            homogeneous=True,
+            margin_top=6,
+            margin_bottom=6,
+            margin_start=12,
+            margin_end=12,
+        )
+        back = Gtk.Button(label="Back")
+        back.connect("clicked", lambda _button: self._show_page("request"))
+        apply_button = Gtk.Button(label="Load into editor")
+        apply_button.add_css_class("suggested-action")
+        apply_button.connect("clicked", self._apply)
+        box.append(back)
+        box.append(apply_button)
+        return box
+
+    # ---------- opening state ----------
+
+    def _configuration_ready(self) -> bool:
+        """Whether this dialog could generate right now without any setup."""
+        key = (
+            self._stored_key
+            if self._showing_saved_key
+            else self.api_key.get_text().strip()
+        )
+        return bool(key) and bool(self.model.get_text().strip())
+
+    def _key_summary(self) -> str:
+        if self._showing_saved_key and self._stored_key:
+            return "API key saved"
+        if self.api_key.get_text().strip():
+            return "API key entered"
+        return "API key required"
+
+    def _refresh_summary(self) -> None:
+        """Restate the whole configuration on the folded row."""
+        provider = PROVIDER_LABELS[self._selected_provider()]
+        model = self.model.get_text().strip()
+        self.settings.set_title(f"{provider} · {model}" if model else provider)
+        self.settings.set_subtitle(
+            " · ".join(
+                (
+                    self._key_summary(),
+                    "OBS context on"
+                    if self.include_context.get_active()
+                    else "OBS context off",
+                    "billed by your provider",
+                )
+            )
+        )
+
+    def _settle_opening_state(self) -> None:
+        """Open on the task when it is set up, on the setup when it is not.
+
+        Decided once per dialog, as soon as the stored key is known.
+        """
+        if self._settings_settled:
+            return
+        self._settings_settled = True
+        ready = self._configuration_ready()
+        self.settings.set_expanded(not ready)
+        self._focus_later(self.prompt if ready else self.api_key)
+
+    @staticmethod
+    def _focus_later(widget: Gtk.Widget) -> None:
+        def take_focus() -> bool:
+            widget.grab_focus()
+            # Never the bare method: grab_focus answers True when it succeeds,
+            # and a source that returns True is kept and re-run forever.
+            return False
+
+        GLib.idle_add(take_focus)
 
     def _build_prompt_resize_handle(self) -> Gtk.DrawingArea:
         handle = Gtk.DrawingArea(
@@ -259,24 +379,10 @@ class AIKeyDialog(Adw.Window):
             Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC
         )
         preview_scroller.set_min_content_height(380)
+        preview_scroller.set_vexpand(True)
         preview_scroller.add_css_class("card")
         group.add(preview_scroller)
         page.add(group)
-
-        actions = Adw.PreferencesGroup()
-        buttons = Gtk.Box(spacing=8, homogeneous=True)
-        back = Gtk.Button(label="Back")
-        back.connect(
-            "clicked",
-            lambda _button: self.stack.set_visible_child_name("request"),
-        )
-        apply_button = Gtk.Button(label="Load into editor")
-        apply_button.add_css_class("suggested-action")
-        apply_button.connect("clicked", self._apply)
-        buttons.append(back)
-        buttons.append(apply_button)
-        actions.add(buttons)
-        page.add(actions)
         return page
 
     def _selected_provider(self) -> str:
@@ -338,6 +444,7 @@ class AIKeyDialog(Adw.Window):
                 "Enter an API key. It will be saved securely when you generate."
             )
         self._update_key_controls()
+        self._settle_opening_state()
 
     def _show_saved_api_key(self, api_key: str) -> None:
         self._stored_key = api_key
@@ -380,6 +487,7 @@ class AIKeyDialog(Adw.Window):
         self.forget_key.set_sensitive(
             self.generate.get_sensitive() and has_stored_key
         )
+        self._refresh_summary()
 
     def _forget_api_key(self, _button) -> None:
         provider = self._selected_provider()
@@ -428,6 +536,9 @@ class AIKeyDialog(Adw.Window):
             entered_key = self.api_key.get_text().strip()
             api_key = entered_key
         if not api_key:
+            # The field being complained about lives behind the folded row, so
+            # the complaint has to open it.
+            self.settings.set_expanded(True)
             self._show_status(
                 f"Enter an API key for {PROVIDER_LABELS[provider]}"
             )
@@ -543,7 +654,7 @@ class AIKeyDialog(Adw.Window):
             return False
         self._proposal = proposal
         self.preview.get_buffer().set_text(format_proposal(proposal))
-        self.stack.set_visible_child_name("preview")
+        self._show_page("preview")
         return False
 
     def _set_generating(self, generating: bool) -> None:
