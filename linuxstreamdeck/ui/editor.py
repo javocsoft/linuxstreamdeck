@@ -19,6 +19,11 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk  # noqa: E402
 
 from ..core import actions as action_registry  # noqa: E402
+from ..core.controller import (  # noqa: E402
+    GESTURE_DOUBLE,
+    GESTURE_LONG,
+    GESTURE_SINGLE,
+)
 from ..core.config import (  # noqa: E402
     DEFAULT_FOLDER_ICON,
     KIND_FOLDER,
@@ -278,6 +283,7 @@ class EditorPanel(Gtk.Box):
         self.single_press_list = self.double_press_list = None
         self.long_press_list = None
         kind = self._current_kind()
+        self._show_gesture_tests(kind == KIND_PRESS)
         self._folder = (
             (kc.folder if kc.folder is not None else Folder())
             if kind == KIND_FOLDER
@@ -389,8 +395,9 @@ class EditorPanel(Gtk.Box):
         elif kind == KIND_PRESS:
             self.body.append(self._hint(
                 "Each gesture runs its own list. Leave one empty to ignore it. "
-                "Only the physical deck can tell the gestures apart; a click on "
-                "the on-screen deck is a single press."
+                "Only the physical deck can tell the gestures apart, so a click "
+                "on the on-screen deck is a single press; use the •• and — "
+                "buttons below to test the other two."
             ))
             self.single_press_list = StepList(
                 self.app,
@@ -532,13 +539,31 @@ class EditorPanel(Gtk.Box):
         save.add_css_class("suggested-action")
         save.connect("clicked", self._save)
         test = Gtk.Button(label="Test")
-        test.connect("clicked", lambda _b: self.app.controller.press(self.index))
+        test.set_tooltip_text("Run this key now")
+        test.connect("clicked", lambda _b: self._test(GESTURE_SINGLE))
+        # A gesture key can only be half-tested from a click, which has no
+        # release to time. These name the gesture instead, so the whole key is
+        # testable without the physical deck.
+        self.test_double = Gtk.Button(label="••")
+        self.test_double.set_tooltip_text("Run the double-press list")
+        self.test_double.connect("clicked", lambda _b: self._test(GESTURE_DOUBLE))
+        self.test_long = Gtk.Button(label="—")
+        self.test_long.set_tooltip_text("Run the long-press list")
+        self.test_long.connect("clicked", lambda _b: self._test(GESTURE_LONG))
         wipe = Gtk.Button(label="Clear")
         wipe.add_css_class("destructive-action")
         wipe.connect("clicked", self._wipe)
-        for b in (save, test, wipe):
+        for b in (save, test, self.test_double, self.test_long, wipe):
             btns.append(b)
         return btns
+
+    def _test(self, gesture: str) -> None:
+        if self.index is not None:
+            self.app.controller.press(self.index, gesture)
+
+    def _show_gesture_tests(self, visible: bool) -> None:
+        self.test_double.set_visible(visible)
+        self.test_long.set_visible(visible)
 
     # ---------- save / clear ----------
 

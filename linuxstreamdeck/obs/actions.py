@@ -66,6 +66,10 @@ class StudioModeToggle(Action):
     id = "obs.studio_mode"
     name = "Studio mode on/off"
     category = CAT_SCENES
+    description = (
+        "Turn studio mode on or off, so scenes are staged in preview "
+        "before going to program. The key lights up while it is on."
+    )
 
     def execute(self, ctx, p):
         ctx.obs.request(
@@ -92,6 +96,10 @@ class TransitionSet(Action):
     id = "obs.transition_set"
     name = "Set transition"
     category = CAT_SCENES
+    description = (
+        "Choose the transition used between scenes, and optionally how "
+        "long it lasts in milliseconds."
+    )
     params = [
         Param("transition", "Transition", choices_source="transitions"),
         Param("duration_ms", "Duration (ms, 0 = keep)", kind="int", default=0),
@@ -116,6 +124,10 @@ class SceneCollectionSet(Action):
     id = "obs.scene_collection"
     name = "Scene collection"
     category = CAT_SCENES
+    description = (
+        "Switch to another OBS scene collection, swapping the whole set "
+        "of scenes and sources at once."
+    )
     params = [Param("collection", "Collection", choices_source="scene_collections")]
 
     def execute(self, ctx, p):
@@ -129,6 +141,11 @@ class ProfileSet(Action):
     id = "obs.profile"
     name = "OBS profile"
     category = CAT_SCENES
+    description = (
+        "Switch to another OBS profile, swapping its encoding, output and "
+        "recording settings. This is an OBS profile, not a "
+        "LinuxStreamDeck one."
+    )
     params = [Param("profile", "Profile", choices_source="profiles")]
 
     def execute(self, ctx, p):
@@ -174,6 +191,10 @@ class RecordPauseToggle(Action):
     id = "obs.record_pause"
     name = "Pause recording"
     category = CAT_OUTPUT
+    description = (
+        "Pause or resume a recording in progress, without closing the "
+        "file. The key lights up while it is paused."
+    )
 
     def execute(self, ctx, p):
         ctx.obs.request("ToggleRecordPause")
@@ -187,6 +208,10 @@ class StreamToggle(Action):
     id = "obs.stream"
     name = "Stream on/off"
     category = CAT_OUTPUT
+    description = (
+        "Start or stop the live stream. The key turns green and shows "
+        "LIVE while you are broadcasting."
+    )
 
     def execute(self, ctx, p):
         ctx.obs.request("ToggleStream")
@@ -202,6 +227,10 @@ class VirtualCamToggle(Action):
     id = "obs.virtualcam"
     name = "Virtual camera on/off"
     category = CAT_OUTPUT
+    description = (
+        "Start or stop the virtual camera, so OBS shows up as a webcam "
+        "in Zoom, Meet, Discord and anything else."
+    )
 
     def execute(self, ctx, p):
         ctx.obs.request("ToggleVirtualCam")
@@ -215,6 +244,10 @@ class ReplayBufferToggle(Action):
     id = "obs.replay"
     name = "Replay buffer on/off"
     category = CAT_OUTPUT
+    description = (
+        "Start or stop the replay buffer, which keeps the last seconds "
+        "of video in memory ready to be saved."
+    )
 
     def execute(self, ctx, p):
         ctx.obs.request("ToggleReplayBuffer")
@@ -228,6 +261,10 @@ class ReplaySave(Action):
     id = "obs.replay_save"
     name = "Save replay"
     category = CAT_OUTPUT
+    description = (
+        "Save what the replay buffer is holding to a file, capturing the "
+        "moment that just happened."
+    )
 
     def execute(self, ctx, p):
         ctx.obs.request("SaveReplayBuffer")
@@ -371,6 +408,10 @@ class SourceVisibility(Action):
     id = "obs.source_visibility"
     name = "Show/hide source"
     category = CAT_SOURCES
+    description = (
+        "Show, hide or toggle a source in a scene. Sources inside a group "
+        "can be picked too. The key lights up while the source is visible."
+    )
     params = [
         Param("scene", "Scene", choices_source="scenes"),
         Param("source", "Source", choices_source="sources_in_scene"),
@@ -420,6 +461,10 @@ class FilterToggle(Action):
     id = "obs.filter"
     name = "Enable/disable filter"
     category = CAT_SOURCES
+    description = (
+        "Enable, disable or toggle a filter applied to a source, such as "
+        "a chroma key, a colour correction or a noise gate."
+    )
     params = [
         Param("source", "Source", choices_source="sources_in_scene"),
         Param("filter", "Filter", choices_source="filters_of_source"),
@@ -453,6 +498,98 @@ class FilterToggle(Action):
             return {"active": d.get("filterEnabled", False)}
         except Exception:
             return None
+
+
+@register
+class TextSourceSet(Action):
+    id = "obs.text"
+    name = "Set text source"
+    category = CAT_SOURCES
+    description = (
+        "Replace what a text source displays. Useful for a countdown message, "
+        "a «back in 5» card or a now-playing line."
+    )
+    params = [
+        Param("input", "Text source", choices_source="text_inputs"),
+        Param("text", "Text"),
+    ]
+
+    def execute(self, ctx, p):
+        ctx.obs.request(
+            "SetInputSettings",
+            {
+                "inputName": p.get("input", ""),
+                "inputSettings": {"text": str(p.get("text", ""))},
+                # Merged into the existing settings, so font, colour and every
+                # other property the user configured in OBS survive.
+                "overlay": True,
+            },
+        )
+
+
+@register
+class BrowserSourceRefresh(Action):
+    id = "obs.browser_refresh"
+    name = "Refresh browser source"
+    category = CAT_SOURCES
+    description = "Reload a browser source, bypassing its cache."
+    params = [
+        Param("input", "Browser source", choices_source="browser_inputs"),
+    ]
+
+    def execute(self, ctx, p):
+        ctx.obs.request(
+            "PressInputPropertiesButton",
+            {
+                "inputName": p.get("input", ""),
+                # The button OBS itself labels "Refresh cache of current page".
+                "propertyName": "refreshnocache",
+            },
+        )
+
+
+@register
+class SourceTransform(Action):
+    id = "obs.transform"
+    name = "Move/scale source"
+    category = CAT_SOURCES
+    description = (
+        "Change one transform property of a source in a scene. «adjust» adds "
+        "to the current value, so a key can nudge it repeatedly."
+    )
+    params = [
+        Param("scene", "Scene", choices_source="scenes"),
+        Param("source", "Source", choices_source="sources_in_scene"),
+        Param("property", "Property", kind="choice", default="positionX",
+              choices=["positionX", "positionY", "scaleX", "scaleY",
+                       "rotation"]),
+        Param("mode", "Mode", kind="choice", default="set",
+              choices=["set", "adjust"]),
+        Param("value", "Value", kind="float", default=0.0, step=0.1),
+    ]
+
+    def execute(self, ctx, p):
+        # A grouped source answers to its group, exactly as show/hide does.
+        container, item_id = ctx.obs.find_scene_item(
+            p.get("scene") or ctx.obs.state.current_scene,
+            p.get("source", ""),
+        )
+        prop = p.get("property", "positionX")
+        value = float(p.get("value") or 0.0)
+        if p.get("mode", "set") == "adjust":
+            current = ctx.obs.request(
+                "GetSceneItemTransform",
+                {"sceneName": container, "sceneItemId": item_id},
+            ).get("sceneItemTransform", {})
+            value += float(current.get(prop, 0.0))
+        ctx.obs.request(
+            "SetSceneItemTransform",
+            {
+                "sceneName": container,
+                "sceneItemId": item_id,
+                "sceneItemTransform": {prop: value},
+            },
+        )
 
 
 # =============================== Media ===============================
@@ -548,6 +685,9 @@ apply_default_icons({
     "obs.volume_set": "mdi:volume-high",
     "obs.source_visibility": "mdi:eye",
     "obs.filter": "mdi:image-filter-black-white",
+    "obs.text": "mdi:format-text",
+    "obs.browser_refresh": "mdi:refresh",
+    "obs.transform": "mdi:cursor-move",
     "obs.media": "mdi:play-circle",
     "obs.hotkey": "mdi:keyboard",
     "obs.raw": "mdi:code-json",

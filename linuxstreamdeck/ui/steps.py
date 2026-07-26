@@ -294,7 +294,16 @@ class StepEditor(Gtk.Box):
         self.cat_dd = Gtk.DropDown.new_from_strings(self._cat_names)
         self.append(_row("Category", self.cat_dd))
         self.action_dd = Gtk.DropDown.new_from_strings([])
-        self.append(_row("Action", self.action_dd))
+        self.action_dd.set_hexpand(True)
+        # The dropdowns need the category to be known before the action can be
+        # found. This searches every action at once, by what it does.
+        self.action_search = Gtk.Button.new_from_icon_name("edit-find-symbolic")
+        self.action_search.set_tooltip_text("Search all actions")
+        self.action_search.connect("clicked", self._open_action_picker)
+        action_box = Gtk.Box(spacing=6)
+        action_box.append(self.action_dd)
+        action_box.append(self.action_search)
+        self.append(_row("Action", action_box))
         self.desc = Gtk.Label(wrap=True, xalign=0)
         self.desc.add_css_class("dim-label")
         self.append(self.desc)
@@ -378,6 +387,28 @@ class StepEditor(Gtk.Box):
             _report_pasted(self.app, self.display_name())
 
     # ---------- selection ----------
+
+    def _open_action_picker(self, _button) -> None:
+        from .action_picker import ActionPickerDialog
+
+        current = self._current_action()
+        ActionPickerDialog(
+            self.get_root(),
+            self.select_action,
+            current.id if current is not None else "",
+        ).present()
+
+    def select_action(self, action_id: str) -> None:
+        """Point both dropdowns at one action, wherever its category is."""
+        action = registry.get(action_id)
+        if action is None or action.category not in self._cat_names:
+            return
+        self._building = True
+        self.cat_dd.set_selected(self._cat_names.index(action.category))
+        self._building = False
+        # Rebuilds the parameter widgets and notifies the change, exactly as
+        # picking it through the dropdowns would.
+        self._populate_actions(preselect=action_id)
 
     def _on_category_changed(self, *_a) -> None:
         if not self._building:
@@ -570,6 +601,8 @@ class StepEditor(Gtk.Box):
                 "scenes": obs.get_scenes,
                 "inputs": obs.get_inputs,
                 "media_inputs": obs.get_media_inputs,
+                "text_inputs": obs.get_text_inputs,
+                "browser_inputs": obs.get_browser_inputs,
                 "transitions": obs.get_transitions,
                 "scene_collections": obs.get_scene_collections,
                 "profiles": obs.get_profiles,

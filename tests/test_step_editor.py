@@ -50,6 +50,12 @@ class FakeObs:
     def get_media_inputs(self) -> list[str]:
         return []
 
+    def get_text_inputs(self) -> list[str]:
+        return []
+
+    def get_browser_inputs(self) -> list[str]:
+        return []
+
     def get_transitions(self) -> list[str]:
         return []
 

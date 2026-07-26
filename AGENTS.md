@@ -153,6 +153,7 @@ linuxstreamdeck/
 │   ├── controller.py  DeckController: presses, action/render workers, running feedback,
 │   │                  clocks/audio notifications, folder navigation, profile/key
 │   │                  operations and imports.
+│   ├── search.py      Key search across profiles, pages and nested folders.
 │   ├── icons.py       Built-in icon library (Material Design Icons glyphs via
 │   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
 │   └── secrets.py     Async Secret Service storage for OBS and per-provider API keys.
@@ -180,6 +181,8 @@ linuxstreamdeck/
 │   ├── steps.py       StepEditor / StepList / AppearanceBox — reused by the editor
 │   │                  for single, multi and toggle key types.
 │   ├── icon_picker.py Searchable grid to pick a library icon.
+│   ├── action_picker.py Searchable list of every action, by name or by what it does.
+│   ├── key_search.py  Find a key in any profile, page or folder, and go to it.
 │   ├── tray.py       StatusNotifierItem + dbusmenu status icon (no GTK widgets).
 │   ├── preferences.py Close behaviour and start-on-login settings dialog.
 │   ├── about.py       About dialog: application identity, credits, license and source link.
@@ -436,7 +439,8 @@ Actions are declarative and self-registering:
   `file_filter_name` for the native chooser. A parameter may also set
   `choices_source` so the editor fills the dropdown **live from OBS**
   (`scenes`, `inputs`, `media_inputs`, `transitions`, `scene_collections`,
-  `profiles`, `sources_in_scene`, `filters_of_source`, `hotkeys`, `pages`,
+  `profiles`, `sources_in_scene`, `filters_of_source`, `text_inputs`,
+  `browser_inputs`, `hotkeys`, `pages`,
   `deck_profiles`, `applications`). `pages`, `deck_profiles` and `applications`
   are the `LOCAL_CHOICE_SOURCES` and must stay **above** the `obs.connected`
   guard in `_fetch_choices`, so they still fill when OBS is not running. Note
@@ -827,6 +831,35 @@ hard-coding the three original names, or the new lists silently lose their
 bundled audio and their `nav.page` migration. For the same reason it must walk
 nested folder keys with `Config._walk_keys()` / `_walk_raw_keys()`.
 
+### Undo, action search and key search
+
+`DeckController` keeps a bounded history (`UNDO_DEPTH`) of the key changes that
+can be taken back: `clear_key()`, `paste_key()` and `swap_keys()` each record
+what the affected slots held before they ran. Only the `KeyConfig`s are kept,
+never transient state — an undone key starts from a clean runtime state exactly
+as a pasted one does.
+
+The history is **scoped to the grid on screen**. `can_undo()` requires the top
+entry's container to be the current one, and `forget_undo()` drops it on every
+page, profile and folder change and on deleting a page or profile or importing a
+configuration. Restoring into a grid the user has left would be invisible, and
+inside a folder the same index is a different key entirely. `MainWindow` routes
+undo through the usual unsaved-change guard, since it may replace the key the
+editor is showing.
+
+`ui/action_picker.py` searches all registered actions at once — name, category,
+description and id, terms ANDed — because the two chained dropdowns need the
+category to be known before the action can be found. Results starting with the
+query rank first, so Enter picks the obvious one.
+
+`core/search.py` finds a key anywhere in the configuration. `locations()` walks
+every profile, page and nested folder yielding a `KeyLocation` with enough to
+navigate back; `key_terms()` builds the haystack from labels, action ids **and
+their registered names**, step names and parameter values, so a key is found by
+what it does rather than by where it is. `key_steps()` deliberately does not
+descend into a folder: nested keys are yielded by the walk itself, and crediting
+a folder with its contents would make every folder match every search.
+
 ### Press gestures
 
 `LONG_PRESS_SECONDS` (0.5) and `DOUBLE_PRESS_SECONDS` (0.35) live in
@@ -845,7 +878,10 @@ profile change) and `shutdown()` all call into `_cancel_gesture()` or
 `_clear_gestures()`, because a stored index refers to a different key afterwards.
 
 A virtual press has no release to time, so `press()` runs `steps_single` directly;
-the editor says so. `Action.long_press(ctx, params)` returns `False` to decline,
+the editor says so. It also accepts an explicit `gesture` (`GESTURE_SINGLE` /
+`_DOUBLE` / `_LONG`, resolved by `gesture_steps()`), which only the editor's
+Test buttons pass: naming a gesture is a different thing from making the virtual
+deck wait out the double-press window, which it must never do. `Action.long_press(ctx, params)` returns `False` to decline,
 and the controller then falls through to a normal press, which is what makes
 "Nothing" behave exactly like a short press.
 

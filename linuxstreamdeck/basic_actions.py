@@ -53,6 +53,7 @@ class OpenUrl(Action):
     id = "sys.url"
     name = "Open URL"
     category = CAT_SYSTEM
+    description = "Open a web address in the default browser."
     params = [Param("url", "URL", default="https://")]
 
     def execute(self, ctx, p):

@@ -264,12 +264,27 @@ class OBSClient:
         return sorted(audio)
 
     def get_media_inputs(self) -> list[str]:
+        return self._inputs_of_kind(("ffmpeg_source", "vlc_source"))
+
+    def get_text_inputs(self) -> list[str]:
+        """Text sources, whichever backend OBS built them with."""
+        return self._inputs_of_kind(("text_gdiplus", "text_ft2_source"))
+
+    def get_browser_inputs(self) -> list[str]:
+        return self._inputs_of_kind(("browser_source",))
+
+    def _inputs_of_kind(self, kinds: tuple[str, ...]) -> list[str]:
+        """Inputs whose kind *contains* one of `kinds`.
+
+        Matched as a substring rather than exactly because OBS suffixes these
+        kinds across versions and platforms ("text_gdiplus_v2", "_v3"), and an
+        exact match would quietly return nothing after an OBS update.
+        """
         d = self.try_request("GetInputList") or {}
-        media_kinds = ("ffmpeg_source", "vlc_source")
         return sorted(
             i["inputName"]
             for i in d.get("inputs", [])
-            if any(k in i.get("inputKind", "") for k in media_kinds)
+            if any(k in i.get("inputKind", "") for k in kinds)
         )
 
     def get_transitions(self) -> list[str]:

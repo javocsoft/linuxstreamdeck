@@ -51,6 +51,27 @@ BUSY_PULSE_SECONDS = 0.75
 LONG_PRESS_SECONDS = 0.5
 DOUBLE_PRESS_SECONDS = 0.35
 
+# Which list of a "Single / double / long press" key to run. Only a caller that
+# already knows the gesture passes one of these: the physical deck resolves the
+# real gesture from its own timing, and a virtual click stays a single press.
+GESTURE_SINGLE = "single"
+GESTURE_DOUBLE = "double"
+GESTURE_LONG = "long"
+
+# How many key changes can be taken back. The history is dropped on every
+# change of view, so this only ever bounds one grid's worth of edits.
+UNDO_DEPTH = 20
+
+
+def gesture_steps(kc, gesture: str) -> list:
+    """The list a gesture key runs for one gesture, defaulting to single."""
+    if gesture == GESTURE_DOUBLE:
+        return kc.steps_double
+    if gesture == GESTURE_LONG:
+        return kc.steps_long
+    return kc.steps_single
+
+
 # The reserved Back key inside a folder is chrome, not content, so it is drawn
 # slightly lighter than the default key background.
 FOLDER_BACK_BG = "#2a2a36"
@@ -70,6 +91,15 @@ class _ExecutionControl:
         self.predecessor = predecessor
 
 
+class _UndoEntry:
+    """One reversible key change: what those slots held, and where."""
+
+    def __init__(self, label: str, container, before: dict) -> None:
+        self.label = label
+        self.container = container      # the Page or Folder it happened in
+        self.before = before            # index -> KeyConfig or None
+
+
 class DeckController:
     def __init__(self, config: Config, bus: EventBus, obs, deck: DeckManager) -> None:
         self.config = config
@@ -80,6 +110,8 @@ class DeckController:
         # Which folder of the active page is open. View state only: it is never
         # persisted, so the deck always starts at the page root.
         self._folder_path: tuple[int, ...] = ()
+        # Reversible key changes for the grid on screen; see _record_undo.
+        self._undo: list[_UndoEntry] = []
         self._stopping = threading.Event()
         self._action_executor = ThreadPoolExecutor(
             max_workers=2,
@@ -247,6 +279,8 @@ class DeckController:
         if path == self._folder_path:
             return
         self._folder_path = path
+        # Its indices address the grid being left.
+        self.forget_undo()
         # A pending gesture timer holds an index of the grid being left.
         self._clear_gestures()
         self.bus.emit(
@@ -265,6 +299,7 @@ class DeckController:
         if not self._folder_path:
             return
         self._folder_path = ()
+        self.forget_undo()
         self._clear_gestures()
         self.bus.emit("folder.changed", path=(), trail=[])
 
@@ -286,6 +321,7 @@ class DeckController:
             return
         self.config.current_profile = index
         self._leave_folders()
+        self.forget_undo()
         self.config.save()
         prof = self.config.profile
         self.bus.emit("profile.changed", index=index, name=prof.name,
@@ -318,6 +354,8 @@ class DeckController:
         # clear them all and re-render whichever profile becomes active.
         self._toggle.clear()
         self._clear_time_actions()
+        # Those keys are gone, or their indices have shifted under it.
+        self.forget_undo()
         self._leave_folders()
         self.config.current_profile = min(self.current_profile, len(self.config.profiles) - 1)
         self.config.save()
@@ -334,6 +372,7 @@ class DeckController:
         ):
             self.config.current_page = index
             self._leave_folders()
+            self.forget_undo()
             self.config.save()
             self.bus.emit("page.changed", index=index, name=self.page.name)
             self.refresh()
@@ -394,6 +433,8 @@ class DeckController:
         # after deletion; they are transient, so clear them and re-render.
         self._toggle.clear()
         self._clear_time_actions()
+        # Those keys are gone, or their indices have shifted under it.
+        self.forget_undo()
         self._leave_folders()
         self.config.current_page = min(self.current_page, len(pages) - 1)
         self.config.save()
@@ -407,6 +448,8 @@ class DeckController:
         result = self.config.import_bundle(source)
         self._toggle.clear()
         self._clear_time_actions()
+        # Those keys are gone, or their indices have shifted under it.
+        self.forget_undo()
         self._leave_folders()
         self.deck.set_brightness(self.config.brightness)
         screen = self.config.screensaver
@@ -441,10 +484,56 @@ class DeckController:
 
     # ---------- key editing (move / copy / paste / clear) ----------
 
+    # ---------- undo ----------
+
+    def _record_undo(self, label: str, *indices: int) -> None:
+        """Remember what the affected keys held, so the change can be taken back.
+
+        Only the keys themselves are kept, never the transient toggle/clock
+        state: undoing restores a saved configuration, and a restored key starts
+        from a clean runtime state exactly as a pasted one does.
+        """
+        container = self.container
+        before = {}
+        for index in indices:
+            stored = container.key(index)
+            before[index] = stored.clone() if stored is not None else None
+        self._undo.append(_UndoEntry(label, container, before))
+        del self._undo[:-UNDO_DEPTH]
+
+    def can_undo(self) -> bool:
+        """Whether the last change can still be taken back from this view.
+
+        The stack is dropped on every page, profile and folder change, so an
+        entry can only ever belong to the grid on screen. Restoring a key into
+        a grid the user is no longer looking at would be invisible and, for a
+        folder, would address a different key entirely.
+        """
+        return bool(self._undo) and self._undo[-1].container is self.container
+
+    def undo(self) -> str:
+        """Take back the last key change. Returns its label, or "" if none."""
+        if not self.can_undo():
+            return ""
+        entry = self._undo.pop()
+        for index, stored in entry.before.items():
+            entry.container.set_key(
+                index, stored.clone() if stored is not None else None
+            )
+            self.key_config_changed(index, drop_folder_state=True)
+        self.config.save()
+        self.refresh()
+        return entry.label
+
+    def forget_undo(self) -> None:
+        """Drop the history, for every change of what the grid is showing."""
+        self._undo.clear()
+
     def swap_keys(self, a: int, b: int) -> None:
         """Swap two keys (for drag & drop). Their ON/OFF state too."""
         if a == b or self.is_reserved_key(a) or self.is_reserved_key(b):
             return
+        self._record_undo(f"moving Key {a + 1}", a, b)
         grid = self.container
         grid.keys[str(a)], grid.keys[str(b)] = grid.key(b), grid.key(a)
         # drop the None entries that set_key normally removes
@@ -476,6 +565,7 @@ class DeckController:
         """Place an independent copy of kc at position index."""
         if self.is_reserved_key(index):
             return
+        self._record_undo(f"replacing Key {index + 1}", index)
         self.container.set_key(index, kc.clone())
         self.key_config_changed(index, drop_folder_state=True)
         self.config.save()
@@ -484,6 +574,7 @@ class DeckController:
     def clear_key(self, index: int) -> None:
         if self.is_reserved_key(index):
             return
+        self._record_undo(f"clearing Key {index + 1}", index)
         self.container.set_key(index, None)
         self.key_config_changed(index, drop_folder_state=True)
         self.config.save()
@@ -687,8 +778,14 @@ class DeckController:
         """ON/OFF state of a toggle key on the current page/profile."""
         return self._toggle.get(self._tkey(index), False)
 
-    def press(self, index: int) -> None:
-        """Run the key (physical or virtual press) according to its type."""
+    def press(self, index: int, gesture: str = GESTURE_SINGLE) -> None:
+        """Run the key (physical or virtual press) according to its type.
+
+        `gesture` only means anything for a gesture key, and only a caller that
+        already knows which one it wants passes it — the editor's Test buttons.
+        Naming a gesture is a different thing from making the on-screen deck
+        wait out the double-press window, which it must never do.
+        """
         if self._stopping.is_set() or self.deck.record_activity():
             return
         if self.is_reserved_key(index):
@@ -708,9 +805,10 @@ class DeckController:
         elif kc.kind == KIND_RANDOM:
             steps = [random.choice(kc.steps)] if kc.steps else []
         elif kc.kind == KIND_PRESS:
-            # A virtual press has no release to time, so it runs the single-press
-            # list; the physical deck resolves the real gesture in key_up().
-            steps = list(kc.steps_single)
+            # A virtual press has no release to time, so it defaults to the
+            # single-press list; the physical deck resolves the real gesture in
+            # key_up(), and the editor can ask for one by name.
+            steps = list(gesture_steps(kc, gesture))
         elif kc.kind == KIND_TOGGLE:
             key = self._tkey(index)
             new_state = not self._toggle.get(key, False)

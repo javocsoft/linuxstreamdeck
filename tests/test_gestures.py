@@ -97,6 +97,53 @@ class GestureTests(unittest.TestCase):
 
         self.assertEqual(self.ran, [["single"]])
 
+    # ---------- naming a gesture, for the editor's Test buttons ----------
+
+    def test_a_plain_virtual_press_still_runs_the_single_list(self) -> None:
+        """A click has no release to time, so nothing about it may change."""
+        self.controller.page.set_key(0, self._gesture_key())
+
+        self.controller.press(0)
+
+        self.assertEqual(self.ran, [["single"]])
+
+    def test_a_named_gesture_runs_that_list(self) -> None:
+        self.controller.page.set_key(0, self._gesture_key())
+
+        self.controller.press(0, controller_module.GESTURE_DOUBLE)
+        self.controller.press(0, controller_module.GESTURE_LONG)
+        self.controller.press(0, controller_module.GESTURE_SINGLE)
+
+        self.assertEqual(self.ran, [["double"], ["long"], ["single"]])
+
+    def test_an_unknown_gesture_falls_back_to_single(self) -> None:
+        self.controller.page.set_key(0, self._gesture_key())
+
+        self.controller.press(0, "nonsense")
+
+        self.assertEqual(self.ran, [["single"]])
+
+    def test_naming_a_gesture_on_a_plain_key_changes_nothing(self) -> None:
+        self.controller.page.set_key(0, KeyConfig(
+            kind=KIND_SINGLE, action="sys.command", params={"command": "plain"},
+        ))
+
+        self.controller.press(0, controller_module.GESTURE_LONG)
+
+        self.assertEqual(self.ran, [["plain"]])
+
+    def test_an_empty_gesture_list_runs_nothing(self) -> None:
+        self.controller.page.set_key(0, KeyConfig(
+            kind=KIND_PRESS,
+            steps_single=[
+                ActionStep(action="sys.command", params={"command": "single"})
+            ],
+        ))
+
+        self.controller.press(0, controller_module.GESTURE_DOUBLE)
+
+        self.assertEqual(self.ran, [])
+
     def test_holding_runs_the_long_press_list(self) -> None:
         self.controller.page.set_key(0, self._gesture_key())
 

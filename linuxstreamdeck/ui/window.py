@@ -109,6 +109,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._setup_key_editing()
         self._build_ui()
+        self._add_window_shortcuts()
         self._connect_bus()
         self._refresh_profile_dropdown()
         self._refresh_page_dropdown()
@@ -138,6 +139,9 @@ class MainWindow(Adw.ApplicationWindow):
             "Import configuration…", "win.config-import"
         )
         profile_menu.append_section(None, configuration_menu)
+        find_menu = Gio.Menu()
+        find_menu.append("Find a key…", "win.key-find")
+        profile_menu.append_section(None, find_menu)
         application_menu = Gio.Menu()
         application_menu.append("Preferences…", "win.app-preferences")
         profile_menu.append_section(None, application_menu)
@@ -220,7 +224,7 @@ class MainWindow(Adw.ApplicationWindow):
         hint = Gtk.Label(
             label="Drag to move · right-click to copy/paste · "
                   "double-click a folder to open it · "
-                  "“Test” runs the action"
+                  "Ctrl+Z undoes the last change"
         )
         hint.add_css_class("dim-label")
         hint.set_margin_top(12)
@@ -523,6 +527,9 @@ class MainWindow(Adw.ApplicationWindow):
         menu.append("Paste", "win.key-paste")
         menu.append("Paste action", "win.key-paste-action")
         menu.append("Clear key", "win.key-clear")
+        undo_menu = Gio.Menu()
+        undo_menu.append("Undo last change", "win.key-undo")
+        menu.append_section(None, undo_menu)
         portable_menu = Gio.Menu()
         portable_menu.append("Export key…", "win.key-export")
         portable_menu.append("Import key…", "win.key-import")
@@ -535,6 +542,8 @@ class MainWindow(Adw.ApplicationWindow):
                          ("key-paste", self._paste_selected),
                          ("key-paste-action", self._paste_action_selected),
                          ("key-clear", self._clear_selected),
+                         ("key-undo", lambda: self.undo_key_change()),
+                         ("key-find", lambda: self.find_key()),
                          ("key-export", self._export_selected),
                          ("key-import", self._import_selected),
                          ("profile-new", self._new_profile),
@@ -996,6 +1005,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._key_actions["key-paste-action"].set_enabled(
             STEP_CLIPBOARD.has_step()
         )
+        self._key_actions["key-undo"].set_enabled(controller.can_undo())
         pop = self._key_popover
         if pop.get_parent() is not None:
             pop.unparent()
@@ -1016,7 +1026,76 @@ class MainWindow(Adw.ApplicationWindow):
                 Gtk.ShortcutTrigger.parse_string(accel),
                 Gtk.CallbackAction.new(lambda w, a, cb=cb, i=index: (cb(i), True)[1]),
             ))
+        # Undo takes no index: it takes back whatever the last change was.
+        sc.add_shortcut(Gtk.Shortcut.new(
+            Gtk.ShortcutTrigger.parse_string("<Control>z"),
+            Gtk.CallbackAction.new(lambda w, a: (self.undo_key_change(), True)[1]),
+        ))
         btn.add_controller(sc)
+
+    # ---------- finding a key ----------
+
+    def _add_window_shortcuts(self) -> None:
+        """Whole-window accelerators, so they work with no key focused."""
+        controller = Gtk.ShortcutController()
+        controller.set_scope(Gtk.ShortcutScope.GLOBAL)
+        for accel, callback in (
+            ("<Control>f", self.find_key),
+            ("<Control>z", self.undo_key_change),
+        ):
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(accel),
+                Gtk.CallbackAction.new(
+                    lambda w, a, cb=callback: (cb(), True)[1]
+                ),
+            ))
+        self.add_controller(controller)
+
+    def find_key(self) -> None:
+        from .key_search import KeySearchDialog
+
+        KeySearchDialog(self, self.app.config, self._go_to_key).present()
+
+    def _go_to_key(self, location) -> None:
+        """Navigate to a search result, through the usual unsaved guard."""
+        self._confirm_unsaved_changes(
+            f"going to Key {location.index + 1}",
+            lambda: self._apply_go_to_key(location),
+        )
+
+    def _apply_go_to_key(self, location) -> None:
+        controller = self.app.controller
+        # Order matters: the profile owns the pages, and the folder path is
+        # resolved against whichever page ends up active.
+        controller.set_profile(location.profile)
+        controller.set_page(location.page)
+        controller.set_folder_path(location.path)
+        if controller.is_reserved_key(location.index):
+            return
+        self._apply_selection(location.index)
+        self._key_buttons[location.index].grab_focus()
+
+    def undo_key_change(self) -> None:
+        """Take back the last key change, if the grid still holds it."""
+        controller = self.app.controller
+        if not controller.can_undo():
+            self._flash_status("Nothing to undo")
+            return
+        # The editor may be showing the key that is about to change underneath
+        # it, so the same guard as any other replacement applies.
+        self._confirm_unsaved_changes(
+            "undoing the last change",
+            self._apply_undo,
+            offer_save=False,
+        )
+
+    def _apply_undo(self) -> None:
+        label = self.app.controller.undo()
+        if not label:
+            return
+        if self.selected is not None:
+            self.editor.load(self.selected)
+        self.app.bus.emit("status", text=f"Undid {label}")
 
     # --- operations ---
 

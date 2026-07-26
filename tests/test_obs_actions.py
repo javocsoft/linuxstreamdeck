@@ -14,10 +14,11 @@ class RecordingObs:
     def __init__(self) -> None:
         self.requests: list[tuple[str, dict | None]] = []
         self.state = SimpleNamespace(recording=False, record_paused=False)
+        self.responses: dict[str, dict] = {}
 
     def request(self, name: str, data: dict | None = None) -> dict:
         self.requests.append((name, data))
-        return {}
+        return self.responses.get(name, {})
 
 
 def context(obs):
@@ -159,6 +160,127 @@ class AudioSourceLookupTests(unittest.TestCase):
     def test_a_scene_without_audio_returns_nothing(self) -> None:
         self._install({"Live": ["Camera"]}, audio=set())
         self.assertEqual(self.client.get_audio_sources_in_scene("Live"), [])
+
+
+class SourceActionTests(unittest.TestCase):
+    """The text, browser and transform actions added for OBS work."""
+
+    def setUp(self) -> None:
+        self.obs = RecordingObs()
+        self.obs.state = SimpleNamespace(current_scene="Live")
+        self.obs.find_scene_item = lambda scene, source: ("Overlays", 42)
+
+    def _run(self, action_id: str, params: dict):
+        action_registry.get(action_id).execute(context(self.obs), params)
+        return self.obs.requests[-1]
+
+    def test_setting_a_text_source_merges_into_its_settings(self) -> None:
+        """`overlay` keeps the font, colour and everything else configured."""
+        name, data = self._run(
+            "obs.text", {"input": "Caption", "text": "Back in 5"}
+        )
+
+        self.assertEqual(name, "SetInputSettings")
+        self.assertEqual(data["inputName"], "Caption")
+        self.assertEqual(data["inputSettings"], {"text": "Back in 5"})
+        self.assertTrue(data["overlay"])
+
+    def test_clearing_a_text_source_sends_an_empty_string(self) -> None:
+        _name, data = self._run("obs.text", {"input": "Caption", "text": ""})
+        self.assertEqual(data["inputSettings"], {"text": ""})
+
+    def test_refreshing_a_browser_source_bypasses_the_cache(self) -> None:
+        name, data = self._run("obs.browser_refresh", {"input": "Alerts"})
+
+        self.assertEqual(name, "PressInputPropertiesButton")
+        self.assertEqual(data["inputName"], "Alerts")
+        self.assertEqual(data["propertyName"], "refreshnocache")
+
+    def test_setting_a_transform_property_writes_just_that_one(self) -> None:
+        name, data = self._run("obs.transform", {
+            "scene": "Live", "source": "Logo",
+            "property": "positionX", "mode": "set", "value": 120.0,
+        })
+
+        self.assertEqual(name, "SetSceneItemTransform")
+        self.assertEqual(data["sceneItemTransform"], {"positionX": 120.0})
+
+    def test_a_transform_is_addressed_to_whatever_holds_the_source(self) -> None:
+        """A grouped source answers to its group, as show/hide does."""
+        _name, data = self._run("obs.transform", {
+            "scene": "Live", "source": "Logo", "value": 10.0,
+        })
+
+        self.assertEqual(data["sceneName"], "Overlays")
+        self.assertEqual(data["sceneItemId"], 42)
+
+    def test_adjust_adds_to_the_current_value(self) -> None:
+        self.obs.responses = {
+            "GetSceneItemTransform": {"sceneItemTransform": {"rotation": 90.0}}
+        }
+
+        _name, data = self._run("obs.transform", {
+            "scene": "Live", "source": "Logo",
+            "property": "rotation", "mode": "adjust", "value": 45.0,
+        })
+
+        self.assertEqual(data["sceneItemTransform"], {"rotation": 135.0})
+
+    def test_adjusting_a_property_obs_does_not_report_starts_from_zero(
+        self,
+    ) -> None:
+        self.obs.responses = {"GetSceneItemTransform": {"sceneItemTransform": {}}}
+
+        _name, data = self._run("obs.transform", {
+            "scene": "Live", "source": "Logo",
+            "property": "scaleX", "mode": "adjust", "value": 1.5,
+        })
+
+        self.assertEqual(data["sceneItemTransform"], {"scaleX": 1.5})
+
+
+class InputKindTests(unittest.TestCase):
+    """Text and browser sources are picked out of the full input list."""
+
+    def _client(self, inputs: list[dict]) -> OBSClient:
+        client = OBSClient(SimpleNamespace())
+        client.try_request = lambda name, data=None: (  # type: ignore[method-assign]
+            {"inputs": inputs} if name == "GetInputList" else None
+        )
+        return client
+
+    def test_text_sources_are_found_whatever_their_backend(self) -> None:
+        client = self._client([
+            {"inputName": "GDI caption", "inputKind": "text_gdiplus_v2"},
+            {"inputName": "FT2 caption", "inputKind": "text_ft2_source_v2"},
+            {"inputName": "Camera", "inputKind": "v4l2_input"},
+        ])
+
+        self.assertEqual(
+            client.get_text_inputs(), ["FT2 caption", "GDI caption"]
+        )
+
+    def test_the_kind_is_matched_as_a_substring(self) -> None:
+        """OBS suffixes these kinds per version; an exact match would break."""
+        client = self._client([
+            {"inputName": "Future", "inputKind": "text_gdiplus_v9"},
+        ])
+
+        self.assertEqual(client.get_text_inputs(), ["Future"])
+
+    def test_browser_sources_are_listed_on_their_own(self) -> None:
+        client = self._client([
+            {"inputName": "Alerts", "inputKind": "browser_source"},
+            {"inputName": "Caption", "inputKind": "text_gdiplus"},
+        ])
+
+        self.assertEqual(client.get_browser_inputs(), ["Alerts"])
+        self.assertEqual(client.get_text_inputs(), ["Caption"])
+
+    def test_no_matching_input_is_an_empty_list(self) -> None:
+        client = self._client([{"inputName": "Camera", "inputKind": "v4l2_input"}])
+        self.assertEqual(client.get_text_inputs(), [])
+        self.assertEqual(client.get_browser_inputs(), [])
 
 
 class GroupedSources:

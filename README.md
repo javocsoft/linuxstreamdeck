@@ -53,8 +53,8 @@ implemented actions, no guessing. It runs, and it's useful.
   feedback.
 - 🏷️ **Name each action in a list** — give any step in a multiple, toggle, random
   or press key an optional **Step name**, and the list shows it instead of the
-  action name, so a long sequence stays readable at a glance. Duplicate any step
-  to the end of the list to build the next one from it.
+  action name, so a long sequence stays readable at a glance. Copy any step and
+  paste it into another list, another key type or another key entirely.
 - 📁 **Folders on a key** — group related actions inside a key instead of spending
   a whole page on them. Give the folder a name and an icon, nest folders up to
   five levels deep, and go back with the reserved first key that every folder
@@ -71,7 +71,12 @@ implemented actions, no guessing. It runs, and it's useful.
   to swap them. The source dims and the destination highlights while dragging.
   Duplicate any key with right-click → Copy/Paste (or `Ctrl+C`/`Ctrl+V`).
 - 🖥️ **Virtual deck** — the on-screen grid mirrors the physical device, so you can
-  configure and test everything **without the hardware even connected**.
+  configure and test everything **without the hardware even connected**, single,
+  double and long press included.
+- 🔎 **Search everything** — find an action by what it does instead of which
+  category it lives in, and find a key by label, action or value across every
+  profile, page and folder.
+- ↩️ **Undo key changes** — `Ctrl+Z` takes back a clear, a paste or a move.
 - 🌌 **Animated full-deck screen saver** — choose from eleven coordinated effects,
   set the idle delay and independent light intensity, and preview them on both
   the virtual and physical decks.
@@ -111,7 +116,7 @@ implemented actions, no guessing. It runs, and it's useful.
 | **Recording & streaming** | Record (start, stop or toggle) · pause recording · stream start/stop · virtual camera |
 | **Replay & capture** | Enable & save replay buffer · source screenshots to PNG |
 | **Audio** | Mute (with feedback) · raise/lower volume · set volume in dB. Pick a scene and the list narrows to its audio inputs, plus Desktop Audio and Mic/Aux |
-| **Sources & filters** | Show/hide sources per scene · enable/disable filters |
+| **Sources & filters** | Show/hide sources per scene (including sources inside groups) · enable/disable filters · **set a text source** · **refresh a browser source** · move/scale/rotate a source |
 | **Media** | Play / pause / restart / stop / next / previous |
 | **Advanced** | Scene collections & profiles · internal hotkeys · **raw request** (100% of the API) |
 
@@ -265,22 +270,34 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
    action's default. When inherited, the Appearance preview shows the same default
    icon as the deck without turning it into a custom override. Add a **Label** only
    if you want text on the key.
-4. **Test** runs the action without needing the physical deck.
-5. **Reorder** configured keys by dragging with the primary mouse button. Drop
+4. **Test** runs the action without needing the physical deck. For a
+   **Single / double / long press** key the **••** and **—** buttons beside it
+   run the other two lists, so the whole key is testable without hardware.
+   Next to the **Action** dropdown, the magnifier searches **every** action at
+   once — by name, by category or by what its description says — so you do not
+   have to know which category it lives in.
+5. **Undo** the last key change with `Ctrl+Z`, or right-click a key and choose
+   **Undo last change**. Clearing, pasting and moving keys can all be taken
+   back. The history belongs to the grid you are looking at, so changing page,
+   profile or folder starts a fresh one.
+6. **Find a key** with `Ctrl+F`, or the ⋮ menu → **Find a key…**. It searches
+   every profile, page and folder by label, action or parameter value — "mic",
+   "scene Live", "05:00" — and jumps straight to whichever key you pick.
+7. **Reorder** configured keys by dragging with the primary mouse button. Drop
    onto an empty position to move the key, or onto an occupied position to swap
    both keys; dragging works in any direction. Empty keys are destinations, not
    drag sources. **Duplicate** a key with right-click → Copy, then Paste onto
    another (or `Ctrl+C`/`Ctrl+V`).
-6. **Folders** — set a key's type to **Folder** and save it; then double-click it
+8. **Folders** — set a key's type to **Folder** and save it; then double-click it
    on the grid (or right-click → Open folder) to configure the keys it holds.
    Pressing it on the physical deck opens it too.
-7. **Pages** — use the menu (⋮) next to the page selector to add a new page, rename or
+9. **Pages** — use the menu (⋮) next to the page selector to add a new page, rename or
    delete the current one. Page names must be unique within their profile.
-8. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or
+10. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or
    delete a profile. Each profile has its own pages and keys.
-9. **Stream Deck display** — use its button in the header to configure
+11. **Stream Deck display** — use its button in the header to configure
    the screen saver and what the physical deck shows after a clean exit.
-10. **About** — click the About button in the header for application details,
+12. **About** — click the About button in the header for application details,
    licensing and the GitHub link.
 
 If the selected key has unsaved edits, LinuxStreamDeck protects them before you
