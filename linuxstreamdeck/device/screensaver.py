@@ -60,9 +60,14 @@ EMBER_SEED = 0x5EED
 EMBER_FLARE_CYCLES = 0.13
 
 # Hyperspace. Stars are spread by the golden angle so no two share a spoke.
-HYPERSPACE_STARS = 108
+HYPERSPACE_STARS = 130
 HYPERSPACE_GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
 HYPERSPACE_SURGE_CYCLES = 0.08
+HYPERSPACE_RINGS = 11        # tunnel walls rushing out of the vanishing point
+HYPERSPACE_SEGMENTS = 56     # points per ring; enough that a warp reads smooth
+HYPERSPACE_SWIRL = 1.5       # radians a star bends over its whole flight
+HYPERSPACE_TWIST = 2.4       # radians the tunnel turns between near and far
+HYPERSPACE_ABERRATION = 0.005  # chromatic split, as a fraction of the canvas
 
 # Split-Flap Board. Every word is laid out one character per key, padded or cut
 # to whatever grid the deck actually has.
@@ -695,60 +700,177 @@ def _scatter(index: int, salt: int) -> float:
     return (((index + 1) * 2654435761) ^ (salt * 40503)) % 65521 / 65521.0
 
 
+def _hyperspace_depth(progress: float, reach: float) -> float:
+    """How far out something at `progress` through its flight has travelled.
+
+    Raised to a power on purpose: it crawls near the vanishing point and tears
+    past at the rim, which is what stretches a moving point into a streak
+    without faking motion blur.
+    """
+    return reach * max(0.0, progress) ** 2.4
+
+
+def _hyperspace_tunnel(
+    size: tuple[int, int],
+    elapsed: float,
+    center: tuple[float, float],
+    reach: float,
+    unit: float,
+    surge: float,
+) -> Image.Image:
+    """The wormhole wall: rings rushing outward, warped and twisting."""
+    tunnel = Image.new("RGB", size, (0, 0, 0))
+    draw = ImageDraw.Draw(tunnel)
+    for ring in range(HYPERSPACE_RINGS):
+        progress = (
+            elapsed * 0.16 * surge + ring / HYPERSPACE_RINGS
+        ) % 1.0
+        radius = _hyperspace_depth(progress, reach)
+        if radius < unit * 0.03:
+            continue
+        # The far end of the tunnel is turned further round than the near end,
+        # so the whole throat reads as twisting rather than as flat rings.
+        twist = HYPERSPACE_TWIST * progress + elapsed * 0.22
+        points = []
+        for step in range(HYPERSPACE_SEGMENTS + 1):
+            angle = math.tau * step / HYPERSPACE_SEGMENTS + twist
+            # Two out-of-step waves, so the mouth ripples instead of pulsing.
+            warp = (
+                1.0
+                + 0.13 * math.sin(3 * angle + elapsed * 1.15)
+                + 0.07 * math.sin(5 * angle - elapsed * 0.8)
+            )
+            points.append(
+                (
+                    center[0] + math.cos(angle) * radius * warp,
+                    center[1] + math.sin(angle) * radius * warp,
+                )
+            )
+        # Fades in from the throat and back out as it sweeps past, so a ring
+        # reads as passing the viewer rather than as a contour line on black.
+        fade = 1.0 if progress < 0.70 else max(0.0, (1.0 - progress) / 0.30)
+        level = min(1.0, progress * 3.2) * fade
+        # Violet deep in the throat, turning cyan as it rushes past.
+        draw.line(
+            points,
+            fill=(
+                round((130 - 60 * progress) * level),
+                round((45 + 190 * progress) * level),
+                round((220 + 35 * progress) * level),
+            ),
+            width=max(2, round(unit * 0.022 * (0.35 + progress))),
+            joint="curve",
+        )
+    # Its own glow, so the wall has body instead of being a wire outline.
+    return ImageChops.add(
+        tunnel,
+        tunnel.filter(ImageFilter.GaussianBlur(max(3, round(unit * 0.045)))),
+    )
+
+
+def _hyperspace_streaks(
+    size: tuple[int, int],
+    elapsed: float,
+    center: tuple[float, float],
+    reach: float,
+    unit: float,
+    surge: float,
+) -> Image.Image:
+    """Stars bent into spiral streaks, split into colour by the distortion."""
+    trails = Image.new("L", size, 0)
+    draw = ImageDraw.Draw(trails)
+    for index in range(HYPERSPACE_STARS):
+        base = index * HYPERSPACE_GOLDEN_ANGLE
+        speed = 0.19 + _scatter(index, 2) * 0.34
+        progress = (elapsed * speed * surge + _scatter(index, 1)) % 1.0
+        # Sampled along its path rather than drawn straight: the angle keeps
+        # turning as it flies, so the streak curves the way the tunnel does.
+        points = []
+        for step in range(5):
+            moment = progress - 0.075 * step / 4
+            angle = base + HYPERSPACE_SWIRL * max(0.0, moment)
+            radius = _hyperspace_depth(moment, reach)
+            points.append(
+                (
+                    center[0] + math.cos(angle) * radius,
+                    center[1] + math.sin(angle) * radius,
+                )
+            )
+        # Fades in out of the vanishing point instead of popping into being.
+        draw.line(
+            points,
+            fill=round(255 * min(1.0, progress * 3.4)),
+            width=max(1, round(unit * 0.008 * (0.35 + progress))),
+            joint="curve",
+        )
+    return trails
+
+
+def _hyperspace_aberration(mask: Image.Image, offset: int) -> Image.Image:
+    """Split one mask into colour by scaling its channels apart.
+
+    Blue focuses short and red long, so red lands slightly outside the streak
+    and blue slightly inside. Doing it to the whole layer at once costs two
+    resizes instead of drawing every streak three times over.
+    """
+    width, height = mask.size
+
+    def scaled(delta: int) -> Image.Image:
+        target = (max(1, width + delta), max(1, height + delta))
+        out = Image.new("L", mask.size, 0)
+        out.paste(
+            mask.resize(target, Image.Resampling.BILINEAR),
+            ((width - target[0]) // 2, (height - target[1]) // 2),
+        )
+        return out
+
+    return Image.merge(
+        "RGB",
+        (
+            scaled(offset).point(lambda value: round(value * 0.82)),
+            mask.point(lambda value: round(value * 0.94)),
+            scaled(-offset),
+        ),
+    )
+
+
 def _hyperspace_canvas(size: tuple[int, int], elapsed: float) -> Image.Image:
-    """Stars accelerating out of the vanishing point and stretching to streaks."""
+    """A wormhole: a warping tunnel with stars spiralling out of its throat."""
     width, height = size
-    canvas = Image.new("RGBA", size, (0, 0, 0, 255))
     center = (width * 0.5, height * 0.5)
     # Far enough that a star leaves by the corner, not by the nearest edge.
     reach = math.hypot(width, height) * 0.5
     unit = min(width, height)
     surge = 0.72 + 0.60 * _wave(elapsed * HYPERSPACE_SURGE_CYCLES)
 
-    field = Image.new("RGBA", size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(field)
-    for index in range(HYPERSPACE_STARS):
-        angle = index * HYPERSPACE_GOLDEN_ANGLE
-        speed = 0.19 + _scatter(index, 2) * 0.34
-        progress = (elapsed * speed * surge + _scatter(index, 1)) % 1.0
-        trail = max(0.0, progress - 0.06)
-        # Squared travel: slow near the middle, tearing past at the edge, which
-        # is what turns a moving dot into a streak without faking motion blur.
-        near = reach * trail ** 2.4
-        far = reach * progress ** 2.4
-        cos_a, sin_a = math.cos(angle), math.sin(angle)
-        # Fades in out of the vanishing point instead of popping into being.
-        level = min(1.0, progress * 3.4)
-        warm = index % 9 == 0
-        color = (
-            round((255 if warm else 205) * level),
-            round((228 if warm else 226) * level),
-            round((196 if warm else 255) * level),
-            round(255 * level),
-        )
-        draw.line(
-            (
-                (center[0] + cos_a * near, center[1] + sin_a * near),
-                (center[0] + cos_a * far, center[1] + sin_a * far),
-            ),
-            fill=color,
-            width=max(1, round(unit * 0.007 * (0.35 + progress))),
-        )
-
-    glow = field.filter(ImageFilter.GaussianBlur(max(2, round(unit * 0.02))))
-    glow.putalpha(glow.getchannel("A").point(lambda value: int(value * 0.6)))
-    canvas = Image.alpha_composite(canvas, glow)
-
-    core = Image.new("RGBA", size, (0, 0, 0, 0))
-    core_radius = unit * 0.06 * (0.8 + 0.35 * _wave(elapsed * 0.3))
-    ImageDraw.Draw(core).ellipse(
-        _circle(center, core_radius), fill=(150, 205, 255, 130)
+    # Everything is additive on black, which is both how light behaves and why
+    # these layers can be blurred safely: black is the neutral value, so no
+    # transparent-pixel colour can bleed into them.
+    tunnel = _hyperspace_tunnel(size, elapsed, center, reach, unit, surge)
+    trails = _hyperspace_streaks(size, elapsed, center, reach, unit, surge)
+    canvas = ImageChops.add(
+        tunnel,
+        _hyperspace_aberration(
+            trails, max(1, round(unit * HYPERSPACE_ABERRATION))
+        ),
     )
-    core = core.filter(ImageFilter.GaussianBlur(max(4, round(unit * 0.07))))
-    return Image.alpha_composite(
-        Image.alpha_composite(canvas, core),
-        field,
-    ).convert("RGB")
+
+    core = Image.new("RGB", size, (0, 0, 0))
+    core_radius = unit * 0.055 * (0.8 + 0.35 * _wave(elapsed * 0.45))
+    ImageDraw.Draw(core).ellipse(
+        _circle(center, core_radius), fill=(120, 190, 255)
+    )
+    canvas = ImageChops.add(
+        canvas, core.filter(ImageFilter.GaussianBlur(max(4, round(unit * 0.09))))
+    )
+
+    # One bloom pass over the finished frame, swelling at the top of the surge
+    # so the jump itself flares rather than just running faster.
+    flare = _wave(elapsed * HYPERSPACE_SURGE_CYCLES) ** 3
+    bloom = canvas.filter(ImageFilter.GaussianBlur(max(3, round(unit * 0.055))))
+    return ImageChops.add(
+        canvas, bloom.point(lambda value: round(value * (0.30 + 0.45 * flare)))
+    )
 
 
 def _flap_word(elapsed: float, count: int) -> str:

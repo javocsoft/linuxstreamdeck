@@ -323,7 +323,7 @@ after the selected idle period. The idle delay accepts 1 to 1440 minutes.
 | **Orbital Core** | A core with rotating rings and orbiting particles. |
 | **Circuit Pulse** | Energy pulses travel a circuit-board network. |
 | **Ember Field** | Flames climb from the bottom of the deck, embers lifting off into the dark. |
-| **Hyperspace** | Stars accelerate out of the middle key and stretch into streaks. |
+| **Hyperspace** | A warping wormhole tunnel twists past while stars spiral out of its throat. |
 | **Matrix Code** | Columns of mirrored glyphs rain down, each stream led by a white-hot character. |
 | **HAL 9000** | One red camera eye watching from the middle, breathing and lighting the keys around it. |
 | **Split-Flap Board** | Every key becomes a flap module, riffling and settling into a word. |

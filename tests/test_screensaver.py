@@ -182,6 +182,47 @@ class HyperspaceScreenSaverTests(unittest.TestCase):
                     (144, 0, 216, 72), (144, 144, 216, 216)):
             self.assertGreater(middle, ImageStat.Stat(deck.crop(box)).mean[2])
 
+    def test_the_tunnel_wall_is_there_and_is_cool_coloured(self) -> None:
+        """Without it this is a flat starfield, not a wormhole."""
+        from linuxstreamdeck.device import screensaver as module
+
+        tunnel = module._hyperspace_tunnel(
+            (360, 216), 3.0, (180.0, 108.0), 210.0, 216.0, 1.0
+        )
+        red, green, blue = ImageStat.Stat(tunnel).mean
+
+        self.assertIsNotNone(tunnel.getbbox(), "the tunnel drew nothing")
+        self.assertGreater(blue, red * 2)
+        self.assertGreater(blue, green)
+
+    def test_the_tunnel_ripples_rather_than_pulsing_in_step(self) -> None:
+        """Its two warp waves are out of step, so it never breathes as a circle."""
+        from linuxstreamdeck.device import screensaver as module
+
+        def wall(elapsed: float):
+            return module._hyperspace_tunnel(
+                (360, 216), elapsed, (180.0, 108.0), 210.0, 216.0, 1.0
+            )
+
+        self.assertIsNotNone(
+            ImageChops.difference(wall(3.0), wall(3.4)).getbbox()
+        )
+
+    def test_the_aberration_puts_red_outside_and_blue_inside(self) -> None:
+        """Blue focuses short and red long, which is what fringes the streaks."""
+        from linuxstreamdeck.device import screensaver as module
+        from PIL import Image, ImageDraw
+
+        mask = Image.new("L", (200, 200), 0)
+        ImageDraw.Draw(mask).ellipse((60, 60, 140, 140), fill=255)
+
+        split = module._hyperspace_aberration(mask, 8)
+        red = split.getchannel("R").getbbox()
+        blue = split.getchannel("B").getbbox()
+
+        self.assertLess(red[0], blue[0])
+        self.assertGreater(red[2], blue[2])
+
     def test_the_streaks_reach_the_outer_keys(self) -> None:
         """A warp that only lit the middle would just be a blinking dot."""
         images = self._frame(3.0).images

@@ -104,7 +104,7 @@ SCREENSAVER_CHOICES = (
     (
         "hyperspace",
         "Hyperspace",
-        "Stars stretch into streaks as the deck jumps to light speed.",
+        "A warping wormhole with stars spiralling out of its throat.",
     ),
     (
         "matrix_code",

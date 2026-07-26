@@ -264,14 +264,35 @@ into the colour, which turned them into olive rings instead of warm points of
 light. The larger glow layers elsewhere get away with it because they are blurred
 copies of content in the same hue; small isolated sprites do not.
 
-**Hyperspace** spaces its stars by the golden angle and takes each star's phase
-and speed from `_scatter()`, a multiplicative hash — **not** from a linear
-function of the index. The angles are already a linear sequence, so a linear
-phase correlates with them and every star lands on one curve: the field
-collapsed into a spiral at `elapsed` 0, which is exactly when the saver starts
-every time it wakes. Travel is squared, so a star crawls near the middle and
-tears past at the edge, which is what stretches it into a streak without faking
-motion blur.
+**Hyperspace** is a wormhole rather than a starfield, and it is built from four
+things that each carry part of that: `_hyperspace_tunnel()` draws rings rushing
+out of the throat, warped by two out-of-step sine waves and turned further the
+deeper they are (`HYPERSPACE_TWIST`) so the throat twists; `_hyperspace_streaks()`
+samples each star along its path instead of drawing a straight line, with the
+angle turning as it flies (`HYPERSPACE_SWIRL`) so the streak curves the way the
+tunnel does; `_hyperspace_aberration()` splits the streak layer into colour; and
+a final bloom pass swells with the surge so the jump flares.
+
+Three things there are load-bearing:
+
+- **Star phases and speeds come from `_scatter()`, a multiplicative hash, never
+  from a linear function of the index.** The angles are a linear sequence
+  already, so a linear phase correlates with them and every star lands on one
+  curve — the field collapsed into a spiral at `elapsed` 0, which is exactly
+  when the saver starts every time it wakes.
+- **Depth is `_hyperspace_depth()`, a power law.** A star crawls near the middle
+  and tears past at the rim, which is what stretches it into a streak without
+  faking motion blur, and it is what gives the rings their perspective.
+- **The whole style composites additively on black.** That is both how light
+  behaves and why these layers can be blurred safely: black is the neutral
+  value, so no transparent-pixel colour can bleed in the way it did into Ember
+  Field's sparks.
+
+Chromatic aberration is applied to the finished streak layer with two resizes
+(red scaled out, blue scaled in) rather than by drawing every streak three
+times. Keep `HYPERSPACE_ABERRATION` small — the split grows with distance from
+the centre, and at 0.013 the streaks near the rim separated into visibly
+distinct red and cyan bars instead of fringing.
 
 **Split-Flap Board** is the one style whose grid is the point: one module per
 key, so the physical gaps between keys read as the gaps between modules.
