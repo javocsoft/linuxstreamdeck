@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 from types import SimpleNamespace
 
@@ -156,6 +157,86 @@ class ScreenSaverActivityTests(unittest.TestCase):
             MainWindow._on_key_clicked(window, None, 6)
 
         self.assertEqual(calls[-1], ("select", 6))
+
+
+class GridHintWidthTests(unittest.TestCase):
+    """The hint under the grid must never be wider than the grid itself.
+
+    The grid box is centered, so it takes the width of its widest child. An
+    unwrapped hint made that box wider than the window and the text ran off the
+    right edge.
+    """
+
+    @staticmethod
+    def _gtk_ready() -> bool:
+        try:
+            import gi
+
+            gi.require_version("Gtk", "4.0")
+            gi.require_version("Adw", "1")
+            from gi.repository import Adw, Gtk
+        except (ImportError, ValueError):
+            return False
+        if not Gtk.init_check():
+            return False
+        Adw.init()
+        return True
+
+    def setUp(self) -> None:
+        if not self._gtk_ready():
+            self.skipTest("GTK needs a display to measure widgets")
+
+    def test_the_hint_wraps_inside_the_key_grid(self) -> None:
+        from gi.repository import Gtk
+
+        from linuxstreamdeck.ui.window import (
+            GRID_COLS,
+            HINT_MAX_CHARS,
+            KEY_PIXELS,
+            MainWindow,
+        )
+
+        # Same text the window builds; kept here so a longer one fails loudly.
+        source = inspect.getsource(MainWindow._build_ui)
+        self.assertIn("Ctrl+Z undoes the last change", source)
+        text = (
+            "Drag to move · right-click to copy/paste · "
+            "double-click a folder to open it · "
+            "Ctrl+Z undoes the last change"
+        )
+        hint = Gtk.Label(
+            label=text,
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+            max_width_chars=HINT_MAX_CHARS,
+        )
+        hint.add_css_class("dim-label")
+        _, natural, _, _ = hint.measure(Gtk.Orientation.HORIZONTAL, -1)
+
+        grid_width = GRID_COLS * KEY_PIXELS + (GRID_COLS - 1) * 10
+        self.assertLess(
+            natural,
+            grid_width,
+            "the grid hint asks for more width than the key grid, so it will "
+            "push the centered grid box past the window edge",
+        )
+
+    def test_an_unwrapped_hint_would_have_been_caught(self) -> None:
+        """Confirms the check above can actually fail."""
+        from gi.repository import Gtk
+
+        from linuxstreamdeck.ui.window import GRID_COLS, KEY_PIXELS
+
+        text = (
+            "Drag to move · right-click to copy/paste · "
+            "double-click a folder to open it · "
+            "Ctrl+Z undoes the last change"
+        )
+        unwrapped = Gtk.Label(label=text)
+        unwrapped.add_css_class("dim-label")
+        _, natural, _, _ = unwrapped.measure(Gtk.Orientation.HORIZONTAL, -1)
+
+        self.assertGreater(natural, GRID_COLS * KEY_PIXELS + (GRID_COLS - 1) * 10)
 
 
 class PasteActionOntoKeyTests(unittest.TestCase):

@@ -33,6 +33,25 @@ DEFAULT_KEYS = 15            # Stream Deck MK.2
 DEFAULT_IMAGE_SIZE = (72, 72)
 
 
+def _device_id(device) -> str:
+    """Something stable to tell two unopened devices apart.
+
+    The serial number needs the device to be open, and opening a deck only to
+    name it in a warning would disturb the USB bus for nothing.
+    """
+    try:
+        return str(device.id())
+    except Exception:
+        return repr(device)
+
+
+def _device_name(device) -> str:
+    try:
+        return str(device.deck_type())
+    except Exception:
+        return "Stream Deck"
+
+
 class DeckManager:
     def __init__(
         self,
@@ -50,6 +69,9 @@ class DeckManager:
         self.deck = None
         self.key_count = DEFAULT_KEYS
         self.image_size = DEFAULT_IMAGE_SIZE
+        # Which set of devices the "only one deck is used" notice was last
+        # given for; see _report_extra_devices.
+        self._reported_devices: tuple[str, ...] = ()
         self._lock = threading.Lock()   # HID writes are not reentrant
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -138,6 +160,32 @@ class DeckManager:
                 log.exception("Error while scanning for devices")
             self._stop.wait(SCAN_SECONDS)
 
+    def _report_extra_devices(self, devices) -> None:
+        """Say so when more than one deck is plugged in, since one is used.
+
+        Only the first device is opened. Dropping the rest without a word looked
+        exactly like a broken second deck, so the limitation is stated instead.
+
+        Reported once per distinct set of devices: `_try_open` runs every few
+        seconds while nothing is connected, and repeating this in the status bar
+        would bury everything else.
+        """
+        if len(devices) < 2:
+            # Unplugging back down to one arms the notice again.
+            self._reported_devices = ()
+            return
+        seen = tuple(sorted(_device_id(device) for device in devices))
+        if seen == self._reported_devices:
+            return
+        self._reported_devices = seen
+        message = (
+            f"{len(devices)} Stream Decks found. Only the first "
+            f"({_device_name(devices[0])}) is used; multiple decks are not "
+            "supported yet."
+        )
+        log.warning(message)
+        self.bus.emit("status", text=message)
+
     def _try_open(self) -> None:
         try:
             from StreamDeck.DeviceManager import DeviceManager
@@ -146,6 +194,7 @@ class DeckManager:
             # typical: libhidapi not installed yet
             log.debug("Could not enumerate HID devices: %s", e)
             return
+        self._report_extra_devices(devices)
         for dev in devices:
             if self._stop.is_set():
                 return

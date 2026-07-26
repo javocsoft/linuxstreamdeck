@@ -87,7 +87,8 @@ implemented actions, no guessing. It runs, and it's useful.
   with a short full-deck sequence and spells `LinuxStreamDeck` across its keys
   before loading your configured page.
 - 🔌 **Auto-reconnect & hotplug** — connects to OBS on its own and picks up the deck when
-  you plug it in.
+  you plug it in. One deck at a time: with several connected it uses the first
+  and tells you so in the status bar.
 - 🫥 **Keeps running in the status area** — closing the window can leave the deck
   working in the background. Its status icon switches profiles, reopens the
   window and quits.

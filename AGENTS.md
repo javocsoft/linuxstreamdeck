@@ -213,6 +213,29 @@ The `*` topic receives every event. `EventBus.dispatcher` is `GLib.idle_add` in
 the app, so subscribers always run on the GTK main thread even when the emit came
 from the deck read thread or the obs-websocket event thread.
 
+### One deck at a time
+
+`DeckManager._try_open()` enumerates every Stream Deck and opens the **first**
+one; the rest are ignored. `_report_extra_devices()` says so on the bus instead
+of dropping them silently, which was indistinguishable from a second deck that
+had failed to open. It reports once per distinct set of device ids, because the
+scan runs every `SCAN_SECONDS` for as long as nothing is connected, and it never
+opens a device just to name it — a serial number needs an open handle, and
+opening a deck disturbs the USB bus (see §5.19).
+
+Supporting more than one deck is **not** a matter of looping here. The rendering
+layer is already device-agnostic (`screensaver_frame()`, `startup_frames()` and
+`exit_image_tiles()` all take `key_count`, `key_size` and `columns`), but three
+things assume a single device and would fail *silently* rather than loudly:
+`deck.key` carries no device identity, so a press on one deck would run the
+other's key; `RuntimeKey` has no device field, so toggles, clocks, gestures and
+execution controls would be shared between decks; and `app.py` builds one
+manager, one controller and one window rather than a collection. Adding the
+device dimension to the bus and to `RuntimeKey` while there is still one deck is
+the safe order — it is verifiable against the existing suite — and what two
+decks should actually do (mirror, separate profiles, bound to a serial) is a
+configuration design question that has to come first.
+
 ### Physical deck startup and connection ordering
 
 `device/startup_animation.py::startup_frames()` creates a 33-frame offscreen

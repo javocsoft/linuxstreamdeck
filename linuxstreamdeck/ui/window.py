@@ -32,6 +32,11 @@ KEY_PIXELS = 96
 # How long a second click on the same key still counts as a double click.
 DOUBLE_CLICK_SECONDS = 0.4
 
+# Where the hint under the grid wraps. Kept well inside the key grid's own
+# width (5 columns of KEY_PIXELS plus spacing = 520 px) rather than right at it,
+# so a larger desktop font still cannot push it past the keys.
+HINT_MAX_CHARS = 58
+
 _CSS = b"""
 .deck-key {
     padding: 3px;
@@ -221,10 +226,16 @@ class MainWindow(Adw.ApplicationWindow):
         self._key_grid = grid
         self._add_grid_dnd(grid)
         grid_box.append(grid)
+        # Wrapped and width-capped: the grid box is centered, so it takes the
+        # width of its widest child. An unwrapped hint therefore made the box
+        # wider than the window and ran off the edge.
         hint = Gtk.Label(
             label="Drag to move · right-click to copy/paste · "
                   "double-click a folder to open it · "
-                  "Ctrl+Z undoes the last change"
+                  "Ctrl+Z undoes the last change",
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+            max_width_chars=HINT_MAX_CHARS,
         )
         hint.add_css_class("dim-label")
         hint.set_margin_top(12)
