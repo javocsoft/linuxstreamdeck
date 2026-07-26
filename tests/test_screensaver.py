@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PIL import ImageChops
+from PIL import ImageChops, ImageStat
 
 from linuxstreamdeck.core.config import (
     DEFAULT_SCREENSAVER,
@@ -20,8 +20,8 @@ from linuxstreamdeck.device.screensaver import TITLE, screensaver_frame
 
 
 class ScreenSaverFrameTests(unittest.TestCase):
-    def test_all_six_styles_fill_the_deck_and_animate(self) -> None:
-        self.assertEqual(len(SCREENSAVER_CHOICES), 6)
+    def test_every_installed_style_fills_the_deck_and_animates(self) -> None:
+        self.assertEqual(len(SCREENSAVER_CHOICES), 7)
 
         for style, _name, _description in SCREENSAVER_CHOICES:
             first = screensaver_frame(style, 0.0, 15, (72, 72), 47)
@@ -75,6 +75,98 @@ class ScreenSaverFrameTests(unittest.TestCase):
         )
         total_pixels = 15 * 72 * 72
         self.assertGreater(black_pixels / total_pixels, 0.70)
+
+
+class HalScreenSaverTests(unittest.TestCase):
+    """A single red eye, centered and still, breathing on black."""
+
+    @staticmethod
+    def _frame(elapsed: float, intensity: int = 100):
+        return screensaver_frame("hal_9000", elapsed, 15, (72, 72), intensity)
+
+    @staticmethod
+    def _mean(image) -> list[float]:
+        """Average red, green and blue of one key."""
+        return ImageStat.Stat(image).mean
+
+    def test_the_style_is_installed(self) -> None:
+        self.assertIn(
+            "hal_9000", [choice[0] for choice in SCREENSAVER_CHOICES]
+        )
+
+    def test_the_eye_sits_on_the_middle_key(self) -> None:
+        images = self._frame(0.0).images
+        # 5 columns x 3 rows: key 7 is the center, keys 0/4/10/14 the corners.
+        center = self._mean(images[7])[0]
+
+        for corner in (0, 4, 10, 14):
+            self.assertLess(
+                self._mean(images[corner])[0],
+                center,
+                f"key {corner} is not darker than the center",
+            )
+
+    def test_the_eye_is_red(self) -> None:
+        red, green, blue = self._mean(self._frame(0.0).images[7])
+
+        self.assertGreater(red, 40)
+        self.assertGreater(red, green * 2)
+        self.assertGreater(red, blue * 2)
+
+    def test_the_light_falls_off_across_the_deck(self) -> None:
+        """The eye lights what is around it, dimmer the further out it goes."""
+        images = self._frame(2.2).images
+        # Middle row, from the eye outward: center, its neighbour, the far key.
+        eye, neighbour, far = (self._mean(images[i])[0] for i in (7, 6, 5))
+
+        self.assertGreater(eye, neighbour)
+        self.assertGreater(neighbour, far)
+        # Lit, not black: a key that catches nothing looks cut out of the deck.
+        self.assertGreater(far, 1.0)
+        # Still clearly a dark deck with one eye on it, not a red wash.
+        self.assertLess(far, eye * 0.15)
+
+    def test_the_surroundings_brighten_with_the_eye(self) -> None:
+        """One light source: the spill has to breathe with what casts it."""
+        dim, bright = self._frame(6.8).images, self._frame(2.2).images
+
+        for key in (5, 6, 8, 9, 0, 14):
+            self.assertGreater(
+                self._mean(bright[key])[0],
+                self._mean(dim[key])[0],
+                f"key {key} does not follow the breath",
+            )
+
+    def test_the_eye_is_centered_left_to_right_and_top_to_bottom(self) -> None:
+        images = self._frame(0.0).images
+        brightness = [self._mean(image)[0] for image in images]
+
+        # Mirrored keys carry the same amount of light.
+        for left, right in ((5, 9), (6, 8), (0, 4), (11, 13)):
+            self.assertAlmostEqual(
+                brightness[left], brightness[right], delta=0.5
+            )
+        for top, bottom in ((1, 11), (2, 12), (3, 13)):
+            self.assertAlmostEqual(
+                brightness[top], brightness[bottom], delta=0.5
+            )
+
+    def test_the_eye_stays_put_and_only_its_glow_changes(self) -> None:
+        """It watches; it never scans or looks around."""
+        dim = self._frame(6.8).images[7]
+        bright = self._frame(2.2).images[7]
+
+        self.assertGreater(self._mean(bright)[0], self._mean(dim)[0])
+        # Same shape in both: the lit area does not move or resize much.
+        self.assertEqual(dim.getbbox(), bright.getbbox())
+
+    def test_the_breathing_reaches_the_device_brightness(self) -> None:
+        levels = {self._frame(t, 60).brightness for t in (0.0, 2.2, 4.5, 6.8)}
+
+        self.assertGreater(len(levels), 1)
+        for level in levels:
+            self.assertGreaterEqual(level, 1)
+            self.assertLessEqual(level, 60)
 
 
 class ScreenSaverConfigTests(unittest.TestCase):

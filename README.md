@@ -72,7 +72,7 @@ implemented actions, no guessing. It runs, and it's useful.
   Duplicate any key with right-click → Copy/Paste (or `Ctrl+C`/`Ctrl+V`).
 - 🖥️ **Virtual deck** — the on-screen grid mirrors the physical device, so you can
   configure and test everything **without the hardware even connected**.
-- 🌌 **Animated full-deck screen saver** — choose from six coordinated effects,
+- 🌌 **Animated full-deck screen saver** — choose from seven coordinated effects,
   set the idle delay and independent light intensity, and preview them on both
   the virtual and physical decks.
 - 📴 **Display after exit** — leave the physical deck on its firmware standby
@@ -313,10 +313,12 @@ the physical Stream Deck; the virtual deck always shows the configured keys.
 ### 🌌 Configure the animated screen saver
 
 Click the **Stream Deck display** button in the header to enable an animation
-after the selected idle period. Choose **Neon Pipes**,
-**Digital Rain**, **Aurora Flow**, **Orbital Core**, **Circuit Pulse** or
-**LinuxStreamDeck**, which breathes softly across a black full-deck background.
-The idle delay accepts 1 to 1440 minutes. **Light intensity** ranges from 5 to
+after the selected idle period. Choose **Neon Pipes**, **Digital Rain**,
+**Aurora Flow**, **Orbital Core**, **Circuit Pulse**, **HAL 9000** — a single
+red camera eye watching from the middle of the deck, breathing slowly and
+casting its light on the keys around it — or **LinuxStreamDeck**, which breathes
+the name softly across a black full-deck background. The idle delay accepts 1 to
+1440 minutes. **Light intensity** ranges from 5 to
 100% and is independent of the normal deck brightness.
 
 **Preview now** starts the selected effect immediately on the physical and

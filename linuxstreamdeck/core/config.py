@@ -97,6 +97,11 @@ SCREENSAVER_CHOICES = (
         "Energy pulses travel through a refined circuit-board network.",
     ),
     (
+        "hal_9000",
+        "HAL 9000",
+        "A lone red camera eye breathing calmly, lighting the keys around it.",
+    ),
+    (
         "linuxstreamdeck",
         "LinuxStreamDeck",
         "A black screen with the LinuxStreamDeck name breathing softly.",

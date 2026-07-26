@@ -225,15 +225,46 @@ current configured brightness in `finally` on every exit path.
 | Field | Range/default | Meaning |
 | --- | --- | --- |
 | `enabled` | `False` | Start automatically after inactivity. |
-| `style` | `neon_pipes` | One of the six installed animation IDs. |
+| `style` | `neon_pipes` | One of the seven installed animation IDs. |
 | `idle_minutes` | 1-1440, default 5 | Delay since the last tracked physical or virtual-deck activity. |
 | `intensity` | 5-100, default 35 | Screen-saver brightness, independent of normal deck brightness. |
 
 The available ID/display-name pairs are `neon_pipes` / **Neon Pipes**,
 `digital_rain` / **Digital Rain**, `aurora_flow` / **Aurora Flow**,
-`orbital_core` / **Orbital Core**, `circuit_pulse` / **Circuit Pulse** and
-`linuxstreamdeck` / **LinuxStreamDeck**. An unknown persisted ID falls back to
-Neon Pipes. The settings dialog can start any selection immediately as a preview,
+`orbital_core` / **Orbital Core**, `circuit_pulse` / **Circuit Pulse**,
+`hal_9000` / **HAL 9000** and `linuxstreamdeck` / **LinuxStreamDeck**. An unknown
+persisted ID falls back to Neon Pipes. Adding a style means three edits that must
+stay together: the tuple in `SCREENSAVER_CHOICES`, the renderer in the
+`renderers` table and its entry in `brightness_factors` — a style present in the
+first but missing from either table raises a `KeyError` on the frame that
+selects it. Nothing else enumerates them: the settings dialog builds its list
+from `SCREENSAVER_CHOICES`.
+
+**HAL 9000** is the one style that is a single still object rather than a moving
+field: one red camera eye centered on black, whose iris breathes on a slow wave
+(`HAL_BREATH_CYCLES`, about nine seconds) and whose center point breathes on a
+faster one of its own (`HAL_DOT_CYCLES`), so the two never lock together. Its
+`brightness_factors` entry rides the same iris wave deliberately, so the device
+breathes with the eye instead of against it. The lens does not move, scan or look
+around — what makes it recognisable is that it only ever watches.
+
+Its four layers go on in a fixed order, and the order is the whole trick:
+
+1. **bounce** — a wide, faint wash reaching the rest of the deck, so the keys
+   around the eye are lit by it rather than cut out of black. It scales with the
+   same `iris_level`, because a spill that does not breathe with what casts it
+   reads as a separate light.
+2. **lens** — housing rim, iris and pupil, opaque.
+3. **glare** — composited **over** the finished lens, not behind it. Behind it,
+   any spill bright enough to be seen turned the opaque housing into a black
+   cut-out ring, because the glow peaked exactly where the rim is; over it, the
+   bloom washes across the rim as a camera sees it and the lens blends into the
+   light it is casting.
+4. **point** — the center dot and its own glow, brightest and last.
+
+So brightness on this style is not free: raising the bounce lifts the whole deck,
+and the tests pin the falloff (eye > neighbour > far key, far key lit but well
+under the eye) rather than any absolute value. The settings dialog can start any selection immediately as a preview,
 even while automatic activation is disabled and without physical hardware.
 Closing or saving stops the preview; only Save persists the four values. The
 dialog must unsubscribe its temporary `deck.screensaver` callback on close.

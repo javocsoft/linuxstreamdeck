@@ -16,6 +16,11 @@ GRID_COLUMNS = 5
 FRAME_DELAY = 0.14
 TITLE = "LinuxStreamDeck"
 
+# Breathing rates of the HAL 9000 eye, in cycles per second: about nine seconds
+# for the iris and four for the center point, so the two never lock together.
+HAL_BREATH_CYCLES = 0.11
+HAL_DOT_CYCLES = 0.23
+
 _FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/firasans/FiraSans-Bold.ttf",
@@ -57,6 +62,7 @@ def screensaver_frame(
         "aurora_flow": _aurora_canvas,
         "orbital_core": _orbital_canvas,
         "circuit_pulse": _circuit_canvas,
+        "hal_9000": _hal_canvas,
         "linuxstreamdeck": lambda size, now: _title_canvas(
             size,
             now,
@@ -70,6 +76,9 @@ def screensaver_frame(
         "aurora_flow": 0.72 + 0.13 * _wave(elapsed * 0.20),
         "orbital_core": 0.78 + 0.12 * _wave(elapsed * 0.32),
         "circuit_pulse": 0.70 + 0.18 * _wave(elapsed * 0.42),
+        # Deliberately on the same slow wave as the iris, so the device
+        # brightness breathes with the eye instead of against it.
+        "hal_9000": 0.52 + 0.24 * _wave(elapsed * HAL_BREATH_CYCLES),
         "linuxstreamdeck": 0.58 + 0.18 * _wave(elapsed * 0.20),
     }
 
@@ -491,6 +500,120 @@ def _circuit_canvas(size: tuple[int, int], elapsed: float) -> Image.Image:
         Image.alpha_composite(canvas, pulses),
         circuit,
     ).convert("RGB")
+
+
+def _hal_canvas(size: tuple[int, int], elapsed: float) -> Image.Image:
+    """A single red camera eye, centered and still, breathing on pure black.
+
+    The lens deliberately does not move or scan: what makes it recognisable is
+    that it only ever watches. Everything animated here is brightness — the
+    iris on a slow breath, the center point on a slower one of its own.
+    """
+    width, height = size
+    canvas = Image.new("RGBA", size, (0, 0, 0, 255))
+    center = (width * 0.5, height * 0.5)
+    unit = min(width, height)
+    breath = _wave(elapsed * HAL_BREATH_CYCLES)
+    # The eye keeps most of its glow at the bottom of the breath, so it reads
+    # as alive rather than as something switching on and off.
+    iris_level = 0.66 + 0.34 * breath
+
+    housing_radius = unit * 0.335
+    iris_radius = unit * 0.300
+
+    # Ambient bounce: the far, faint wash the eye throws across the rest of the
+    # deck, so the keys around it are lit by it rather than cut out of black.
+    # It breathes with the iris, which is what sells it as one light source.
+    bounce = Image.new("RGBA", size, (0, 0, 0, 0))
+    ImageDraw.Draw(bounce).ellipse(
+        _circle(center, unit * 0.64),
+        fill=(255, 38, 20, round(88 * iris_level)),
+    )
+    bounce = bounce.filter(ImageFilter.GaussianBlur(max(12, round(unit * 0.34))))
+    canvas = Image.alpha_composite(canvas, bounce)
+
+    lens = Image.new("RGBA", size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(lens)
+
+    # Housing: the dark rim the lens sits in. Stepped from black at its edge to
+    # a faint ember next to the iris; a flat disc with an outline read as a ring
+    # drawn on top of the glow rather than as a body holding the eye.
+    housing_steps = max(6, round(housing_radius - iris_radius))
+    for step in range(housing_steps, 0, -1):
+        ratio = step / housing_steps
+        draw.ellipse(
+            _circle(center, iris_radius + (housing_radius - iris_radius) * ratio),
+            fill=(round(3 + 22 * (1.0 - ratio)), 3, 4, 255),
+        )
+
+    # Iris: concentric steps from a near-black rim to the hot middle. Drawn as
+    # rings rather than one disc, which is what gives it depth.
+    steps = max(12, round(iris_radius))
+    for step in range(steps, 0, -1):
+        ratio = step / steps
+        radius = iris_radius * ratio
+        # Bright core falling off quickly toward the rim.
+        glow = (1.0 - ratio) ** 1.7
+        draw.ellipse(
+            _circle(center, radius),
+            fill=(
+                round((70 + 185 * glow) * iris_level),
+                round((4 + 44 * glow) * iris_level),
+                round((3 + 26 * glow) * iris_level),
+                255,
+            ),
+        )
+
+    # The dark fish-eye pupil the bright point sits in.
+    pupil_radius = unit * 0.085
+    draw.ellipse(
+        _circle(center, pupil_radius),
+        fill=(round(46 * iris_level), round(5 * iris_level), 4, 255),
+    )
+    canvas = Image.alpha_composite(canvas, lens)
+
+    # Glare, composited *over* the finished lens rather than behind it. Behind
+    # it, any spill bright enough to be seen turned the opaque housing into a
+    # black cut-out ring; over it, the bloom washes across the rim exactly as a
+    # camera sees it, and the lens blends into the light it is casting.
+    glare = Image.new("RGBA", size, (0, 0, 0, 0))
+    ImageDraw.Draw(glare).ellipse(
+        _circle(center, iris_radius * 0.92),
+        fill=(255, 26, 12, round(120 * iris_level)),
+    )
+    glare = glare.filter(ImageFilter.GaussianBlur(max(8, round(unit * 0.11))))
+    canvas = Image.alpha_composite(canvas, glare)
+
+    dot_level = 0.45 + 0.55 * _wave(elapsed * HAL_DOT_CYCLES)
+    dot_radius = max(1.5, unit * 0.028)
+    point = Image.new("RGBA", size, (0, 0, 0, 0))
+    ImageDraw.Draw(point).ellipse(
+        _circle(center, dot_radius * 3.0),
+        fill=(255, 214, 96, round(150 * dot_level)),
+    )
+    point = point.filter(ImageFilter.GaussianBlur(max(2, round(unit * 0.035))))
+    ImageDraw.Draw(point).ellipse(
+        _circle(center, dot_radius),
+        fill=(
+            255,
+            round(150 + 88 * dot_level),
+            round(40 + 130 * dot_level),
+            255,
+        ),
+    )
+    return Image.alpha_composite(canvas, point).convert("RGB")
+
+
+def _circle(
+    center: tuple[float, float], radius: float
+) -> tuple[float, float, float, float]:
+    """The bounding box Pillow wants for a circle around `center`."""
+    return (
+        center[0] - radius,
+        center[1] - radius,
+        center[0] + radius,
+        center[1] + radius,
+    )
 
 
 def _title_canvas(
