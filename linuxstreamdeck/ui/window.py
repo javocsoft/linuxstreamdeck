@@ -207,6 +207,9 @@ class MainWindow(Adw.ApplicationWindow):
         configuration_menu.append(
             "Import configuration…", "win.config-import"
         )
+        configuration_menu.append(
+            "Restore a backup…", "win.config-backups"
+        )
         profile_menu.append_section(None, configuration_menu)
         find_menu = Gio.Menu()
         find_menu.append("Find a key…", "win.key-find")
@@ -686,6 +689,7 @@ class MainWindow(Adw.ApplicationWindow):
                          ("page-delete", self._delete_page),
                          ("config-export", self._export_configuration),
                          ("config-import", self._import_configuration),
+                         ("config-backups", self._open_backups),
                          ("app-preferences", self._open_preferences)):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda a, p, cb=cb: cb())
@@ -928,6 +932,38 @@ class MainWindow(Adw.ApplicationWindow):
             restored.append("the custom exit image")
         if restored:
             text += f"; restored {', '.join(restored)}"
+        GLib.idle_add(lambda: (self._flash_status(text), False)[1])
+
+    def _open_backups(self) -> None:
+        from .backups import BackupDialog
+
+        BackupDialog(self).present()
+
+    def restore_backup(self, info) -> None:
+        """Roll back to an automatic backup, from the restore dialog.
+
+        Public because the dialog calls it: replacing the whole configuration
+        invalidates the editor's selection, so it goes through the same
+        unsaved-change guard as importing a bundle.
+        """
+        self._confirm_unsaved_changes(
+            "restoring a backup",
+            lambda: self._apply_backup_restore(info),
+        )
+
+    def _apply_backup_restore(self, info) -> None:
+        try:
+            self.app.controller.restore_backup(info.path)
+        except Exception as error:
+            log.exception("Could not restore the backup")
+            self._show_configuration_error("Restore failed", str(error))
+            return
+        self.brightness.set_value(self.app.config.brightness)
+        text = (
+            f"Restored the backup from {info.label()}"
+            if info.when is not None
+            else "Backup restored"
+        )
         GLib.idle_add(lambda: (self._flash_status(text), False)[1])
 
     @staticmethod
@@ -1282,7 +1318,8 @@ class MainWindow(Adw.ApplicationWindow):
             ))
         # Undo and redo take no index: they act on whatever the last change was.
         for accel, cb in (("<Control>z", self.undo_key_change),
-                          ("<Control><Shift>z", self.redo_key_change)):
+                          ("<Control><Shift>z", self.redo_key_change),
+                          ("<Control>y", self.redo_key_change)):
             sc.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(accel),
                 Gtk.CallbackAction.new(lambda w, a, cb=cb: (cb(), True)[1]),
@@ -1298,7 +1335,10 @@ class MainWindow(Adw.ApplicationWindow):
         for accel, callback in (
             ("<Control>f", self.find_key),
             ("<Control>z", self.undo_key_change),
+            # Both redo conventions: Ctrl+Shift+Z is the GNOME one, Ctrl+Y is
+            # what most people arrive with. Neither is used for anything else.
             ("<Control><Shift>z", self.redo_key_change),
+            ("<Control>y", self.redo_key_change),
         ):
             controller.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(accel),

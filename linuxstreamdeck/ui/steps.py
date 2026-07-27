@@ -203,6 +203,28 @@ def _display_options(source: str, options: list[str]) -> tuple[list[str], dict[s
     return labels, values
 
 
+def _labelled_choices(param: Param) -> tuple[list[str], dict[str, str]]:
+    """A static dropdown's visible labels, plus their stored values.
+
+    Without `choice_labels` a choice shows exactly what it stores, which is
+    right for values that already read as words ("toggle", "start"). It is
+    wrong for identifiers: a list reading "stream_time" and "render_lag" tells
+    nobody what those keys would show.
+    """
+    if not param.choice_labels:
+        return list(param.choices), {}
+    labels: list[str] = []
+    stored: dict[str, str] = {}
+    for choice in param.choices:
+        label = param.choice_labels.get(choice) or choice
+        # Two choices reading the same would make one unreachable.
+        if label in stored:
+            label = f"{label} ({choice})"
+        labels.append(label)
+        stored[label] = choice
+    return labels, stored
+
+
 def _label_for(values: dict[str, str], value) -> str:
     """The label a stored value is shown as."""
     text = str(value or "")
@@ -467,7 +489,13 @@ class StepEditor(Gtk.Box):
         self, param: Param, value, keep_unknown: bool = True
     ) -> Gtk.Widget:
         if param.kind == "choice":
-            dd = self._choice_dd(param.choices, value or param.default)
+            labels, stored = _labelled_choices(param)
+            dd = self._choice_dd(
+                labels, _label_for(stored, value or param.default)
+            )
+            # Same contract as a dynamic dropdown: the label is what is read,
+            # the map is what _widget_value gives back.
+            dd._value_map = stored
             if param.name == "preset":
                 # Picking a preset writes its shortcut into the editable field,
                 # which the user is then free to change.

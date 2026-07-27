@@ -560,11 +560,24 @@ class SourceTransform(Action):
     params = [
         Param("scene", "Scene", choices_source="scenes"),
         Param("source", "Source", choices_source="sources_in_scene"),
+        # The stored names are the ones obs-websocket takes; the labels are for
+        # the person choosing between them.
         Param("property", "Property", kind="choice", default="positionX",
               choices=["positionX", "positionY", "scaleX", "scaleY",
-                       "rotation"]),
+                       "rotation"],
+              choice_labels={
+                  "positionX": "Horizontal position",
+                  "positionY": "Vertical position",
+                  "scaleX": "Horizontal scale",
+                  "scaleY": "Vertical scale",
+                  "rotation": "Rotation",
+              }),
         Param("mode", "Mode", kind="choice", default="set",
-              choices=["set", "adjust"]),
+              choices=["set", "adjust"],
+              choice_labels={
+                  "set": "Set to this value",
+                  "adjust": "Add to the current value",
+              }),
         Param("value", "Value", kind="float", default=0.0, step=0.1),
     ]
 
@@ -664,6 +677,204 @@ class RawRequest(Action):
         log.info("Response from %s: %s", p.get("request_type"), result)
 
 
+# ============================ Statistics =============================
+
+# Each metric: how it is labelled, how a sample becomes text, and an optional
+# warning test. Keeping them in one table means adding a metric is one entry
+# rather than a branch in three methods.
+STAT_METRICS: dict[str, dict] = {
+    "dropped": {
+        "label": "Dropped frames",
+        "icon": "mdi:filmstrip-off",
+        "read": lambda s: _percentage(s.get("stream_skipped"), s.get("stream_total")),
+        "text": lambda v: f"{v:.1f}%",
+        "warn": lambda v: v >= 1.0,
+        "alarm": lambda v: v >= 5.0,
+    },
+    "bitrate": {
+        "label": "Stream bitrate",
+        "icon": "mdi:speedometer",
+        "read": lambda s: s.get("bitrate_kbps"),
+        "text": lambda v: (
+            f"{v / 1000:.1f}Mb" if v >= 1000 else f"{v:.0f}kb"
+        ),
+    },
+    "congestion": {
+        "label": "Stream congestion",
+        "icon": "mdi:network-strength-2-alert",
+        "read": lambda s: _ratio(s.get("congestion")),
+        "text": lambda v: f"{v * 100:.0f}%",
+        "warn": lambda v: v >= 0.2,
+        "alarm": lambda v: v >= 0.5,
+    },
+    "stream_time": {
+        "label": "Stream time",
+        "icon": "mdi:broadcast",
+        "read": lambda s: s.get("stream_seconds") if s.get("streaming") else None,
+        "text": lambda v: _clock(v),
+    },
+    "record_time": {
+        "label": "Recording time",
+        "icon": "mdi:record-circle",
+        "read": lambda s: s.get("record_seconds") if s.get("recording") else None,
+        "text": lambda v: _clock(v),
+    },
+    "disk": {
+        "label": "Free disk space",
+        "icon": "mdi:harddisk",
+        "read": lambda s: s.get("disk_mb"),
+        "text": lambda v: (
+            f"{v / 1024:.0f}GB" if v >= 1024 else f"{v:.0f}MB"
+        ),
+        # Running out of disk mid-recording is one of the classic ways to lose
+        # a session, so it warns early rather than at the last gigabyte.
+        "warn": lambda v: v < 10240,
+        "alarm": lambda v: v < 2048,
+    },
+    "cpu": {
+        "label": "CPU usage",
+        "icon": "mdi:cpu-64-bit",
+        "read": lambda s: s.get("cpu"),
+        "text": lambda v: f"{v:.0f}%",
+        "warn": lambda v: v >= 70,
+        "alarm": lambda v: v >= 90,
+    },
+    "fps": {
+        "label": "Render FPS",
+        "icon": "mdi:video-high-definition",
+        "read": lambda s: s.get("fps"),
+        "text": lambda v: f"{v:.0f}",
+    },
+    "render_lag": {
+        "label": "Skipped render frames",
+        "icon": "mdi:alert-decagram",
+        "read": lambda s: _percentage(s.get("render_skipped"), s.get("render_total")),
+        "text": lambda v: f"{v:.1f}%",
+        "warn": lambda v: v >= 1.0,
+        "alarm": lambda v: v >= 5.0,
+    },
+}
+
+STAT_OK_COLOR = "#1e3a24"
+STAT_WARN_COLOR = "#5a4410"
+STAT_ALARM_COLOR = "#5c1622"
+NO_VALUE = "--"
+
+
+def _percentage(part, total):
+    try:
+        part, total = float(part), float(total)
+    except (TypeError, ValueError):
+        return None
+    return 0.0 if total <= 0 else part / total * 100.0
+
+
+def _ratio(value):
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _clock(seconds: float) -> str:
+    """H:MM:SS, dropping the hour while there is none."""
+    total = int(max(0.0, seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+
+
+@register
+class Stats(Action):
+    id = "obs.stats"
+    name = "OBS statistics"
+    category = CAT_ADVANCED
+    description = (
+        "Show a live OBS measurement on the key: dropped frames, bitrate, "
+        "stream or recording time, free disk space, CPU or FPS."
+    )
+    params = [
+        Param(
+            "metric",
+            "Measurement",
+            kind="choice",
+            default="dropped",
+            choices=list(STAT_METRICS),
+            # The stored value stays an identifier; only the list is readable.
+            choice_labels={
+                key: metric["label"] for key, metric in STAT_METRICS.items()
+            },
+        ),
+        Param(
+            "colored",
+            "Warn with color",
+            kind="choice",
+            default="yes",
+            choices=["yes", "no"],
+            choice_labels={"yes": "Yes", "no": "No"},
+        ),
+    ]
+
+    def execute(self, ctx, p):
+        """Pressing a statistics key reports the value it is showing.
+
+        The key exists to be read, not pressed, but a key that does nothing at
+        all feels broken, so a press states the measurement in words.
+        """
+        metric = STAT_METRICS.get(p.get("metric") or "dropped")
+        if metric is None:
+            return
+        value = self._value(ctx, p)
+        ctx.bus.emit(
+            "status",
+            text=(
+                f"{metric['label']}: {value}"
+                if value != NO_VALUE
+                else f"{metric['label']} is not available right now"
+            ),
+        )
+
+    def feedback(self, ctx, p):
+        metric = STAT_METRICS.get(p.get("metric") or "dropped")
+        if metric is None:
+            return {}
+        sample = ctx.obs.stats() if ctx.obs.connected else {}
+        raw = metric["read"](sample) if sample else None
+        state = {"display": self._format(metric, raw)}
+        if raw is not None and str(p.get("colored", "yes")) != "no":
+            color = self._color(metric, raw)
+            if color:
+                state["color"] = color
+        return state
+
+    def _value(self, ctx, p) -> str:
+        metric = STAT_METRICS[p.get("metric") or "dropped"]
+        sample = ctx.obs.stats() if ctx.obs.connected else {}
+        return self._format(metric, metric["read"](sample) if sample else None)
+
+    @staticmethod
+    def _format(metric: dict, raw) -> str:
+        if raw is None:
+            return NO_VALUE
+        try:
+            return metric["text"](raw)
+        except (TypeError, ValueError):
+            return NO_VALUE
+
+    @staticmethod
+    def _color(metric: dict, raw) -> str:
+        """Background by severity. Only metrics with a threshold get one."""
+        alarm, warn = metric.get("alarm"), metric.get("warn")
+        if warn is None:
+            return ""
+        try:
+            if alarm is not None and alarm(raw):
+                return STAT_ALARM_COLOR
+            return STAT_WARN_COLOR if warn(raw) else STAT_OK_COLOR
+        except (TypeError, ValueError):
+            return ""
+
+
 # Default icons (built-in library). Used when a key has no icon of its own.
 apply_default_icons({
     "obs.scene_switch": "mdi:image-multiple",
@@ -691,4 +902,5 @@ apply_default_icons({
     "obs.media": "mdi:play-circle",
     "obs.hotkey": "mdi:keyboard",
     "obs.raw": "mdi:code-json",
+    "obs.stats": "mdi:chart-line",
 })

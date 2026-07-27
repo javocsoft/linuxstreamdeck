@@ -101,9 +101,17 @@ implemented actions, no guessing. It runs, and it's useful.
   window and quits.
 - 🚀 **Start with your session** — an optional startup entry launches
   LinuxStreamDeck at login, straight into its status icon.
+- 📊 **Live OBS stats on a key** — put dropped frames, stream bitrate,
+  congestion, stream or recording time, free disk space, CPU or FPS straight on
+  the deck, refreshed while you work. The key turns amber and then red as a
+  measurement gets worse, so you notice you are dropping frames or running out
+  of disk without leaving what you were doing.
 - 💾 **Portable configuration backups** — export or import profiles, pages, keys,
   settings, custom key icons, the custom exit image and referenced playback or
   timer audio in one file.
+- 🕓 **Automatic backups you can roll back to** — earlier configurations are kept
+  on their own; pick one by date and by what it holds, and restore it. The
+  current one is saved first, so a restore can itself be undone.
 - 🔤 **Adjustable label size and color** — pick the font size drawn on each key, from
   *Extra small* to *Extra large*, or leave it on *Automatic*. Choose a custom text
   color for the label, value and badge, or leave it inherited. Toggle keys can use
@@ -127,7 +135,7 @@ implemented actions, no guessing. It runs, and it's useful.
 | **Audio** | Mute (with feedback) · raise/lower volume · set volume in dB. Pick a scene and the list narrows to its audio inputs, plus Desktop Audio and Mic/Aux |
 | **Sources & filters** | Show/hide sources per scene (including sources inside groups) · enable/disable filters · **set a text source** · **refresh a browser source** · move/scale/rotate a source |
 | **Media** | Play / pause / restart / stop / next / previous |
-| **Advanced** | Scene collections & profiles · internal hotkeys · **raw request** (100% of the API) |
+| **Advanced** | Scene collections & profiles · internal hotkeys · **live statistics on a key** · **raw request** (100% of the API) |
 
 ### 🖥️ System and navigation actions
 

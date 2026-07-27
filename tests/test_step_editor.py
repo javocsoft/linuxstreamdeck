@@ -99,6 +99,137 @@ def menu_callback(items, label: str):
     return next(cb for name, _e, cb in filter(None, items) if name == label)
 
 
+class LabelledChoiceTests(unittest.TestCase):
+    """A static dropdown may read differently from what it stores.
+
+    Choices whose values are already words ("toggle", "start") show them as
+    they are. Choices whose values are identifiers do not: a list reading
+    "stream_time" and "render_lag" tells nobody what those keys would show.
+    The stored value stays the identifier either way, so rewording a label
+    cannot invalidate a saved key.
+    """
+
+    def _param(self, action_id: str, name: str):
+        from linuxstreamdeck.core import actions as registry
+
+        action = registry.get(action_id)
+        return next(p for p in action.params if p.name == name)
+
+    def test_a_choice_without_labels_shows_what_it_stores(self) -> None:
+        from linuxstreamdeck.ui.steps import _labelled_choices
+
+        labels, stored = _labelled_choices(self._param("obs.record", "mode"))
+
+        self.assertEqual(labels, ["toggle", "start", "stop"])
+        self.assertEqual(stored, {})
+
+    def test_identifier_choices_are_shown_as_readable_text(self) -> None:
+        from linuxstreamdeck.ui.steps import _labelled_choices
+
+        labels, _stored = _labelled_choices(self._param("obs.stats", "metric"))
+
+        self.assertIn("Dropped frames", labels)
+        self.assertIn("Skipped render frames", labels)
+        self.assertNotIn("render_lag", labels)
+
+    def test_the_stored_value_is_still_the_identifier(self) -> None:
+        from linuxstreamdeck.ui.steps import _labelled_choices
+
+        _labels, stored = _labelled_choices(self._param("obs.stats", "metric"))
+
+        self.assertEqual(stored["Dropped frames"], "dropped")
+        self.assertEqual(stored["Skipped render frames"], "render_lag")
+
+    def test_every_choice_survives_the_round_trip(self) -> None:
+        """Label lookup and value lookup must be exact inverses."""
+        from linuxstreamdeck.ui.steps import _label_for, _labelled_choices
+
+        for action_id, name in (
+            ("obs.stats", "metric"),
+            ("obs.stats", "colored"),
+            ("obs.transform", "property"),
+            ("obs.transform", "mode"),
+            ("obs.record", "mode"),
+        ):
+            param = self._param(action_id, name)
+            _labels, stored = _labelled_choices(param)
+            for value in param.choices:
+                with self.subTest(action=action_id, value=value):
+                    label = _label_for(stored, value)
+                    self.assertEqual(stored.get(label, label), value)
+
+    def test_a_label_is_offered_for_every_choice(self) -> None:
+        from linuxstreamdeck.ui.steps import _labelled_choices
+
+        param = self._param("obs.stats", "metric")
+
+        labels, _stored = _labelled_choices(param)
+
+        self.assertEqual(len(labels), len(param.choices))
+
+    def test_two_choices_reading_alike_stay_distinguishable(self) -> None:
+        """A duplicate label would make one of them unreachable."""
+        from linuxstreamdeck.core.actions import Param
+        from linuxstreamdeck.ui.steps import _labelled_choices
+
+        param = Param(
+            "x", "X", kind="choice", choices=["a", "b"],
+            choice_labels={"a": "Same", "b": "Same"},
+        )
+
+        labels, stored = _labelled_choices(param)
+
+        self.assertEqual(len(set(labels)), 2)
+        self.assertEqual(set(stored.values()), {"a", "b"})
+
+    def test_the_ai_catalogue_still_offers_the_stored_values(self) -> None:
+        """Proposals are validated against the identifiers, not the labels."""
+        param = self._param("obs.stats", "metric")
+
+        self.assertIn("render_lag", param.choices)
+        self.assertNotIn("Skipped render frames", param.choices)
+
+
+@unittest.skipUnless(HAS_DISPLAY, "GTK needs a display to build widgets")
+class LabelledChoiceWidgetTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from linuxstreamdeck.ui.steps import StepEditor
+
+        self.editor = StepEditor(fake_app(FakeObs()))
+
+    def test_the_dropdown_shows_labels(self) -> None:
+        self.editor.load(ActionStep(action="obs.stats"))
+
+        widget = self.editor._param_widgets["metric"][1]
+        model = widget.get_model()
+        shown = [model.get_string(i) for i in range(model.get_n_items())]
+
+        self.assertIn("Free disk space", shown)
+        self.assertNotIn("disk", shown)
+
+    def test_choosing_a_label_stores_its_identifier(self) -> None:
+        self.editor.load(ActionStep(action="obs.stats"))
+        widget = self.editor._param_widgets["metric"][1]
+        model = widget.get_model()
+        shown = [model.get_string(i) for i in range(model.get_n_items())]
+
+        widget.set_selected(shown.index("Free disk space"))
+
+        self.assertEqual(self.editor.get_step().params["metric"], "disk")
+
+    def test_a_saved_key_reopens_on_its_own_label(self) -> None:
+        """A key stored before the labels existed must still select correctly."""
+        self.editor.load(
+            ActionStep(action="obs.stats", params={"metric": "render_lag"})
+        )
+
+        widget = self.editor._param_widgets["metric"][1]
+        item = widget.get_selected_item()
+
+        self.assertEqual(item.get_string(), "Skipped render frames")
+        self.assertEqual(self.editor.get_step().params["metric"], "render_lag")
+
+
 @unittest.skipUnless(HAS_DISPLAY, "GTK needs a display to build widgets")
 class DependentDropdownTests(unittest.TestCase):
     def setUp(self) -> None:

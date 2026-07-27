@@ -98,6 +98,11 @@ DIAL_STEPS = {
 # long after the hand stopped.
 MAX_DIAL_TICKS = 8
 
+# How often a visible statistics key is recomposed. It only has to be as fast
+# as a number is worth reading; the client caches the sample behind it.
+STATS_REFRESH_SECONDS = 1.0
+STATS_ACTION_ID = "obs.stats"
+
 
 class _ExecutionControl:
     def __init__(self, predecessor: threading.Event | None = None) -> None:
@@ -176,6 +181,16 @@ class DeckController:
             name="key-activity",
         )
         self._busy_thread.start()
+        # Statistics keys show a number that changes on its own. Nothing on the
+        # bus announces that — `obs.state` fires on state changes, and a rising
+        # frame counter is not one — so they are the only keys that need to be
+        # repainted by the clock rather than by an event.
+        self._stats_thread = threading.Thread(
+            target=self._stats_loop,
+            daemon=True,
+            name="key-stats",
+        )
+        self._stats_thread.start()
 
         bus.subscribe("deck.key", self._on_deck_key)
         bus.subscribe("deck.dial", self._on_deck_dial)
@@ -551,6 +566,21 @@ class DeckController:
     def import_configuration(self, source: Path) -> ImportResult:
         """Replace the configuration and apply its runtime settings."""
         result = self.config.import_bundle(source)
+        self._adopt_replaced_configuration()
+        return result
+
+    def restore_backup(self, path: Path):
+        """Roll the configuration back to one of the automatic backups.
+
+        Identical to an import once the file is read: the whole configuration
+        has been replaced, so every stored index means something else and every
+        runtime setting has to be applied again.
+        """
+        info = self.config.restore_backup(path)
+        self._adopt_replaced_configuration()
+        return info
+
+    def _adopt_replaced_configuration(self) -> None:
         self._toggle.clear()
         self._clear_time_actions()
         # Those keys are gone, or their indices have shifted under it.
@@ -585,7 +615,6 @@ class DeckController:
             name=self.page.name,
         )
         self.refresh()
-        return result
 
     # ---------- key editing (move / copy / paste / clear) ----------
 
@@ -1236,6 +1265,47 @@ class DeckController:
                 keys = tuple(self._running)
             self._refresh_runtime_keys(keys)
 
+    def _stats_loop(self) -> None:
+        """Repaint visible statistics keys on a slow clock.
+
+        It asks OBS for nothing itself: it only asks the render worker to
+        recompose those keys, and their `feedback()` reads the client's shared
+        statistics cache. So a page showing six of them still costs one sample
+        per interval, not six.
+        """
+        while not self._stopping.wait(STATS_REFRESH_SECONDS):
+            if self.deck.screensaver_active or not self.obs.connected:
+                continue
+            keys = self._visible_stats_keys()
+            if keys:
+                self._refresh_runtime_keys(keys)
+
+    def _visible_stats_keys(self) -> tuple[RuntimeKey, ...]:
+        """Runtime keys of the statistics keys on the grid currently shown."""
+        try:
+            grid = self.container
+        except Exception:
+            return ()
+        found = []
+        for raw, kc in list(grid.keys.items()):
+            if kc is None or not self._shows_stats(kc):
+                continue
+            try:
+                found.append(self._tkey(int(raw)))
+            except (TypeError, ValueError):
+                continue
+        return tuple(found)
+
+    @staticmethod
+    def _shows_stats(kc: KeyConfig) -> bool:
+        """Whether this key draws a live statistic.
+
+        Only a single-action key can: the value comes from `feedback()`, and
+        the controller asks for feedback on the key's own action, never on a
+        step inside a list.
+        """
+        return kc.kind == KIND_SINGLE and kc.action == STATS_ACTION_ID
+
     def _refresh_runtime_keys(
         self,
         keys: tuple[RuntimeKey, ...],
@@ -1544,4 +1614,7 @@ class DeckController:
         self._action_executor.shutdown(wait=True, cancel_futures=True)
         self._notification_executor.shutdown(wait=True, cancel_futures=True)
         self._busy_thread.join()
+        # Joined alongside the activity thread and for the same reason: both
+        # submit to the render executor, so neither may outlive it.
+        self._stats_thread.join()
         self._render_executor.shutdown(wait=True, cancel_futures=True)

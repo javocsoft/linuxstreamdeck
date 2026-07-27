@@ -195,6 +195,7 @@ linuxstreamdeck/
 │   ├── tray.py       StatusNotifierItem + dbusmenu status icon (no GTK widgets).
 │   ├── preferences.py Close behaviour and start-on-login settings dialog.
 │   ├── about.py       About dialog: application identity, credits, license and source link.
+│   ├── backups.py    Restore one of the automatic configuration backups.
 │   ├── obs_settings.py OBS connection dialog (host/port/password).
 │   ├── screensaver_settings.py Screen saver and clean-exit display settings.
 │   └── profile_dialog.py New/edit profile dialog (name + description).
@@ -574,10 +575,19 @@ Actions are declarative and self-registering:
   a scene whose sources appeared later showed nothing until the key was saved
   and reopened. A stored value is always kept selectable (`keep_unknown`), while
   a value inherited from the previous parent is deliberately dropped.
-  A dropdown may show something other than what it stores: `_display_options()`
-  returns the labels plus a `display -> value` map, kept on the widget as
-  `_value_map` and consulted by `_widget_value()`. `hotkeys` is the one source
-  that uses it, because `GetHotkeyList` only returns identifiers such as
+  A dropdown may show something other than what it stores, and there are two
+  ways in. A **static** choice list adds `choice_labels` (`{stored value:
+  label}`) to its `Param`; `_labelled_choices()` builds the visible labels from
+  it. Without it a choice shows what it stores, which is right for values that
+  already read as words (`toggle`, `start`) and wrong for identifiers — a list
+  reading `stream_time` and `render_lag` tells nobody what those keys would
+  show. The stored value stays the identifier, so rewording a label cannot
+  invalidate a saved key, and the AI catalogue keeps validating against
+  `param.choices` rather than against the labels.
+  A **dynamic** list goes through `_display_options()`, which
+  returns the labels plus a `display -> value` map. Both fill the same
+  `_value_map` on the widget, which `_widget_value()` consults. `hotkeys` is the
+  one source that uses it, because `GetHotkeyList` only returns identifiers such as
   `OBSBasic.StartStreaming` and `TriggerHotkeyByName` needs exactly that string
   back. `hotkey_display_name()` in `obs/client.py` derives the readable text, and
   `get_hotkeys()` removes the duplicates OBS emits once per source. The map is
@@ -1206,9 +1216,56 @@ Alongside the single-step `config.json.bak`, `rotate_backups()` keeps up to
 is the whole point of it: saves are frequent — a page switch, a brightness change
 and every key save is one — so without a floor between snapshots a burst of saves
 would push every older state out of the history at exactly the moment it becomes
-worth having. `import_bundle()` passes `force=True`, because replacing the entire
-configuration is precisely when the previous one is worth keeping. Rotation never
-raises: losing a backup must not stop the save it precedes.
+worth having. `import_bundle()` and `restore_backup()` pass `force=True`, because
+replacing the entire configuration is precisely when the previous one is worth
+keeping. Rotation never raises: losing a backup must not stop the save it
+precedes.
+
+Two details there are load-bearing and easy to undo:
+
+- **The history is ordered by modification time, not by name.** Two snapshots
+  can land in the same second — a restore forces one immediately after the save
+  before it — and `_free_backup_path()` disambiguates with a `-NN` suffix. Any
+  such suffix sorts *before* the plain name (`-` precedes `.`), so name order
+  would report the older copy as the newest.
+- **It copies with `shutil.copy`, not `copy2`.** `copy2` preserves the source's
+  timestamp, which would both break that ordering and label every backup with
+  when the configuration was last edited rather than when the copy was taken.
+
+`describe_backup()` reads each file to report its profile, page and key counts,
+because a row showing only a filename cannot tell you which copy you want.
+`restore_backup()` refuses any path outside `BACKUP_DIR`, keeps the keyring
+password of this computer exactly as importing does, and goes through
+`_adopt_replaced_configuration()` — the same runtime reapplication as an import,
+since the whole configuration has just been replaced.
+
+### Live OBS statistics on a key
+
+`obs.stats` draws a live measurement — dropped frames, bitrate, congestion,
+stream or recording time, free disk, CPU, FPS, skipped render frames — through
+the `display` feedback the clocks already use. `STAT_METRICS` holds each one's
+label, reader, formatter and thresholds in a single table, so adding a metric is
+one entry rather than a branch in three methods.
+
+Two things about it are unlike every other action:
+
+- **Its value changes with nothing happening.** No bus event announces a rising
+  frame counter, so `_stats_loop()` repaints visible statistics keys on a slow
+  clock (`STATS_REFRESH_SECONDS`). That thread submits to the render executor,
+  so it is joined beside the activity thread and before that executor stops.
+  `_shows_stats()` only matches a **single-action** key: feedback is resolved
+  for a key's own action, never for a step inside a list.
+- **Several keys can ask at once.** `OBSClient.stats()` caches one sample per
+  `STATS_INTERVAL` behind its own lock — never the request lock, which would
+  serialize the whole client behind a display refresh. Without the cache, a page
+  showing six statistics keys would fire eighteen websocket requests per
+  repaint, through the one serialized connection, competing with the feedback of
+  every other key.
+
+Bitrate is derived, not reported: OBS only exposes total bytes sent, so the rate
+exists solely as a difference between two samples. The first sample after
+connecting or going live has nothing to compare against and reports nothing
+rather than an absurd spike from a counter that started at zero.
 
 ### Keyboard navigation of the key grid
 

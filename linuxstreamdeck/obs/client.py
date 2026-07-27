@@ -20,11 +20,23 @@ log = logging.getLogger(__name__)
 
 RECONNECT_SECONDS = 3
 
+# How often the statistics sample may be refreshed. Anything faster costs three
+# serialized websocket requests for a number nobody can read changing that fast.
+STATS_INTERVAL = 1.0
+
 # Splits CamelCase, including an acronym followed by a word ("OBSBasic").
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 _SEPARATORS = re.compile(r"[-_.\s]+")
 # Prefixes that only say where a hotkey lives, adding nothing for the reader.
 _GENERIC_HOTKEY_GROUPS = frozenset({"obsbasic", "libobs", "obs"})
+
+
+def _milliseconds(value) -> float | None:
+    """An obs-websocket duration in milliseconds, as seconds."""
+    try:
+        return max(0.0, float(value) / 1000.0)
+    except (TypeError, ValueError):
+        return None
 
 
 def _words(text: str) -> list[str]:
@@ -99,6 +111,13 @@ class OBSClient:
         self._lock = threading.Lock()          # protects _req (concurrent requests)
         self._stop = threading.Event()
         self._monitor: threading.Thread | None = None
+        # Statistics cache; see stats(). Its own lock, never the request lock:
+        # holding that one while sampling would serialize the whole client
+        # behind a refresh that is only a display value.
+        self._stats_lock = threading.Lock()
+        self._stats: dict | None = None
+        self._stats_at = 0.0
+        self._stream_bytes: tuple[int, float] | None = None
 
     # ---------- lifecycle ----------
 
@@ -229,6 +248,81 @@ class OBSClient:
         except Exception as e:
             log.debug("Request %s failed: %s", name, e)
             return None
+
+    # ---------- live statistics ----------
+
+    def stats(self) -> dict:
+        """OBS statistics, fetched at most once per `STATS_INTERVAL`.
+
+        Every statistics key asks for this while its image is composed, so
+        without the cache a page showing four of them would fire twelve
+        websocket requests per repaint — all of them through the single
+        serialized connection, competing with the feedback of every other key.
+        One sample per interval serves all of them.
+
+        Returns an empty dict when OBS is not connected, which is what the
+        actions render as a dash rather than a stale number.
+        """
+        now = time.monotonic()
+        with self._stats_lock:
+            fresh = self._stats
+            if fresh is not None and now - self._stats_at < STATS_INTERVAL:
+                return fresh
+        sample = self._sample_stats(now)
+        with self._stats_lock:
+            self._stats, self._stats_at = sample, now
+        return sample
+
+    def _sample_stats(self, now: float) -> dict:
+        """One round of statistics requests, plus the derived stream bitrate."""
+        if not self.connected:
+            with self._stats_lock:
+                self._stream_bytes = None
+            return {}
+        general = self.try_request("GetStats") or {}
+        stream = self.try_request("GetStreamStatus") or {}
+        record = self.try_request("GetRecordStatus") or {}
+        sample = {
+            "cpu": general.get("cpuUsage"),
+            "memory_mb": general.get("memoryUsage"),
+            "disk_mb": general.get("availableDiskSpace"),
+            "fps": general.get("activeFps"),
+            "render_skipped": general.get("renderSkippedFrames"),
+            "render_total": general.get("renderTotalFrames"),
+            "streaming": stream.get("outputActive", False),
+            "stream_seconds": _milliseconds(stream.get("outputDuration")),
+            "stream_skipped": stream.get("outputSkippedFrames"),
+            "stream_total": stream.get("outputTotalFrames"),
+            "congestion": stream.get("outputCongestion"),
+            "recording": record.get("outputActive", False),
+            "record_seconds": _milliseconds(record.get("outputDuration")),
+        }
+        sample["bitrate_kbps"] = self._stream_bitrate(
+            stream.get("outputBytes"), now, bool(sample["streaming"])
+        )
+        return sample
+
+    def _stream_bitrate(self, total_bytes, now: float, streaming: bool):
+        """Bits per second since the previous sample.
+
+        OBS reports bytes sent in total, never a rate, so the rate only exists
+        as a difference between two samples. The first sample after connecting
+        or after going live has nothing to compare against and reports nothing
+        rather than a meaningless spike from a counter that started at zero.
+        """
+        with self._stats_lock:
+            previous = self._stream_bytes
+            if not streaming or total_bytes is None:
+                self._stream_bytes = None
+                return None
+            self._stream_bytes = (total_bytes, now)
+        if previous is None:
+            return None
+        last_bytes, last_at = previous
+        elapsed = now - last_at
+        if elapsed <= 0 or total_bytes < last_bytes:
+            return None
+        return (total_bytes - last_bytes) * 8 / elapsed / 1000
 
     # ---------- lists for the editor ----------
 

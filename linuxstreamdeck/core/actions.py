@@ -24,6 +24,11 @@ class Param:
     kind: str = "string"
     default: Any = None
     choices: list[str] = field(default_factory=list)   # for kind == "choice"
+    # Readable text for those choices, as {stored value: label}. Only needed
+    # when the stored value is an identifier rather than something anyone would
+    # want to read; the editor then shows the label and still stores the value,
+    # so wording can change without invalidating saved keys.
+    choice_labels: dict[str, str] = field(default_factory=dict)
     minimum: float | None = None
     maximum: float | None = None
     step: float = 1

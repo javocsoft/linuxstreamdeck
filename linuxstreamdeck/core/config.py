@@ -6,6 +6,7 @@ File: ~/.config/linuxstreamdeck/config.json
 from __future__ import annotations
 
 import copy
+import datetime
 import hashlib
 import json
 import logging
@@ -287,6 +288,27 @@ def _text_color(value) -> str:
     if len(color) not in (4, 7) or not color.startswith("#"):
         return KEY_TEXT_COLOR_AUTO
     return color if all(c in "0123456789abcdef" for c in color[1:]) else KEY_TEXT_COLOR_AUTO
+
+
+@dataclass(frozen=True)
+class BackupInfo:
+    """One rolling backup, as the restore dialog lists it."""
+
+    path: Path
+    when: "datetime.datetime | None"
+    profiles: int
+    pages: int
+    keys: int
+    readable: bool = True
+
+    def label(self) -> str:
+        when = self.when.strftime("%d %b %Y, %H:%M") if self.when else "unknown date"
+        if not self.readable:
+            return f"{when} — unreadable"
+        return (
+            f"{when} — {self.profiles} profile(s), "
+            f"{self.pages} page(s), {self.keys} key(s)"
+        )
 
 
 @dataclass(frozen=True)
@@ -883,7 +905,10 @@ class Config:
     def backup_history() -> list[Path]:
         """The rolling backups, newest first.
 
-        Their names are timestamps, so sorting them is sorting by age.
+        Ordered by when the snapshot was taken, not by name: a second snapshot
+        inside the same second has to be disambiguated, and any suffix that
+        does that sorts *before* the plain name rather than after it. The
+        modification time has nanosecond resolution and no such ambiguity.
         """
         try:
             entries = [
@@ -893,7 +918,33 @@ class Config:
             ]
         except OSError:
             return []
-        return sorted(entries, reverse=True)
+
+        def taken_at(path: Path):
+            try:
+                return (path.stat().st_mtime, path.name)
+            except OSError:
+                return (0.0, path.name)
+
+        return sorted(entries, key=taken_at, reverse=True)
+
+    @staticmethod
+    def _free_backup_path(stamp: str) -> Path | None:
+        """An unused name for a snapshot taken this second.
+
+        Two in the same second are rare but real: a restore forces one
+        immediately after the save that precedes it. Skipping the second would
+        break the one promise this feature makes.
+        """
+        candidate = BACKUP_DIR / f"{BACKUP_PREFIX}{stamp}{BACKUP_SUFFIX}"
+        if not candidate.exists():
+            return candidate
+        for sequence in range(1, 100):
+            candidate = (
+                BACKUP_DIR / f"{BACKUP_PREFIX}{stamp}-{sequence:02d}{BACKUP_SUFFIX}"
+            )
+            if not candidate.exists():
+                return candidate
+        return None
 
     @classmethod
     def rotate_backups(cls, force: bool = False) -> None:
@@ -910,10 +961,13 @@ class Config:
                 return
             BACKUP_DIR.mkdir(parents=True, exist_ok=True)
             stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
-            target = BACKUP_DIR / f"{BACKUP_PREFIX}{stamp}{BACKUP_SUFFIX}"
-            if not target.exists():
-                shutil.copy2(CONFIG_FILE, target)
-                os.chmod(target, 0o600)
+            target = cls._free_backup_path(stamp)
+            if target is None:
+                return
+            # copy, not copy2: the backup is ordered by when it was taken, and
+            # copy2 would give it the configuration file's own timestamp.
+            shutil.copy(CONFIG_FILE, target)
+            os.chmod(target, 0o600)
             for old in cls.backup_history()[BACKUP_KEEP:]:
                 old.unlink(missing_ok=True)
         except Exception:
@@ -925,6 +979,67 @@ class Config:
             return time.time() - newest.stat().st_mtime >= BACKUP_MIN_INTERVAL
         except OSError:
             return True
+
+    @staticmethod
+    def describe_backup(path: Path) -> "BackupInfo":
+        """Enough about a backup to choose it from a list.
+
+        A row saying only "config-20260727-114500.json" is unusable: what
+        decides which copy you want is what is inside it.
+        """
+        path = Path(path)
+        try:
+            when = datetime.datetime.fromtimestamp(path.stat().st_mtime)
+        except OSError:
+            when = None
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            profiles = raw.get("profiles") or []
+            pages = sum(len(p.get("pages") or []) for p in profiles)
+            keys = sum(
+                len(page.get("keys") or {})
+                for p in profiles
+                for page in (p.get("pages") or [])
+            )
+            return BackupInfo(path, when, len(profiles), pages, keys, True)
+        except Exception:
+            log.debug("Could not read the backup %s", path, exc_info=True)
+            return BackupInfo(path, when, 0, 0, 0, False)
+
+    def restore_backup(self, path: Path) -> "BackupInfo":
+        """Replace the live configuration with one of the rolling backups.
+
+        The current state is snapshotted first, so restoring is itself
+        reversible: picking the wrong copy must not be the end of the story.
+        Keyring credentials stay as they are, exactly as importing a bundle
+        leaves them, because they belong to this computer and not to the file.
+        """
+        path = Path(path).resolve()
+        # Only ever from the backup directory. This is reached from a file
+        # chooser-free dialog, and keeping it closed means a restore can never
+        # be pointed at an arbitrary path.
+        if path.parent != BACKUP_DIR.resolve() or not path.is_file():
+            raise ValueError("That backup is no longer available")
+        info = self.describe_backup(path)
+        if not info.readable:
+            raise ValueError("That backup file cannot be read")
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        replacement = Config.from_dict(raw)
+        replacement.obs.password = self.obs.password
+        replacement.obs_password_needs_migration = (
+            self.obs_password_needs_migration
+        )
+        self.rotate_backups(force=True)
+        replacement.save()
+        self.profiles = replacement.profiles
+        self.current_profile = replacement.current_profile
+        self.obs = replacement.obs
+        self.ai = replacement.ai
+        self.screensaver = replacement.screensaver
+        self.exit_display = replacement.exit_display
+        self.brightness = replacement.brightness
+        self.close_action = replacement.close_action
+        return info
 
     def finish_password_migration(self) -> None:
         """Persist without the legacy password and scrub it from both JSON files."""
