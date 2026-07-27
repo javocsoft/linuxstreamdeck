@@ -508,8 +508,8 @@ Actions are declarative and self-registering:
   `file_filter_name` for the native chooser. A parameter may also set
   `choices_source` so the editor fills the dropdown **live from OBS**
   (`scenes`, `inputs`, `media_inputs`, `transitions`, `scene_collections`,
-  `profiles`, `sources_in_scene`, `filters_of_source`, `text_inputs`,
-  `browser_inputs`, `hotkeys`, `pages`,
+  `profiles`, `sources_in_scene`, `audio_sources_in_scene`, `filters_of_source`,
+  `text_inputs`, `browser_inputs`, `hotkeys`, `pages`,
   `deck_profiles`, `applications`). `pages`, `deck_profiles` and `applications`
   are the `LOCAL_CHOICE_SOURCES` and must stay **above** the `obs.connected`
   guard in `_fetch_choices`, so they still fill when OBS is not running. Note

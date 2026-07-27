@@ -73,7 +73,16 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    failures must not prevent a safe normal connection. If shutdown cancels a
    provisional startup, the configured clean-exit display must be applied before
    that device closes.
-14. **Page navigation compatibility.** Only `nav.page.next`,
+14. **Device geometry and multi-deck handling.** Full-deck renderers
+   (`startup_frames()`, `screensaver_frame()`, `exit_image_tiles()`) must split
+   their canvas along the connected device's own `columns`, never a hardcoded
+   constant; `_device_columns()` must derive it from `key_layout()` and fall
+   back sanely when the driver cannot answer. `_try_open()` must open only the
+   first enumerated device, log failures with `exc_info=True`, and
+   `_report_extra_devices()` / `_note_open_failure()` must not repeat their
+   status message on every scan. A device that fails `_is_visual()` (such as
+   the Pedal) must be refused through `_reject_device()` rather than opened.
+15. **Page navigation compatibility.** Only `nav.page.next`,
    `nav.page.previous` and `nav.page.go` may be registered or exposed to AI.
    `KeyConfig.from_dict()` must migrate legacy `nav.page` actions in single,
    multi and both toggle lists, preserving named destinations. Next/previous must
@@ -81,7 +90,7 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    status. Page names must remain unique per profile, and rename must rewrite
    every same-profile go-to reference without disturbing editor selection.
    Selecting the current page must not save or emit redundant events.
-15. **Stateful clock lifecycle.** Countdown/stopwatch runtime and completion
+16. **Stateful clock lifecycle.** Countdown/stopwatch runtime and completion
    controls must remain keyed by profile/page/key, with that identity propagated
    through `ActionContext`. Single-action clocks must use immediate execution,
    while the 0.1-second scheduler repaints only changed seconds in the active
@@ -89,7 +98,7 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    reset one position; page/profile deletion, import and shutdown must clear
    state safely. Emit each completion once, run sounds outside action workers and
    cancel them on reset/shutdown.
-16. **Portable asset archives.** Export v3 must deduplicate supported `sys.audio`
+17. **Portable asset archives.** Export v3 must deduplicate supported `sys.audio`
    files and `sys.timer` `sound` parameters, including identical content across
    both actions, and enforce per-file/total limits. It must include at most one
    supported BMP/JPEG/PNG/WebP custom exit image with a 50 MiB limit. Import must
@@ -97,21 +106,21 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    enforce limits before writing, restore audio only below
    `CONFIG_DIR/imported-audio` and restore the exit image only below
    `CONFIG_DIR/imported-exit-images`.
-17. **AI proposal safety.** Provider API keys must remain per-provider secrets and
+18. **AI proposal safety.** Provider API keys must remain per-provider secrets and
    never enter config or exports. A saved-key mask is read-only display state and
    must never be sent as a credential; replacement, saved-key reuse and forgetting
    must remain explicit. Context must be opt-in and limited to bounded OBS/page
    names. `sys.command` and `obs.raw` must remain excluded, every provider response
    locally validated, and generation must never execute or save a key before
    explicit editor review and user save.
-18. **Grid drag/drop reliability.** Keep one grid-level source/target pair using
+19. **Grid drag/drop reliability.** Keep one grid-level source/target pair using
    CAPTURE propagation, primary-button dragging, preload and an internal typed
    string payload. Pointer resolution must walk through child widgets to the key
    button. Empty keys cannot start drags; any different empty or occupied key is
    a valid destination in either direction. Reject malformed, foreign and stale
    payloads, preserve subtle source/destination feedback and unsaved-change
    confirmation, and move toggle/clock state with the key during moves/swaps.
-19. **Screen-saver lifecycle.** Persist and import only installed styles with
+20. **Screen-saver lifecycle.** Persist and import only installed styles with
    bounded idle delay/intensity, and keep intensity independent of normal
    brightness. Render coordinated full-deck frames under `RENDER_LOCK`/BASIC;
    suppress normal renders while active. Physical key handling and deliberate
@@ -123,7 +132,7 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    dialog callbacks must unsubscribe on close. `DeckManager.stop()` must wake and
    join the saver thread before joining the monitor and applying the clean-exit
    display.
-20. **Clean-exit display lifecycle.** Preserve the three physical-device modes:
+21. **Clean-exit display lifecycle.** Preserve the three physical-device modes:
    `device_default` calls the firmware reset, `blank` writes every key black
    before setting brightness to 0, and `custom` validates and center-crops one
    full-grid image before writing it at normal configured brightness. Apply the
@@ -132,9 +141,9 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    default. Clean shutdown during provisional startup must apply it too. Never
    claim a forced termination, crash or power loss can guarantee these final HID
    writes.
-21. **English-only.** Flag Spanish or accented text introduced in any versioned
+22. **English-only.** Flag Spanish or accented text introduced in any versioned
    user-facing string, comment, log or document.
-22. **General correctness.** Report proven bugs, resource leaks and broken error
+23. **General correctness.** Report proven bugs, resource leaks and broken error
    handling beyond the specialist checklist.
 
 ## Output

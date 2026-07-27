@@ -54,8 +54,10 @@ maintenance contract.
   threading model, running-feedback concurrency, default-icon inheritance,
   unsaved-editor guards, GStreamer audio lifecycle, same-key restart cancellation
   and ordering, physical startup exclusivity/cancellation/brightness restoration,
-  page-navigation migration/reference integrity, portable-archive limits/path
-  safety and audio deduplication, stateful clock identity/ticking/reset/completion
+  device-geometry/multi-deck handling (columns derived from `key_layout()`, first-
+  device selection, non-visual device rejection), page-navigation migration/
+  reference integrity, portable-archive limits/path safety and audio deduplication,
+  stateful clock identity/ticking/reset/completion
   lifecycle, screen-saver rendering/explicit activity/wake/brightness/thread
   shutdown with no global legacy GTK activity hook, clean-exit display
   mode/render/fallback/HID ordering and portable custom images, grid-DnD
@@ -90,13 +92,14 @@ maintenance contract.
   subtle breathing halo and `RUN` badge remain visible without obscuring key art.
   Dynamic centered values such as `HH:MM:SS` clocks are checked with and without
   labels to ensure they replace the icon cleanly and remain legible.
-  It also verifies all six screen-saver styles as animated full-deck frames,
-  including per-key size/mode, intensity bounds and the LinuxStreamDeck-on-black
-  layout. It checks custom exit images as coherent center-cropped full-deck
-  grids and verifies the **Off** tiles are fully black. For the physical startup
-  sequence, it can inspect the complete offscreen 5×3 frame grid, title mapping,
-  brightness bounds and fade to black. It eyeballs the images itself, and reports
-  without fixing unless asked.
+  It also verifies every installed screen-saver style as animated full-deck
+  frames across representative device shapes (Mini, Neo, the 15-key Original and
+  XL), including per-key size/mode, intensity bounds and the
+  LinuxStreamDeck-on-black layout. It checks custom exit images as coherent
+  center-cropped full-deck grids and verifies the **Off** tiles are fully black.
+  For the physical startup sequence, it can inspect the complete offscreen frame
+  grid for any of those shapes, title mapping, brightness bounds and fade to
+  black. It eyeballs the images itself, and reports without fixing unless asked.
 
 ## `documenter` — documentation keeper
 

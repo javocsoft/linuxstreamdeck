@@ -21,10 +21,16 @@ style.
    `file_filter_name` for a filtered local file chooser. For options loaded live,
    use one of the existing `choices_source` values: `scenes`, `inputs`,
    `media_inputs`, `transitions`, `scene_collections`, `profiles`,
-   `sources_in_scene`, `filters_of_source`, `hotkeys` or `pages`. Never hardcode
-   live OBS lists. The `pages` source is dynamic and scoped to the active profile;
-   an action that persists a page name must account for rename, deletion and
-   uniqueness in the controller/config model.
+   `sources_in_scene`, `audio_sources_in_scene`, `filters_of_source`,
+   `text_inputs`, `browser_inputs`, `hotkeys`, `pages`, `deck_profiles` or
+   `applications`. Never hardcode live OBS lists. `pages`, `deck_profiles` and
+   `applications` are `LOCAL_CHOICE_SOURCES` in `ui/steps.py` and must stay
+   filled even when OBS is disconnected; `sources_in_scene`,
+   `audio_sources_in_scene` and `filters_of_source` depend on a sibling
+   parameter (`scene`, `scene` and `source`) and are rebuilt through
+   `_repopulate()` when it changes. The `pages` source is dynamic and scoped to
+   the active profile; an action that persists a page name must account for
+   rename, deletion and uniqueness in the controller/config model.
 3. **Implement `execute(ctx, params)`.** Access OBS only through `ctx.obs`, whose
    `OBSClient` serializes complete requests. Never touch the raw request client or
    websocket. Use `ctx.controller` for deck/page operations and `ctx.bus` for

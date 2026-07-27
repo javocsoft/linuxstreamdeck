@@ -58,43 +58,60 @@ Cover a representative matrix:
 Implement pixel checks programmatically with Pillow and also inspect the generated
 PNGs visually. Measure and report any failure rather than relying on impression.
 
+### Multiple device shapes
+
+`startup_frames()`, `screensaver_frame()` and `exit_image_tiles()` all take a
+`columns` argument and split their canvas along it, never a hardcoded constant,
+so the 15-key/5-column Original is only one of the shapes they must render
+correctly. When verifying any of them, cover at least the 15-key 5x3 Original
+(the default `columns`), the 6-key 3x2 Mini, the 8-key 4x2 Neo/Stream Deck + and
+the 32-key 8x4 XL, and confirm each render splits into exactly `key_count`
+correctly sized tiles with no leftover or missing cells.
+
 ### Physical startup sequence
 
-When `device/startup_animation.py` is in scope, drive `startup_frames(...)`
-directly and assemble representative frames into a full-deck 5×3 preview. Check
-all 33 frames have 15 correctly sized RGB key images; stages progress through
-wake, burst, title, hold, fade and black; and no frame exceeds the requested
-brightness. Verify `LinuxStreamDeck` uses all 15 keys in row-major order
-(`Linux` / `Strea` / `mDeck`) and the final frame is fully black. Inspect the
-preview offscreen; never connect to hardware just to verify animation rendering.
+When `device/startup_animation.py` is in scope, drive `startup_frames(key_count,
+key_size, target_brightness, columns=...)` directly and assemble representative
+frames into a full-deck preview for each device shape above. Check all 33 frames
+have `key_count` correctly sized RGB key images; stages progress through wake,
+burst, title, hold, fade and black; and no frame exceeds the requested
+brightness. On the 15-key 5x3 Original, verify `LinuxStreamDeck` uses all 15 keys
+in row-major order (`Linux` / `Strea` / `mDeck`); on a smaller grid, verify
+`title_layout()` centers the longest `TITLE_FORMS` entry that fits instead of a
+cut-off fragment. Verify the final frame is fully black. Inspect the preview
+offscreen; never connect to hardware just to verify animation rendering.
 
 ### Animated screen saver
 
-When `device/screensaver.py` is in scope, drive
-`screensaver_frame(style, elapsed, key_count, key_size, intensity)` directly for
-every ID in `SCREENSAVER_CHOICES`. Compare at least two elapsed times per style
-and assemble full-deck 5×3 previews. Check that every result:
+When `device/screensaver.py` is in scope, drive `screensaver_frame(style,
+elapsed, key_count, key_size, intensity, columns=...)` directly for every ID in
+`SCREENSAVER_CHOICES`. Compare at least two elapsed times per style and assemble
+full-deck previews for a representative set of device shapes. Check that every
+result:
 
-- contains 15 correctly sized RGB images for the standard 72×72 deck;
+- contains `key_count` correctly sized RGB images for the requested grid;
 - changes visibly over time;
 - uses a brightness from 1 through the requested independent intensity;
 - renders under the shared `RENDER_LOCK`; and
 - keeps `ImageFont.Layout.BASIC` for the `LinuxStreamDeck` title.
 
 Verify an unknown style falls back to Neon Pipes. For the `linuxstreamdeck`
-style, confirm all 15 title characters occupy the full grid over a predominantly
-black background. This is a pure-Pillow check and must not open HID or launch the
-application. Preview the selected frames offscreen and report both objective
-measurements and visual coherence across key boundaries.
+style, confirm every title character occupies its own key across the requested
+grid over a predominantly black background, using the shorter `TITLE_FORMS` word
+on a grid too small for the full name. This is a pure-Pillow check and must not
+open HID or launch the application. Preview the selected frames offscreen and
+report both objective measurements and visual coherence across key boundaries.
 
 ### Clean-exit display
 
-When `device/exit_display.py` is in scope, drive `exit_image_tiles()` and
-`blank_exit_tiles()` directly. Use representative landscape, portrait and square
-BMP/JPEG/PNG/WebP sources and assemble each result into a full-deck 5×3 preview.
-Check that every custom result contains 15 correctly sized RGB tiles, fills the
-complete grid with a coherent center crop and preserves recognizable colors
-across key boundaries. Verify every blank tile is fully black.
+When `device/exit_display.py` is in scope, drive `exit_image_tiles(path,
+key_count, key_size, columns=...)` and `blank_exit_tiles()` directly. Use
+representative landscape, portrait and square BMP/JPEG/PNG/WebP sources and
+assemble each result into a full-deck preview for a representative set of device
+shapes. Check that every custom result contains `key_count` correctly sized RGB
+tiles, fills the complete grid with a coherent center crop and preserves
+recognizable colors across key boundaries. Verify every blank tile is fully
+black.
 
 Keep custom-image opening and fitting under `RENDER_LOCK`. Validation must reject
 missing, unreadable, unsupported or larger-than-50-MiB files. These checks are

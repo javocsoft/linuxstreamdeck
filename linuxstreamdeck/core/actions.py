@@ -31,7 +31,10 @@ class Param:
     extensions: list[str] = field(default_factory=list)
     # Dynamic source of options that the editor fills in live:
     #   scenes | inputs | media_inputs | transitions | scene_collections
-    #   profiles | sources_in_scene | filters_of_source | hotkeys | pages
+    #   profiles | sources_in_scene | audio_sources_in_scene
+    #   filters_of_source | text_inputs | browser_inputs | hotkeys
+    #   pages | deck_profiles | applications
+    # The last three are LOCAL_CHOICE_SOURCES: they fill without OBS.
     choices_source: str = ""
 
 
