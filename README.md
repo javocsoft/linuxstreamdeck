@@ -41,8 +41,10 @@ implemented actions, no guessing. It runs, and it's useful.
 - 🔴 **Real-time feedback on the keys** — active scene highlighted, recording in red,
   streaming in green, muted mic marked… straight from obs-websocket events.
 - 🗂️ **Profiles & pages** — each profile keeps its own set of pages and keys; switch
-  between "Streaming", "Work", "Gaming" in one click. Rename, delete, describe,
-  or assign keys to move directly, forward or backward through that profile.
+  between "Streaming", "Work", "Gaming" in one click. Rename, duplicate, delete or
+  describe a profile in one click. Pages can be renamed, duplicated, reordered (moved
+  up or down) and deleted; assign keys to navigate directly, forward or backward
+  through the profile's pages.
 - 🧩 **Six key types** — *single action*; *multiple actions* (run in sequence, with an
   optional **Wait** action to pause between them); *toggle (ON/OFF)* with two action
   lists and its own look per state; *random action*, which picks one of its actions
