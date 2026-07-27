@@ -78,7 +78,9 @@ implemented actions, no guessing. It runs, and it's useful.
 - 🔎 **Search everything** — find an action by what it does instead of which
   category it lives in, and find a key by label, action or value across every
   profile, page and folder.
-- ↩️ **Undo key changes** — `Ctrl+Z` takes back a clear, a paste or a move.
+- ↩️ **Undo and redo** — `Ctrl+Z` takes back a clear, a paste or a move; `Ctrl+Y` puts it forward again.
+- ⌨️ **Keyboard navigation** — arrow keys move focus across the key grid without triggering the unsaved-change dialog; `Enter` selects the focused key.
+- 🖨️ **Printable layout sheet** — export any profile as a single PNG with every page and folder laid out, each key captioned with what it actually does. Useful for printing or sharing.
 - 🌌 **Animated full-deck screen saver** — choose from eleven coordinated effects,
   set the idle delay and independent light intensity, and preview them on both
   the virtual and physical decks.
@@ -102,9 +104,10 @@ implemented actions, no guessing. It runs, and it's useful.
 - 💾 **Portable configuration backups** — export or import profiles, pages, keys,
   settings, custom key icons, the custom exit image and referenced playback or
   timer audio in one file.
-- 🔤 **Adjustable label size** — pick the font size drawn on each key, from
-  *Extra small* to *Extra large*, or leave it on *Automatic*. Toggle keys can use
-  a different size for their ON and OFF states.
+- 🔤 **Adjustable label size and color** — pick the font size drawn on each key, from
+  *Extra small* to *Extra large*, or leave it on *Automatic*. Choose a custom text
+  color for the label, value and badge, or leave it inherited. Toggle keys can use
+  a different size and color for their ON and OFF states.
 - 📤 **Share a single key** — right-click any key to export it as a portable
   `.lsdkey` file, with its custom icon and audio bundled in, and import it back
   into any key on any computer.
