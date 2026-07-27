@@ -121,7 +121,10 @@ class AIServiceTests(unittest.TestCase):
 
         self.assertEqual(generated.key.kind, KIND_SINGLE)
         self.assertEqual(generated.key.action, "obs.scene_switch")
-        self.assertEqual(generated.key.params, {"scene": "Live"})
+        # Every parameter of the action is filled in, so one the model did not
+        # mention arrives at its safe default rather than missing.
+        self.assertEqual(generated.key.params["scene"], "Live")
+        self.assertEqual(generated.key.params["preview"], "off")
         url, headers, payload, _timeout = http.calls[0]
         self.assertEqual(url, OPENAI_URL)
         self.assertEqual(headers["Authorization"], "Bearer secret-openai-key")

@@ -103,6 +103,74 @@ MAX_DIAL_TICKS = 8
 STATS_REFRESH_SECONDS = 1.0
 STATS_ACTION_ID = "obs.stats"
 
+# Actions that can draw a live thumbnail of an OBS scene. The tick has to be at
+# least as fast as the quickest rate any of them offers, or a key asking for two
+# frames a second would silently get one.
+PREVIEW_ACTION_IDS = frozenset({"obs.scene_switch", "obs.scene_preview"})
+LIVE_TICK_SECONDS = 0.5
+
+
+class _ObsNames:
+    """What OBS currently holds, fetched once per check and reused.
+
+    Every list is asked for at most once: a page can hold a dozen references to
+    the same scene, and each lookup is a request through the one serialized
+    connection.
+    """
+
+    def __init__(self, obs) -> None:
+        self._obs = obs
+        self._cache: dict[tuple[str, str], list[str] | None] = {}
+        current = obs.try_request("GetSceneCollectionList") or {}
+        self.collection = current.get("currentSceneCollectionName", "")
+
+    def available(self, kind: str, parent: str) -> list[str] | None:
+        key = (kind, parent)
+        if key not in self._cache:
+            self._cache[key] = self._fetch(kind, parent)
+        return self._cache[key]
+
+    def _fetch(self, kind: str, parent: str) -> list[str] | None:
+        obs = self._obs
+        flat = {
+            "scenes": obs.get_scenes,
+            "inputs": obs.get_inputs,
+            "media_inputs": obs.get_media_inputs,
+            "text_inputs": obs.get_text_inputs,
+            "browser_inputs": obs.get_browser_inputs,
+            "transitions": obs.get_transitions,
+            "scene_collections": obs.get_scene_collections,
+            "profiles": obs.get_profiles,
+        }
+        try:
+            if kind in flat:
+                return list(flat[kind]())
+            if not parent or not self._parent_exists(kind, parent):
+                # Unknown, not missing. A source whose scene is itself gone
+                # cannot be judged, and reporting both would count one rename
+                # twice and offer a fix that could not work.
+                return None
+            if kind == "sources_in_scene":
+                return list(obs.get_sources_in_scene(parent))
+            if kind == "audio_sources_in_scene":
+                return list(obs.get_audio_sources_in_scene(parent))
+            if kind == "filters_of_source":
+                return list(obs.get_filters_of_source(parent))
+        except Exception:
+            log.debug("Could not list %s for the check", kind, exc_info=True)
+        return None
+
+    def _parent_exists(self, kind: str, parent: str) -> bool:
+        """Whether the scene or source a dependent value hangs off is still there."""
+        if kind in ("sources_in_scene", "audio_sources_in_scene"):
+            return parent in (self.available("scenes", "") or [])
+        if kind == "filters_of_source":
+            # A source may be an input or a scene item, so both are accepted.
+            if parent in (self.available("inputs", "") or []):
+                return True
+            return parent in (self.available("scenes", "") or [])
+        return True
+
 
 class _ExecutionControl:
     def __init__(self, predecessor: threading.Event | None = None) -> None:
@@ -181,16 +249,16 @@ class DeckController:
             name="key-activity",
         )
         self._busy_thread.start()
-        # Statistics keys show a number that changes on its own. Nothing on the
-        # bus announces that — `obs.state` fires on state changes, and a rising
-        # frame counter is not one — so they are the only keys that need to be
-        # repainted by the clock rather than by an event.
-        self._stats_thread = threading.Thread(
-            target=self._stats_loop,
+        # Statistics and live previews change with nothing happening. Nothing
+        # on the bus announces that — `obs.state` fires on state changes, and a
+        # rising frame counter or a moving camera is not one — so they are the
+        # only keys repainted by the clock rather than by an event.
+        self._live_thread = threading.Thread(
+            target=self._live_loop,
             daemon=True,
-            name="key-stats",
+            name="key-live",
         )
-        self._stats_thread.start()
+        self._live_thread.start()
 
         bus.subscribe("deck.key", self._on_deck_key)
         bus.subscribe("deck.dial", self._on_deck_dial)
@@ -560,6 +628,53 @@ class DeckController:
         self.config.save()
         self.bus.emit("page.changed", index=self.current_page, name=self.page.name)
         self.refresh()
+
+    # ---------- checking references against OBS ----------
+
+    def check_references(self):
+        """Check the grid you are looking at against what OBS has loaded.
+
+        Deliberately only on demand and only here: switching scene collection
+        replaces every name at once, so a checker that ran by itself would cry
+        wolf on every switch and be ignored by the time it mattered.
+        """
+        from . import references
+
+        if not self.obs.connected:
+            raise ConnectionError("Connect to OBS before checking the keys")
+        # Dials belong to the page, so they are only in scope at the page root.
+        dials = self.page.dials if not self._folder_path else None
+        found = references.collect(self.container, dials)
+        lookup = _ObsNames(self.obs)
+        findings = references.check(found, lookup.available)
+        return references.Report(
+            collection=lookup.collection,
+            findings=findings,
+            checked=len(found),
+            keys=self.container.configured_keys(),
+        )
+
+    def apply_reference_fix(self, finding, replacement: str) -> int:
+        """Repoint a finding's references, after snapshotting the current state.
+
+        A bulk rewrite touches more keys than the undo history is scoped to
+        hold, so the safety net is a forced backup instead: an unwanted fix is
+        undone by restoring it.
+        """
+        from . import references
+        from .config import CONFIG_FILE, Config
+
+        # Snapshotting copies the file on disk, so there has to be one: on a
+        # configuration that has never been saved the backup would fail
+        # silently and the promise the dialog makes would be false.
+        if not CONFIG_FILE.exists():
+            self.config.save()
+        Config.rotate_backups(force=True)
+        fixed = references.apply_fix(finding, replacement)
+        if fixed:
+            self.config.save()
+            self.refresh()
+        return fixed
 
     # ---------- configuration import ----------
 
@@ -1265,46 +1380,80 @@ class DeckController:
                 keys = tuple(self._running)
             self._refresh_runtime_keys(keys)
 
-    def _stats_loop(self) -> None:
-        """Repaint visible statistics keys on a slow clock.
+    @property
+    def key_image_size(self) -> tuple[int, int]:
+        """Pixel size of one key, for an action that renders its own artwork."""
+        return getattr(self.deck, "image_size", (72, 72))
 
-        It asks OBS for nothing itself: it only asks the render worker to
-        recompose those keys, and their `feedback()` reads the client's shared
-        statistics cache. So a page showing six of them still costs one sample
-        per interval, not six.
+    def _live_loop(self) -> None:
+        """Repaint keys whose value changes with nothing happening.
+
+        Statistics and live scene previews are the only two: no bus event
+        announces a rising frame counter or a moving camera, so they are the
+        only keys repainted by the clock rather than by an event.
+
+        It asks OBS for nothing itself. It only asks the render worker to
+        recompose those keys; their `feedback()` reads the client's shared
+        caches, so six keys previewing one scene still cost one capture.
         """
-        while not self._stopping.wait(STATS_REFRESH_SECONDS):
-            if self.deck.screensaver_active or not self.obs.connected:
+        due: dict[RuntimeKey, float] = {}
+        while not self._stopping.wait(LIVE_TICK_SECONDS):
+            # No OBS guard here: a machine-wide measurement comes from the
+            # kernel and must keep ticking while OBS is closed. Whether a key
+            # is worth repainting at all is `_live_interval`'s decision.
+            if self.deck.screensaver_active:
                 continue
-            keys = self._visible_stats_keys()
-            if keys:
-                self._refresh_runtime_keys(keys)
+            now = time.monotonic()
+            wanted = self._live_keys()
+            # Rebuilt from what is on screen, so leaving a page forgets its
+            # keys instead of growing this dict for the life of the process.
+            due = {key: due.get(key, 0.0) for key in wanted}
+            ready = tuple(
+                key for key, interval in wanted.items() if now >= due[key]
+            )
+            for key in ready:
+                due[key] = now + wanted[key]
+            if ready:
+                self._refresh_runtime_keys(ready)
 
-    def _visible_stats_keys(self) -> tuple[RuntimeKey, ...]:
-        """Runtime keys of the statistics keys on the grid currently shown."""
+    def _live_keys(self) -> dict[RuntimeKey, float]:
+        """Visible keys that repaint on a clock, and how often each wants it."""
         try:
             grid = self.container
         except Exception:
-            return ()
-        found = []
+            return {}
+        found: dict[RuntimeKey, float] = {}
         for raw, kc in list(grid.keys.items()):
-            if kc is None or not self._shows_stats(kc):
+            if kc is None or kc.kind != KIND_SINGLE:
+                continue
+            interval = self._live_interval(kc)
+            if interval <= 0:
                 continue
             try:
-                found.append(self._tkey(int(raw)))
+                found[self._tkey(int(raw))] = interval
             except (TypeError, ValueError):
                 continue
-        return tuple(found)
+        return found
 
-    @staticmethod
-    def _shows_stats(kc: KeyConfig) -> bool:
-        """Whether this key draws a live statistic.
+    def _live_interval(self, kc: KeyConfig) -> float:
+        """How often this key needs recomposing, or 0 when it does not.
 
-        Only a single-action key can: the value comes from `feedback()`, and
-        the controller asks for feedback on the key's own action, never on a
-        step inside a list.
+        Only a single-action key can want it: the value comes from
+        `feedback()`, which is resolved for a key's own action and never for a
+        step inside a list. A key that can show nothing without OBS asks for
+        nothing while OBS is closed.
         """
-        return kc.kind == KIND_SINGLE and kc.action == STATS_ACTION_ID
+        if kc.action == STATS_ACTION_ID:
+            from ..obs.actions import stat_needs_obs
+
+            if self.obs.connected or not stat_needs_obs(kc.params.get("metric")):
+                return STATS_REFRESH_SECONDS
+            return 0.0
+        if kc.action in PREVIEW_ACTION_IDS and self.obs.connected:
+            from ..obs.actions import preview_interval
+
+            return preview_interval(kc.params.get("preview"))
+        return 0.0
 
     def _refresh_runtime_keys(
         self,
@@ -1580,6 +1729,7 @@ class DeckController:
             "center_text": fb.get("display", ""),
             "font_size": kc.font_size,
             "text_color": kc.text_color,
+            "image": fb.get("image"),
         }
 
     def _toggle_spec(self, index: int, kc: KeyConfig, size) -> dict:
@@ -1616,5 +1766,5 @@ class DeckController:
         self._busy_thread.join()
         # Joined alongside the activity thread and for the same reason: both
         # submit to the render executor, so neither may outlive it.
-        self._stats_thread.join()
+        self._live_thread.join()
         self._render_executor.shutdown(wait=True, cancel_futures=True)

@@ -13,6 +13,7 @@ import json
 import logging
 from pathlib import Path
 
+from ..core import sysstats
 from ..core.actions import Action, ActionContext, Param, apply_default_icons, register
 
 log = logging.getLogger(__name__)
@@ -31,19 +32,75 @@ COLOR_ACTIVE = "#1a5fb4"
 
 # ============================== Scenes ==============================
 
+# Live preview rates, as a key may ask for them. Off by default: each capture
+# makes OBS render and encode the scene on the machine that is also encoding the
+# stream, so it is the user who decides which keys are worth that.
+PREVIEW_OFF = "off"
+PREVIEW_SLOW = "slow"
+PREVIEW_SMOOTH = "smooth"
+PREVIEW_RATES = {PREVIEW_SLOW: 1.0, PREVIEW_SMOOTH: 0.5}
+PREVIEW_LABELS = {
+    PREVIEW_OFF: "No",
+    PREVIEW_SLOW: "Yes, once a second",
+    PREVIEW_SMOOTH: "Yes, twice a second",
+}
+
+
+def preview_interval(value) -> float:
+    """Seconds between captures for a stored preview setting, 0 when off."""
+    return PREVIEW_RATES.get(str(value or PREVIEW_OFF), 0.0)
+
+
+def _preview_param() -> Param:
+    return Param(
+        "preview",
+        "Live preview",
+        kind="choice",
+        default=PREVIEW_OFF,
+        choices=[PREVIEW_OFF, PREVIEW_SLOW, PREVIEW_SMOOTH],
+        choice_labels=dict(PREVIEW_LABELS),
+    )
+
+
+def _preview_image(ctx, source: str, value) -> bytes | None:
+    """The live thumbnail for a key that asked for one, if it can be had."""
+    interval = preview_interval(value)
+    if not interval or not source:
+        return None
+    size = getattr(ctx.controller, "key_image_size", (72, 72))
+    try:
+        # Accepts a frame up to one interval old, so several keys previewing
+        # the same scene share one capture instead of each forcing its own.
+        return ctx.obs.source_thumbnail(source, size, interval)
+    except Exception:
+        log.debug("Live preview of %s failed", source, exc_info=True)
+        return None
+
+
 @register
 class SceneSwitch(Action):
     id = "obs.scene_switch"
     name = "Switch scene"
     category = CAT_SCENES
-    description = "Switch the program scene. The key lights up when it is the active scene."
-    params = [Param("scene", "Scene", choices_source="scenes")]
+    description = (
+        "Switch the program scene. The key lights up when it is the active "
+        "scene, and can show a live preview of what that scene is showing."
+    )
+    params = [
+        Param("scene", "Scene", choices_source="scenes"),
+        _preview_param(),
+    ]
 
     def execute(self, ctx, p):
         ctx.obs.request("SetCurrentProgramScene", {"sceneName": p.get("scene", "")})
 
     def feedback(self, ctx, p):
-        return {"active": ctx.obs.state.current_scene == p.get("scene")}
+        scene = p.get("scene")
+        state = {"active": ctx.obs.state.current_scene == scene}
+        image = _preview_image(ctx, scene, p.get("preview"))
+        if image is not None:
+            state["image"] = image
+        return state
 
 
 @register
@@ -51,14 +108,25 @@ class ScenePreview(Action):
     id = "obs.scene_preview"
     name = "Set preview scene"
     category = CAT_SCENES
-    description = "Put a scene in the studio mode preview."
-    params = [Param("scene", "Scene", choices_source="scenes")]
+    description = (
+        "Put a scene in the studio mode preview. The key can show a live "
+        "preview of what that scene is showing."
+    )
+    params = [
+        Param("scene", "Scene", choices_source="scenes"),
+        _preview_param(),
+    ]
 
     def execute(self, ctx, p):
         ctx.obs.request("SetCurrentPreviewScene", {"sceneName": p.get("scene", "")})
 
     def feedback(self, ctx, p):
-        return {"active": ctx.obs.state.preview_scene == p.get("scene")}
+        scene = p.get("scene")
+        state = {"active": ctx.obs.state.preview_scene == scene}
+        image = _preview_image(ctx, scene, p.get("preview"))
+        if image is not None:
+            state["image"] = image
+        return state
 
 
 @register
@@ -314,6 +382,8 @@ class MuteToggle(Action):
             "Scene (narrows the list below)",
             choices_source="scenes",
             default="",
+            # Never sent to OBS; see Param.advisory.
+            advisory=True,
         ),
         Param(
             "input",
@@ -354,6 +424,8 @@ class VolumeAdjust(Action):
             "Scene (narrows the list below)",
             choices_source="scenes",
             default="",
+            # Never sent to OBS; see Param.advisory.
+            advisory=True,
         ),
         Param(
             "input",
@@ -385,6 +457,8 @@ class VolumeSet(Action):
             "Scene (narrows the list below)",
             choices_source="scenes",
             default="",
+            # Never sent to OBS; see Param.advisory.
+            advisory=True,
         ),
         Param(
             "input",
@@ -679,6 +753,25 @@ class RawRequest(Action):
 
 # ============================ Statistics =============================
 
+def stat_needs_obs(metric_id) -> bool:
+    """Whether this measurement is worth refreshing with OBS closed.
+
+    A machine-wide reading comes from the kernel, so its key keeps working and
+    keeps being repainted while OBS is not running.
+    """
+    metric = STAT_METRICS.get(str(metric_id or "dropped"))
+    return True if metric is None else metric.get("needs_obs", True)
+
+
+def _percent_text(value: float) -> str:
+    """A percentage with the precision it deserves.
+
+    Rounding to whole numbers throws away most of the information exactly where
+    these values live: an OBS process at 1.4% and one at 0.6% both printed "1%".
+    """
+    return f"{value:.1f}%" if value < 10 else f"{value:.0f}%"
+
+
 # Each metric: how it is labelled, how a sample becomes text, and an optional
 # warning test. Keeping them in one table means adding a metric is one entry
 # rather than a branch in three methods.
@@ -731,13 +824,35 @@ STAT_METRICS: dict[str, dict] = {
         "warn": lambda v: v < 10240,
         "alarm": lambda v: v < 2048,
     },
+    # OBS reports its own process, which is the number its Stats window shows.
+    # Naming it plainly "CPU usage" reads as the machine's, and someone
+    # comparing it against a system monitor is right to think it is wrong.
     "cpu": {
-        "label": "CPU usage",
+        "label": "OBS CPU usage",
         "icon": "mdi:cpu-64-bit",
         "read": lambda s: s.get("cpu"),
-        "text": lambda v: f"{v:.0f}%",
+        "text": _percent_text,
         "warn": lambda v: v >= 70,
         "alarm": lambda v: v >= 90,
+    },
+    "system_cpu": {
+        "label": "System CPU usage",
+        "icon": "mdi:chip",
+        # Read from the kernel, not from OBS: this is the whole machine, so it
+        # answers even while OBS is closed.
+        "read": lambda _s: sysstats.cpu_percent(),
+        "text": _percent_text,
+        "warn": lambda v: v >= 75,
+        "alarm": lambda v: v >= 92,
+        "needs_obs": False,
+    },
+    "memory": {
+        "label": "OBS memory",
+        "icon": "mdi:memory",
+        "read": lambda s: s.get("memory_mb"),
+        "text": lambda v: (
+            f"{v / 1024:.1f}GB" if v >= 1024 else f"{v:.0f}MB"
+        ),
     },
     "fps": {
         "label": "Render FPS",
@@ -838,8 +953,7 @@ class Stats(Action):
         metric = STAT_METRICS.get(p.get("metric") or "dropped")
         if metric is None:
             return {}
-        sample = ctx.obs.stats() if ctx.obs.connected else {}
-        raw = metric["read"](sample) if sample else None
+        raw = self._read(ctx, metric)
         state = {"display": self._format(metric, raw)}
         if raw is not None and str(p.get("colored", "yes")) != "no":
             color = self._color(metric, raw)
@@ -849,8 +963,19 @@ class Stats(Action):
 
     def _value(self, ctx, p) -> str:
         metric = STAT_METRICS[p.get("metric") or "dropped"]
+        return self._format(metric, self._read(ctx, metric))
+
+    @staticmethod
+    def _read(ctx, metric: dict):
+        """This metric's current value, asking OBS only when it has to.
+
+        A machine-wide measurement comes from the kernel, so it must keep
+        answering while OBS is closed rather than going blank with it.
+        """
+        if not metric.get("needs_obs", True):
+            return metric["read"]({})
         sample = ctx.obs.stats() if ctx.obs.connected else {}
-        return self._format(metric, metric["read"](sample) if sample else None)
+        return metric["read"](sample) if sample else None
 
     @staticmethod
     def _format(metric: dict, raw) -> str:

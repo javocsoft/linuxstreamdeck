@@ -44,6 +44,7 @@ def _render_everything() -> None:
     icons.library.render("mdi:play", 48, "#ffffff")
     renderer.compose((72, 72), label="Live", icon_path="mdi:play", badge="RUN")
     renderer.compose((72, 72), label="Timer", center_text="00:12")
+    renderer.compose((72, 72), label="Live", image=_preview_frame(), active=True)
     for style in ("linuxstreamdeck", "split_flap", "matrix_code", "hal_9000"):
         screensaver.screensaver_frame(style, 1.5, 15, (72, 72), 40)
     for frame in startup_animation.startup_frames(15, (72, 72), 40):
@@ -53,6 +54,17 @@ def _render_everything() -> None:
         {0: _dial()}, values={1: "72%"}, size=(800, 100), count=4
     )
     layout_sheet.profile_sheet(_sheet_profile(), 5, 3)
+
+
+def _preview_frame() -> bytes:
+    """A live scene thumbnail, which composes a key from a photograph."""
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (160, 90), "#f4f2ec").save(buffer, "JPEG")
+    return buffer.getvalue()
 
 
 def _dial():

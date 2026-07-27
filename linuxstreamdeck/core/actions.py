@@ -34,6 +34,11 @@ class Param:
     step: float = 1
     file_filter_name: str = ""
     extensions: list[str] = field(default_factory=list)
+    # True when the value only narrows the editor's own dropdowns and is never
+    # sent anywhere. The audio actions' `scene` is the case: it filters the
+    # input list and the action still targets the input globally. A reference
+    # checker must not call such a value broken, because nothing breaks.
+    advisory: bool = False
     # Dynamic source of options that the editor fills in live:
     #   scenes | inputs | media_inputs | transitions | scene_collections
     #   profiles | sources_in_scene | audio_sources_in_scene

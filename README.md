@@ -80,6 +80,10 @@ implemented actions, no guessing. It runs, and it's useful.
   profile, page and folder.
 - ↩️ **Undo and redo** — `Ctrl+Z` takes back a clear, a paste or a move; `Ctrl+Y` puts it forward again.
 - ⌨️ **Keyboard navigation** — arrow keys move focus across the key grid without triggering the unsaved-change dialog; `Enter` selects the focused key.
+- 🩺 **Check your keys against OBS** — renamed a scene? Run the check from where
+  you are and it lists every key that now points at something OBS no longer has,
+  suggests what you probably meant, and repoints them all in one go. It saves a
+  backup first, so a wrong fix is undone by restoring it.
 - 🖨️ **Printable layout sheet** — export any profile as a single PNG with every page and folder laid out, each key captioned with what it actually does. Useful for printing or sharing.
 - 🌌 **Animated full-deck screen saver** — choose from eleven coordinated effects,
   set the idle delay and independent light intensity, and preview them on both
@@ -101,9 +105,15 @@ implemented actions, no guessing. It runs, and it's useful.
   window and quits.
 - 🚀 **Start with your session** — an optional startup entry launches
   LinuxStreamDeck at login, straight into its status icon.
-- 📊 **Live OBS stats on a key** — put dropped frames, stream bitrate,
-  congestion, stream or recording time, free disk space, CPU or FPS straight on
-  the deck, refreshed while you work. The key turns amber and then red as a
+- 🖼️ **Live scene previews on the keys** — a scene key can show what that scene
+  is actually sending out, refreshed once or twice a second. Beyond looking
+  great, it is the fastest way to spot a scene that has broken: a dead capture
+  card or a source that failed to load shows up as a black key, so you see it
+  **before** you cut to it instead of live on air. Off by default and chosen
+  per key, because each frame costs OBS a render.
+- 📊 **Live stats on a key** — put dropped frames, stream bitrate, congestion,
+  stream or recording time, free disk space, FPS, OBS's own CPU and memory, or
+  your whole machine's CPU straight on the deck, refreshed while you work. The key turns amber and then red as a
   measurement gets worse, so you notice you are dropping frames or running out
   of disk without leaving what you were doing.
 - 💾 **Portable configuration backups** — export or import profiles, pages, keys,
@@ -129,7 +139,7 @@ implemented actions, no guessing. It runs, and it's useful.
 
 | Area | Actions |
 | --- | --- |
-| **Scenes** | Switch program / preview · studio mode · transitions (type & duration) |
+| **Scenes** | Switch program / preview · **live scene preview on the key** · studio mode · transitions (type & duration) |
 | **Recording & streaming** | Record (start, stop or toggle) · pause recording · stream start/stop · virtual camera |
 | **Replay & capture** | Enable & save replay buffer · source screenshots to PNG |
 | **Audio** | Mute (with feedback) · raise/lower volume · set volume in dB. Pick a scene and the list narrows to its audio inputs, plus Desktop Audio and Mic/Aux |

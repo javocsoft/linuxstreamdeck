@@ -23,7 +23,11 @@ from linuxstreamdeck.core.config import (
     Config,
     KeyConfig,
 )
-from linuxstreamdeck.core.controller import STATS_ACTION_ID, DeckController
+from linuxstreamdeck.core.controller import (
+    STATS_ACTION_ID,
+    STATS_REFRESH_SECONDS,
+    DeckController,
+)
 from linuxstreamdeck.core.events import EventBus
 from linuxstreamdeck.obs import actions as _obs_actions  # noqa: F401
 from linuxstreamdeck.obs.actions import NO_VALUE, STAT_METRICS
@@ -91,9 +95,22 @@ class MetricTests(unittest.TestCase):
     def test_the_action_is_registered(self) -> None:
         self.assertIsNotNone(self.action)
 
+    @staticmethod
+    def _obs_metrics() -> list[str]:
+        """The metrics that come from an OBS sample.
+
+        System readings come from the kernel instead, so a sample says nothing
+        about them; they have their own tests.
+        """
+        return [
+            key
+            for key, metric in STAT_METRICS.items()
+            if metric.get("needs_obs", True)
+        ]
+
     def test_every_metric_renders_a_value(self) -> None:
         ctx = context()
-        for metric in STAT_METRICS:
+        for metric in self._obs_metrics():
             with self.subTest(metric=metric):
                 display = self.action.feedback(ctx, {"metric": metric})["display"]
                 self.assertNotEqual(display, NO_VALUE)
@@ -102,10 +119,36 @@ class MetricTests(unittest.TestCase):
     def test_values_are_formatted_for_a_72_pixel_key(self) -> None:
         """A number nobody can read is worse than no key at all."""
         ctx = context()
-        for metric in STAT_METRICS:
+        for metric in self._obs_metrics():
             with self.subTest(metric=metric):
                 display = self.action.feedback(ctx, {"metric": metric})["display"]
                 self.assertLessEqual(len(display), 8)
+
+    def test_a_small_percentage_keeps_a_decimal(self) -> None:
+        """Rounding to whole numbers printed both 1.4% and 0.6% as "1%"."""
+        ctx = context({"cpu": 1.4})
+
+        self.assertEqual(
+            self.action.feedback(ctx, {"metric": "cpu"})["display"], "1.4%"
+        )
+
+    def test_a_large_percentage_drops_the_decimal(self) -> None:
+        ctx = context({"cpu": 82.4})
+
+        self.assertEqual(
+            self.action.feedback(ctx, {"metric": "cpu"})["display"], "82%"
+        )
+
+    def test_obs_cpu_says_it_is_obs(self) -> None:
+        """It measures the OBS process, not the machine, and must say so."""
+        self.assertIn("OBS", STAT_METRICS["cpu"]["label"])
+
+    def test_obs_memory_is_offered(self) -> None:
+        ctx = context({"memory_mb": 1536})
+
+        self.assertEqual(
+            self.action.feedback(ctx, {"metric": "memory"})["display"], "1.5GB"
+        )
 
     def test_known_samples_produce_the_expected_text(self) -> None:
         ctx = context()
@@ -239,6 +282,114 @@ class MetricTests(unittest.TestCase):
         self.assertIn("not available", ctx.messages[0])
 
 
+class SystemCpuTests(unittest.TestCase):
+    """The whole-machine reading, which is what a system monitor shows.
+
+    OBS reports only its own process, so someone comparing that against their
+    system monitor is right to think the numbers disagree. They measure
+    different things, and both are offered under names that say which.
+    """
+
+    def setUp(self) -> None:
+        from linuxstreamdeck.core import sysstats
+
+        self.sysstats = sysstats
+        # The module holds its own state and reader, so both are put back:
+        # leaking a fixture out of one test blinded the one that reads the
+        # real kernel.
+        original_reader = sysstats._read_totals
+        original_interval = sysstats.MIN_INTERVAL
+
+        def restore() -> None:
+            sysstats._read_totals = original_reader
+            sysstats.MIN_INTERVAL = original_interval
+            sysstats.reset()
+
+        sysstats.reset()
+        self.addCleanup(restore)
+        self.action = registry.get(STATS_ACTION_ID)
+
+    def _feed(self, samples) -> None:
+        """Drive the reader from fixed jiffy counters instead of /proc."""
+        self._samples = list(samples)
+        self.sysstats._read_totals = lambda: (
+            self._samples.pop(0) if self._samples else None
+        )
+        self.sysstats.MIN_INTERVAL = 0.0
+
+    def test_the_first_reading_has_nothing_to_compare_against(self) -> None:
+        """Use since boot is not use now."""
+        self._feed([(1000, 900)])
+
+        self.assertIsNone(self.sysstats.cpu_percent())
+
+    def test_the_second_reading_is_the_load_between_them(self) -> None:
+        # 100 jiffies passed, 75 of them idle: a quarter of the machine busy.
+        self._feed([(1000, 900), (1100, 975)])
+        self.sysstats.cpu_percent()
+
+        self.assertAlmostEqual(self.sysstats.cpu_percent(), 25.0, places=3)
+
+    def test_a_fully_idle_machine_reads_zero(self) -> None:
+        self._feed([(1000, 900), (1100, 1000)])
+        self.sysstats.cpu_percent()
+
+        self.assertAlmostEqual(self.sysstats.cpu_percent(), 0.0, places=3)
+
+    def test_a_saturated_machine_reads_one_hundred(self) -> None:
+        self._feed([(1000, 900), (1100, 900)])
+        self.sysstats.cpu_percent()
+
+        self.assertAlmostEqual(self.sysstats.cpu_percent(), 100.0, places=3)
+
+    def test_no_elapsed_time_keeps_the_previous_answer(self) -> None:
+        self._feed([(1000, 900), (1100, 975), (1100, 975)])
+        self.sysstats.cpu_percent()
+        value = self.sysstats.cpu_percent()
+
+        self.assertEqual(self.sysstats.cpu_percent(), value)
+
+    def test_an_unreadable_proc_answers_nothing(self) -> None:
+        self._feed([])
+
+        self.assertIsNone(self.sysstats.cpu_percent())
+
+    def test_it_reports_a_plausible_value_on_this_machine(self) -> None:
+        """Against the real kernel, not a fixture."""
+        import time
+
+        self.sysstats.MIN_INTERVAL = 0.0
+        value = None
+        # Jiffies advance in ticks, so back-to-back reads can see no elapsed
+        # time at all; a short pause guarantees there is something to divide.
+        for _ in range(3):
+            self.sysstats.cpu_percent()
+            time.sleep(0.02)
+            value = self.sysstats.cpu_percent()
+            if value is not None:
+                break
+
+        self.assertIsNotNone(value)
+        self.assertGreaterEqual(value, 0.0)
+        self.assertLessEqual(value, 100.0)
+
+    def test_the_key_keeps_working_while_obs_is_closed(self) -> None:
+        """It comes from the kernel, so OBS being shut has nothing to do with it."""
+        self._feed([(1000, 900), (1100, 975)])
+        self.sysstats.cpu_percent()
+        ctx = context(connected=False)
+
+        display = self.action.feedback(ctx, {"metric": "system_cpu"})["display"]
+
+        self.assertNotEqual(display, NO_VALUE)
+
+    def test_it_is_named_apart_from_the_obs_reading(self) -> None:
+        labels = {STAT_METRICS["cpu"]["label"], STAT_METRICS["system_cpu"]["label"]}
+
+        self.assertEqual(len(labels), 2)
+        self.assertIn("System", STAT_METRICS["system_cpu"]["label"])
+
+
 class FakeReqClient:
     """Counts requests, so the cache can be shown to be doing its job."""
 
@@ -355,14 +506,14 @@ class StatsRefreshTests(unittest.TestCase):
             3, KeyConfig(kind=KIND_SINGLE, action=STATS_ACTION_ID)
         )
 
-        keys = self.controller._visible_stats_keys()
+        keys = self.controller._live_keys()
 
-        self.assertEqual(keys, (self.controller._tkey(3),))
+        self.assertEqual(list(keys), [self.controller._tkey(3)])
 
     def test_a_page_without_one_costs_nothing(self) -> None:
         self.page.set_key(1, KeyConfig(kind=KIND_SINGLE, action="obs.record"))
 
-        self.assertEqual(self.controller._visible_stats_keys(), ())
+        self.assertEqual(self.controller._live_keys(), {})
 
     def test_every_statistics_key_on_the_page_is_found(self) -> None:
         for index in (0, 4, 7):
@@ -370,7 +521,7 @@ class StatsRefreshTests(unittest.TestCase):
                 index, KeyConfig(kind=KIND_SINGLE, action=STATS_ACTION_ID)
             )
 
-        self.assertEqual(len(self.controller._visible_stats_keys()), 3)
+        self.assertEqual(len(self.controller._live_keys()), 3)
 
     def test_a_statistics_step_inside_a_list_is_not_one(self) -> None:
         """Only a key's own action produces feedback, never a step of a list."""
@@ -381,14 +532,23 @@ class StatsRefreshTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(self.controller._visible_stats_keys(), ())
+        self.assertEqual(self.controller._live_keys(), {})
+
+    def test_a_statistics_key_asks_for_the_statistics_rate(self) -> None:
+        self.page.set_key(
+            3, KeyConfig(kind=KIND_SINGLE, action=STATS_ACTION_ID)
+        )
+
+        keys = self.controller._live_keys()
+
+        self.assertEqual(list(keys.values()), [STATS_REFRESH_SECONDS])
 
     def test_the_repaint_thread_is_joined_on_shutdown(self) -> None:
         """It submits to the render executor, so it may not outlive it."""
         controller = DeckController(
             self.config, EventBus(), SimpleNamespace(connected=False), FakeDeck()
         )
-        thread = controller._stats_thread
+        thread = controller._live_thread
         self.assertTrue(thread.is_alive())
 
         controller.shutdown()

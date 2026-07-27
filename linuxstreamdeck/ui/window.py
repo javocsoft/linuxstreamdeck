@@ -199,6 +199,7 @@ class MainWindow(Adw.ApplicationWindow):
         profile_menu.append("Delete profile", "win.profile-delete")
         layout_menu = Gio.Menu()
         layout_menu.append("Export layout sheet…", "win.profile-sheet")
+        layout_menu.append("Check keys against OBS…", "win.check-references")
         profile_menu.append_section(None, layout_menu)
         configuration_menu = Gio.Menu()
         configuration_menu.append(
@@ -681,6 +682,7 @@ class MainWindow(Adw.ApplicationWindow):
                          ("profile-duplicate", self._duplicate_profile),
                          ("profile-delete", self._delete_profile),
                          ("profile-sheet", self._export_layout_sheet),
+                         ("check-references", self._check_references),
                          ("page-new", self._new_page),
                          ("page-rename", self._rename_page),
                          ("page-duplicate", self._duplicate_page),
@@ -933,6 +935,21 @@ class MainWindow(Adw.ApplicationWindow):
         if restored:
             text += f"; restored {', '.join(restored)}"
         GLib.idle_add(lambda: (self._flash_status(text), False)[1])
+
+    def _check_references(self) -> None:
+        """Check the grid on screen against the OBS collection loaded now."""
+        from .reference_check import ReferenceCheckDialog
+
+        try:
+            report = self.app.controller.check_references()
+        except ConnectionError as error:
+            self._flash_status(str(error))
+            return
+        except Exception as error:
+            log.exception("Could not check the keys against OBS")
+            self._show_configuration_error("Check failed", str(error))
+            return
+        ReferenceCheckDialog(self, report).present()
 
     def _open_backups(self) -> None:
         from .backups import BackupDialog

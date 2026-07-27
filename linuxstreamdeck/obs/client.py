@@ -7,6 +7,8 @@ cache (`OBSState`) fed by events so key feedback is instant, and emits
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 import re
 import threading
@@ -24,11 +26,27 @@ RECONNECT_SECONDS = 3
 # serialized websocket requests for a number nobody can read changing that fast.
 STATS_INTERVAL = 1.0
 
+# Thumbnails held at once. A deck shows at most a screenful of preview keys, and
+# a stale entry is only worth keeping while its key may come back on screen.
+MAX_THUMBNAILS = 48
+
 # Splits CamelCase, including an acronym followed by a word ("OBSBasic").
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 _SEPARATORS = re.compile(r"[-_.\s]+")
 # Prefixes that only say where a hotkey lives, adding nothing for the reader.
 _GENERIC_HOTKEY_GROUPS = frozenset({"obsbasic", "libobs", "obs"})
+
+
+def _decode_image_data(value) -> bytes | None:
+    """The bytes behind obs-websocket's `data:image/jpg;base64,...` string."""
+    if not isinstance(value, str) or not value:
+        return None
+    payload = value.split(",", 1)[1] if value.startswith("data:") else value
+    try:
+        return base64.b64decode(payload, validate=True)
+    except (ValueError, binascii.Error):
+        log.debug("Could not decode a source screenshot")
+        return None
 
 
 def _milliseconds(value) -> float | None:
@@ -118,6 +136,12 @@ class OBSClient:
         self._stats: dict | None = None
         self._stats_at = 0.0
         self._stream_bytes: tuple[int, float] | None = None
+        # Live key thumbnails; see source_thumbnail(). `_thumbs_pending` keeps a
+        # slow capture from being started twice while the first is still in
+        # flight, which a render burst would otherwise do.
+        self._thumb_lock = threading.Lock()
+        self._thumbs: dict[tuple[str, tuple[int, int]], tuple[float, bytes]] = {}
+        self._thumbs_pending: set[tuple[str, tuple[int, int]]] = set()
 
     # ---------- lifecycle ----------
 
@@ -323,6 +347,74 @@ class OBSClient:
         if elapsed <= 0 or total_bytes < last_bytes:
             return None
         return (total_bytes - last_bytes) * 8 / elapsed / 1000
+
+    # ---------- live thumbnails ----------
+
+    def source_thumbnail(
+        self, source: str, size: tuple[int, int], max_age: float
+    ) -> bytes | None:
+        """A small JPEG of what a scene or source is showing, or None.
+
+        Cached per source and size, and shared: three keys previewing the same
+        scene cost one capture, not three. `max_age` is how stale the caller
+        will accept, so a key refreshing twice a second and one refreshing once
+        a second can share the same cache without either being throttled to the
+        other's rate.
+
+        This is not free on the OBS side — it renders and encodes the source on
+        demand, on the machine that is also encoding the stream — which is why
+        nothing asks for it unless a key was explicitly configured to.
+        """
+        if not source or not self.connected:
+            return None
+        key = (source, size)
+        now = time.monotonic()
+        with self._thumb_lock:
+            cached = self._thumbs.get(key)
+            if cached is not None and now - cached[0] <= max(0.0, max_age):
+                return cached[1]
+            pending = self._thumbs_pending
+        # Outside the lock: the request is slow, and holding it would make
+        # every other key's feedback queue behind this one capture.
+        if key in pending:
+            return cached[1] if cached is not None else None
+        with self._thumb_lock:
+            self._thumbs_pending.add(key)
+        try:
+            data = self._capture(source, size)
+        finally:
+            with self._thumb_lock:
+                self._thumbs_pending.discard(key)
+        if data is None:
+            return cached[1] if cached is not None else None
+        with self._thumb_lock:
+            self._thumbs[key] = (now, data)
+            self._prune_thumbnails()
+        return data
+
+    def _capture(self, source: str, size: tuple[int, int]) -> bytes | None:
+        width, height = size
+        result = self.try_request(
+            "GetSourceScreenshot",
+            {
+                "sourceName": source,
+                "imageFormat": "jpg",
+                "imageWidth": max(8, int(width)),
+                "imageHeight": max(8, int(height)),
+            },
+        )
+        if not result:
+            return None
+        return _decode_image_data(result.get("imageData"))
+
+    def _prune_thumbnails(self) -> None:
+        """Keep the cache to the keys a deck could plausibly be showing."""
+        if len(self._thumbs) <= MAX_THUMBNAILS:
+            return
+        for key, _value in sorted(
+            self._thumbs.items(), key=lambda item: item[1][0]
+        )[: len(self._thumbs) - MAX_THUMBNAILS]:
+            self._thumbs.pop(key, None)
 
     # ---------- lists for the editor ----------
 

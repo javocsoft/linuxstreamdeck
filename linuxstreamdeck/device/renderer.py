@@ -12,7 +12,7 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from ..core.icons import RENDER_LOCK, library as icon_library
 
@@ -46,6 +46,13 @@ FONT_SIZE_DIVISORS = {
     "xl": 4.2,
 }
 MIN_FONT_SIZE = 8
+
+# How dark the gradient behind the label gets over a live preview. Enough for
+# white text over a bright scene, light enough to still see what is under it.
+SCRIM_STRENGTH = 0.82
+# Curve of that gradient. Below 1 it darkens early and flattens, so the top of
+# the glyphs is already on a dark background; a linear ramp is not.
+SCRIM_RAMP = 0.35
 
 
 def _rgb(color) -> tuple[int, int, int]:
@@ -155,6 +162,46 @@ def _fitted_font(
     return _font(9)
 
 
+def _photo_background(data: bytes, size: tuple[int, int]) -> Image.Image | None:
+    """A live thumbnail cropped to fill the key, or None if it is unusable.
+
+    Never raises: the picture is decoration over a key that must keep working,
+    so anything unreadable falls back to the normal background.
+    """
+    try:
+        with Image.open(io.BytesIO(data)) as source:
+            return ImageOps.fit(source.convert("RGB"), size, Image.LANCZOS)
+    except Exception:
+        log.debug("Could not use a live preview image", exc_info=True)
+        return None
+
+
+def _scrim(img: Image.Image, height: int, strength: float = SCRIM_STRENGTH) -> None:
+    """Darken the bottom of a photo so the label stays readable over it.
+
+    Without this the label is white on whatever the scene happens to be
+    showing: fine over a dark game, invisible over a bright one.
+
+    The ramp is deliberately not linear. A straight gradient is still almost
+    transparent where the top of the glyphs sits, so a pale scene left the
+    first row of the text at nearly its own brightness; `SCRIM_RAMP` under 1
+    darkens early and then flattens, which puts the whole label on a usable
+    background while the fade into the picture above stays invisible.
+    """
+    if height <= 0:
+        return
+    width = img.width
+    top = max(0, img.height - height)
+    gradient = Image.new("L", (1, height))
+    for row in range(height):
+        position = row / max(1, height - 1)
+        gradient.putpixel(
+            (0, row), int(255 * strength * (position ** SCRIM_RAMP))
+        )
+    mask = gradient.resize((width, height))
+    img.paste(Image.new("RGB", (width, height), (0, 0, 0)), (0, top), mask)
+
+
 def compose(
     size: tuple[int, int] = (72, 72),
     label: str = "",
@@ -168,6 +215,7 @@ def compose(
     icon_color: str = "#ffffff",
     font_size: str = "",
     text_color: str = "",
+    image: bytes | None = None,
 ) -> Image.Image:
     w, h = size
     # Everything drawn as text shares one colour: the label, a centered value
@@ -182,13 +230,19 @@ def compose(
     # all text drawing runs under the shared lock (FreeType is not thread-safe);
     # it is reentrant, so icon_library.render can re-acquire it without blocking.
     with RENDER_LOCK:
-        img = Image.new("RGB", size, base_bg)
+        photo = _photo_background(image, size) if image else None
+        img = photo if photo is not None else Image.new("RGB", size, base_bg)
         draw = ImageDraw.Draw(img)
 
         label_size = _label_font_size(h, font_size)
         font = _font(label_size)
         label_lines = _wrap(draw, label, font, w - 8) if label else []
         label_height = len(label_lines) * (label_size + 2)
+
+        if photo is not None:
+            # The picture replaces the icon: it already says what the key is.
+            icon_path = ""
+            _scrim(img, label_height + 12 if label_lines else 0)
 
         # Dynamic values such as clocks replace the icon and use the full
         # available width. Otherwise show the configured or built-in icon.
@@ -236,6 +290,17 @@ def compose(
             bfont = _font(max(10, h // 6))
             bw = draw.textlength(badge, font=bfont)
             draw.text((w - bw - 5, 3), badge, font=bfont, fill=ink)
+
+        if photo is not None and active:
+            # The lit-background treatment of the active state is invisible over
+            # a photograph, so the live scene is marked with a border instead.
+            inset = max(1, min(w, h) // 36)
+            draw.rounded_rectangle(
+                (inset, inset, w - inset - 1, h - inset - 1),
+                radius=max(4, min(w, h) // 10),
+                outline=ACCENT,
+                width=max(2, min(w, h) // 24),
+            )
 
         if busy:
             # A narrow rounded halo leaves custom artwork readable. Alternating

@@ -160,6 +160,8 @@ linuxstreamdeck/
 │   │                  clocks/audio notifications, folder navigation, profile/key
 │   │                  operations and imports.
 │   ├── search.py      Key search across profiles, pages and nested folders.
+│   ├── references.py  Keys pointing at OBS objects that no longer exist.
+│   ├── sysstats.py    Whole-machine CPU use, read from /proc/stat.
 │   ├── icons.py       Built-in icon library (Material Design Icons glyphs via
 │   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
 │   └── secrets.py     Async Secret Service storage for OBS and per-provider API keys.
@@ -196,6 +198,7 @@ linuxstreamdeck/
 │   ├── preferences.py Close behaviour and start-on-login settings dialog.
 │   ├── about.py       About dialog: application identity, credits, license and source link.
 │   ├── backups.py    Restore one of the automatic configuration backups.
+│   ├── reference_check.py Report and repoint keys OBS no longer resolves.
 │   ├── obs_settings.py OBS connection dialog (host/port/password).
 │   ├── screensaver_settings.py Screen saver and clean-exit display settings.
 │   └── profile_dialog.py New/edit profile dialog (name + description).
@@ -1239,22 +1242,119 @@ password of this computer exactly as importing does, and goes through
 `_adopt_replaced_configuration()` — the same runtime reapplication as an import,
 since the whole configuration has just been replaced.
 
+### Checking keys against OBS
+
+Renaming a scene in OBS is the one failure this application never reported: the
+key stays where it is, with its icon, and silently does nothing when pressed.
+`core/references.py` finds those keys, and `Param.choices_source` is what makes
+it possible — a parameter that fills from `scenes` holds a scene name, so the
+metadata already says what points at what.
+
+**It never runs by itself, and the scope is where you are.** Switching scene
+collection replaces every name at once, so a checker that ran on its own would
+report the whole page as broken on every switch, and be ignored by the time it
+mattered. The user starts it, standing in a page or a folder, and therefore
+reads the result in the right context. `check_references()` walks the current
+grid plus everything nested inside it, with the page's dials in scope only at
+the page root, since dials belong to the page.
+
+The report names the collection it compared against, because obs-websocket can
+only list what is **loaded**: there is no way to ask what an unloaded
+collection holds without switching to it, so no other answer is honest.
+
+Four rules keep it from crying wolf, which is the only way this feature fails:
+
+- **`Param.advisory` marks a value that is never sent to OBS.** The audio
+  actions' `scene` only narrows the editor's input list, so a rename leaves it
+  stale but breaks nothing, and reporting it would be a false alarm.
+- **Unknown is not missing.** `_ObsNames.available()` returns `None` rather
+  than an empty list when it cannot judge, and `check()` skips those. A source
+  whose scene is itself gone is unknowable, and reporting both would count one
+  rename twice and offer a fix that could not work.
+- **Each list is fetched once per check.** A page can hold a dozen references
+  to one scene, and every lookup is a request through the one serialized
+  connection.
+- **The report says how much it looked at.** A checker that only speaks up on
+  failure never tells you it ran.
+
+Repointing rewrites parameters across more keys than the undo history is scoped
+to hold, so the safety net is a forced backup instead — which is why
+`apply_reference_fix()` saves the configuration first when none is on disk yet:
+`rotate_backups()` copies that file, and without one the promise the dialog
+makes would silently be false.
+
+### Live scene previews on a key
+
+`obs.scene_switch` and `obs.scene_preview` take a `preview` parameter — off,
+once a second, or twice a second — that turns the key into a live thumbnail of
+what that scene is showing. It is off by default and chosen per key on purpose:
+every capture makes **OBS** render and encode the scene, on the machine that is
+also encoding the stream, so the user decides which keys are worth that. The
+point is not decoration. A scene whose capture died renders black, which is
+visible *before* cutting to it rather than live on air.
+
+`feedback()` gained an `image` key for it, carrying raw JPEG bytes, which
+`_single_spec` passes to `compose()`.
+
+Four things there are load-bearing:
+
+- **`OBSClient.source_thumbnail()` caches per source and size**, and takes the
+  staleness the caller will accept, so a key at two frames a second and one at
+  one frame a second share a cache without either being held to the other's
+  rate. Six keys on one scene cost one capture. `_thumbs_pending` stops a
+  render burst from starting the same slow capture twice, and the request is
+  made **outside** the cache lock so no other key's feedback queues behind it.
+- **A failure keeps serving the last good frame**, and unreadable bytes fall all
+  the way back to the ordinary key. A live picture is decoration over a key that
+  must keep working; it may never leave a blank square.
+- **The label needs `_scrim()`, and its ramp is not linear.** A straight
+  gradient is still nearly transparent where the top of the glyphs sits, so a
+  pale scene left the first row of the label at almost its own brightness —
+  measured at 226 of 255. `SCRIM_RAMP` below 1 darkens early and then flattens,
+  which brought that to 116 while leaving the picture above untouched.
+- **The active state changes shape.** Lightening the background is invisible
+  over a photograph, so a previewing key marks the live scene with an accent
+  border instead.
+
 ### Live OBS statistics on a key
 
 `obs.stats` draws a live measurement — dropped frames, bitrate, congestion,
-stream or recording time, free disk, CPU, FPS, skipped render frames — through
-the `display` feedback the clocks already use. `STAT_METRICS` holds each one's
-label, reader, formatter and thresholds in a single table, so adding a metric is
-one entry rather than a branch in three methods.
+stream or recording time, free disk, OBS and system CPU, OBS memory, FPS,
+skipped render frames — through the `display` feedback the clocks already use.
+`STAT_METRICS` holds each one's label, reader, formatter and thresholds in a
+single table, so adding a metric is one entry rather than a branch in three
+methods.
+
+**"CPU usage" is two different measurements and both must say which.**
+`GetStats.cpuUsage` is the **OBS process**, the number OBS's own Stats window
+shows; a system monitor shows the **whole machine**. Labelling the first plainly
+"CPU usage" makes anyone comparing the two conclude, reasonably, that the key is
+broken. So OBS's is "OBS CPU usage" and `core/sysstats.py` reads the machine's
+from `/proc/stat` as "System CPU usage". That reading is a difference between
+two samples, so the first call after start-up answers None rather than
+reporting use since boot, and `MIN_INTERVAL` keeps a second caller from
+measuring noise across a few microseconds.
+
+A metric that does not come from OBS sets `needs_obs = False`, which both
+`Stats._read()` and `DeckController._live_interval()` honour: a kernel reading
+keeps working, and keeps being repainted, while OBS is closed. That is also why
+`_live_loop()` has no `obs.connected` guard of its own.
+
+Percentages go through `_percent_text()`, which keeps one decimal below 10.
+Whole numbers threw away most of the information exactly where these values
+live: an OBS process at 1.4% and one at 0.6% both printed "1%".
 
 Two things about it are unlike every other action:
 
 - **Its value changes with nothing happening.** No bus event announces a rising
-  frame counter, so `_stats_loop()` repaints visible statistics keys on a slow
-  clock (`STATS_REFRESH_SECONDS`). That thread submits to the render executor,
-  so it is joined beside the activity thread and before that executor stops.
-  `_shows_stats()` only matches a **single-action** key: feedback is resolved
-  for a key's own action, never for a step inside a list.
+  frame counter, so `_live_loop()` repaints it on a clock — the same loop that
+  drives live scene previews, since they are the only two kinds of key with
+  that problem. `_live_keys()` returns each visible one with the interval it
+  asked for, and the loop ticks at `LIVE_TICK_SECONDS`, which must stay at
+  least as fast as the quickest rate any of them offers. That thread submits to
+  the render executor, so it is joined beside the activity thread and before
+  that executor stops. Only a **single-action** key ever qualifies: feedback is
+  resolved for a key's own action, never for a step inside a list.
 - **Several keys can ask at once.** `OBSClient.stats()` caches one sample per
   `STATS_INTERVAL` behind its own lock — never the request lock, which would
   serialize the whole client behind a display refresh. Without the cache, a page
