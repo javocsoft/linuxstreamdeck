@@ -167,8 +167,14 @@ def compose(
     center_text: str = "",
     icon_color: str = "#ffffff",
     font_size: str = "",
+    text_color: str = "",
 ) -> Image.Image:
     w, h = size
+    # Everything drawn as text shares one colour: the label, a centered value
+    # such as a clock, and the state badge. Leaving the badge white would keep
+    # the very problem this setting exists for, since a pale background hides it
+    # exactly as it hid the label.
+    ink = text_color or TEXT_COLOR
     # when active, the whole key is softly lit instead of getting a border
     base_bg = _active_bg(bg or EMPTY_BG) if active else (bg or EMPTY_BG)
     if busy:
@@ -207,7 +213,7 @@ def compose(
                 (x, max(2, y)),
                 center_text,
                 font=value_font,
-                fill=TEXT_COLOR,
+                fill=ink,
             )
         elif icon_path:
             # Icons accept both a library reference ("mdi:name") and a path to
@@ -222,14 +228,14 @@ def compose(
         y = h - label_height - 4
         for line in label_lines:
             tw = draw.textlength(line, font=font)
-            draw.text(((w - tw) // 2, y), line, font=font, fill=TEXT_COLOR)
+            draw.text(((w - tw) // 2, y), line, font=font, fill=ink)
             y += label_size + 2
 
         # state badge (top-right corner)
         if badge:
             bfont = _font(max(10, h // 6))
             bw = draw.textlength(badge, font=bfont)
-            draw.text((w - bw - 5, 3), badge, font=bfont, fill="#ffffff")
+            draw.text((w - bw - 5, 3), badge, font=bfont, fill=ink)
 
         if busy:
             # A narrow rounded halo leaves custom artwork readable. Alternating

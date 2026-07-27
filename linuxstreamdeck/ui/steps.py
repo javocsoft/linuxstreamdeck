@@ -25,8 +25,12 @@ from ..core.config import (  # noqa: E402
     DEFAULT_KEY_BG,
     KEY_FONT_SIZE_AUTO,
     KEY_FONT_SIZE_CHOICES,
+    KEY_TEXT_COLOR_AUTO,
     ActionStep,
 )
+# The renderer owns the default label colour; the editor only has to show what
+# an inherited (empty) value will actually look like.
+from ..device.renderer import TEXT_COLOR as DEFAULT_TEXT_COLOR  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -1233,6 +1237,26 @@ class AppearanceBox(Gtk.Box):
         self.color_btn = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog())
         self.append(_row("Background color", self.color_btn))
 
+        # Text colour keeps the icon's inheritance shape rather than the
+        # background's: an empty value means "whatever the renderer uses", so
+        # the button shows that colour while the key stores nothing, and the
+        # clear button gives it back.
+        self._text_color_ref = KEY_TEXT_COLOR_AUTO
+        self.text_color_btn = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog())
+        self.text_color_btn.set_hexpand(True)
+        self._text_color_handler = self.text_color_btn.connect(
+            "notify::rgba", self._on_text_color_picked
+        )
+        text_box = Gtk.Box(spacing=6)
+        text_box.append(self.text_color_btn)
+        text_clear = Gtk.Button.new_from_icon_name("edit-clear-symbolic")
+        text_clear.set_tooltip_text("Use the default text color")
+        text_clear.connect(
+            "clicked", lambda _b: self._set_text_color(KEY_TEXT_COLOR_AUTO)
+        )
+        text_box.append(text_clear)
+        self.append(_row("Text color", text_box))
+
     def load(
         self,
         label: str,
@@ -1240,6 +1264,7 @@ class AppearanceBox(Gtk.Box):
         color: str,
         fallback_icon: str = "",
         font_size: str = KEY_FONT_SIZE_AUTO,
+        text_color: str = KEY_TEXT_COLOR_AUTO,
     ) -> None:
         self.label_entry.set_text(label)
         self._fallback_icon_ref = fallback_icon
@@ -1248,6 +1273,7 @@ class AppearanceBox(Gtk.Box):
         rgba.parse(color or DEFAULT_KEY_BG)
         self.color_btn.set_rgba(rgba)
         self.font_size_dd.set_selected(self._font_size_index(font_size))
+        self._set_text_color(text_color)
 
     def label(self) -> str:
         return self.label_entry.get_text()
@@ -1275,6 +1301,37 @@ class AppearanceBox(Gtk.Box):
 
     def color(self) -> str:
         return rgba_to_hex(self.color_btn.get_rgba())
+
+    def text_color(self) -> str:
+        return self._text_color_ref
+
+    # ---------- text color ----------
+
+    def _set_text_color(self, value: str) -> None:
+        """Store the reference and show the colour it resolves to.
+
+        The handler is blocked while the button is updated. Showing the
+        inherited default is otherwise indistinguishable from the user picking
+        that exact colour, so clearing the choice would immediately write the
+        current default back into the key and inheritance would be lost.
+        """
+        self._text_color_ref = value
+        rgba = Gdk.RGBA()
+        rgba.parse(value or DEFAULT_TEXT_COLOR)
+        self.text_color_btn.handler_block(self._text_color_handler)
+        self.text_color_btn.set_rgba(rgba)
+        self.text_color_btn.handler_unblock(self._text_color_handler)
+        self.text_color_btn.set_tooltip_text(
+            "Using the default text color"
+            if not value
+            else "Color of the label, value and badge drawn on the key"
+        )
+
+    def _on_text_color_picked(self, *_args) -> None:
+        self._text_color_ref = rgba_to_hex(self.text_color_btn.get_rgba())
+        self.text_color_btn.set_tooltip_text(
+            "Color of the label, value and badge drawn on the key"
+        )
 
     # ---------- icon selection ----------
 

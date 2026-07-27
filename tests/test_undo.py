@@ -202,5 +202,126 @@ class UndoTests(unittest.TestCase):
         self.assertFalse(self.controller.can_undo())
 
 
+class RedoTests(unittest.TestCase):
+    """Putting back what was taken back.
+
+    Undo and redo are each other's mirror image: applying an entry stores the
+    entry that reverses it, so a change can be walked back and forward any
+    number of times without the two stacks drifting apart.
+    """
+
+    def setUp(self) -> None:
+        self.config = Config()
+        self.controller = DeckController(
+            self.config, EventBus(), SimpleNamespace(), FakeDeck()
+        )
+        self.addCleanup(self.controller.shutdown)
+        self.page = self.config.pages[0]
+        self.page.set_key(1, key("first"))
+
+    def _label(self, index: int) -> str | None:
+        stored = self.controller.container.key(index)
+        return stored.label if stored is not None else None
+
+    def test_nothing_can_be_redone_before_anything_is_undone(self) -> None:
+        self.controller.clear_key(1)
+
+        self.assertFalse(self.controller.can_redo())
+        self.assertEqual(self.controller.redo(), "")
+
+    def test_an_undone_change_can_be_put_back(self) -> None:
+        self.controller.clear_key(1)
+        self.controller.undo()
+        self.assertEqual(self._label(1), "first")
+
+        self.assertEqual(self.controller.redo(), "clearing Key 2")
+
+        self.assertIsNone(self._label(1))
+
+    def test_a_redone_change_can_be_taken_back_again(self) -> None:
+        self.controller.paste_key(1, key("pasted"))
+        self.controller.undo()
+        self.controller.redo()
+
+        self.controller.undo()
+
+        self.assertEqual(self._label(1), "first")
+
+    def test_walking_back_and_forward_repeatedly_stays_consistent(self) -> None:
+        self.controller.paste_key(1, key("second"))
+        self.controller.paste_key(1, key("third"))
+
+        for _ in range(5):
+            self.controller.undo()
+            self.controller.undo()
+            self.assertEqual(self._label(1), "first")
+            self.controller.redo()
+            self.controller.redo()
+            self.assertEqual(self._label(1), "third")
+
+    def test_a_swap_is_redone_as_a_whole(self) -> None:
+        self.page.set_key(2, key("second"))
+        self.controller.swap_keys(1, 2)
+        self.controller.undo()
+
+        self.controller.redo()
+
+        self.assertEqual((self._label(1), self._label(2)), ("second", "first"))
+
+    def test_a_new_change_discards_the_redo_future(self) -> None:
+        """Branching away from an undone change makes it unreachable."""
+        self.controller.clear_key(1)
+        self.controller.undo()
+        self.assertTrue(self.controller.can_redo())
+
+        self.controller.paste_key(1, key("elsewhere"))
+
+        self.assertFalse(self.controller.can_redo())
+
+    def test_a_redone_key_is_an_independent_copy(self) -> None:
+        self.controller.clear_key(1)
+        self.controller.undo()
+        self.controller.redo()
+        self.controller.undo()
+
+        self.controller.container.key(1).label = "edited"
+
+        self.controller.redo()
+        self.controller.undo()
+        self.assertEqual(self._label(1), "edited")
+
+    def test_the_redo_history_is_bounded(self) -> None:
+        for round_trip in range(UNDO_DEPTH + 5):
+            self.controller.paste_key(1, key(f"v{round_trip}"))
+        for _ in range(UNDO_DEPTH + 5):
+            self.controller.undo()
+
+        self.assertEqual(len(self.controller._redo), UNDO_DEPTH)
+
+    def test_changing_page_drops_the_redo_history(self) -> None:
+        self.config.pages.append(Page(name="Second"))
+        self.controller.clear_key(1)
+        self.controller.undo()
+        self.assertTrue(self.controller.can_redo())
+
+        self.controller.set_page(1)
+
+        self.assertFalse(self.controller.can_redo())
+
+    def test_a_change_inside_a_folder_is_redone_there(self) -> None:
+        folder = KeyConfig(kind=KIND_FOLDER, folder=Folder())
+        folder.folder.set_key(3, key("inside"))
+        self.page.set_key(5, folder)
+        self.controller.open_folder(5)
+
+        self.controller.clear_key(3)
+        self.controller.undo()
+        self.controller.redo()
+
+        self.assertIsNone(self._label(3))
+        self.controller.close_folder()
+        self.assertEqual(self._label(1), "first")
+
+
 if __name__ == "__main__":
     unittest.main()

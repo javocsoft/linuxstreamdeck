@@ -16,6 +16,7 @@ from PIL import Image
 
 from ..core.config import (
     DEFAULT_SCREENSAVER,
+    DIAL_TOUCH_SIZE,
     EXIT_DISPLAY_BLANK,
     EXIT_DISPLAY_DEFAULT,
     EXIT_DISPLAY_MODES,
@@ -87,6 +88,65 @@ def _device_columns(device, key_count: int) -> int:
     return columns
 
 
+def _dial_count(device) -> int:
+    """How many encoders the device has, 0 for every deck that is not a Plus."""
+    try:
+        return max(0, int(device.dial_count()))
+    except Exception:
+        return 0
+
+
+def _touch_size(device) -> tuple[int, int]:
+    """The LCD strip's pixel size, or the documented default when unavailable."""
+    try:
+        fmt = device.touchscreen_image_format()
+        width, height = fmt["size"]
+        if int(width) > 0 and int(height) > 0:
+            return int(width), int(height)
+    except Exception:
+        pass
+    return DIAL_TOUCH_SIZE
+
+
+def _dial_event(event, value) -> tuple[str | None, int]:
+    """Normalise a library dial event into a direction and a tick count.
+
+    A push arrives as a boolean and a turn as a signed count, so this is the
+    one place that has to know the difference. The release edge is dropped:
+    a dial runs its action on the way down, like a key.
+    """
+    name = str(getattr(event, "name", event)).upper()
+    if "PUSH" in name:
+        return ("press", 1) if bool(value) else (None, 0)
+    if "TURN" in name:
+        try:
+            ticks = int(value)
+        except (TypeError, ValueError):
+            return (None, 0)
+        if ticks == 0:
+            return (None, 0)
+        return ("right" if ticks > 0 else "left", abs(ticks))
+    return (None, 0)
+
+
+def touch_segment(x, width: int, dials: int) -> int | None:
+    """Which dial the strip position `x` belongs to.
+
+    The strip spans the encoders, so a tap is only meaningful as "the dial
+    under it"; anything outside the strip is discarded rather than clamped,
+    since a coordinate we do not understand should do nothing at all.
+    """
+    if dials <= 0 or width <= 0:
+        return None
+    try:
+        position = int(x)
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= position < width:
+        return None
+    return min(dials - 1, position * dials // width)
+
+
 class DeckManager:
     def __init__(
         self,
@@ -107,6 +167,10 @@ class DeckManager:
         # it, so assuming 5 scrambled the art on a Mini (3) or an XL (8).
         self.columns = DEFAULT_COLUMNS
         self.image_size = DEFAULT_IMAGE_SIZE
+        # Stream Deck + only: 0 on every other model, which is what every
+        # dial and touchscreen path checks before doing anything.
+        self.dial_count = 0
+        self.touch_size = DIAL_TOUCH_SIZE
         # Which set of devices the "only one deck is used" notice was last
         # given for; see _report_extra_devices.
         self._reported_devices: tuple[str, ...] = ()
@@ -323,11 +387,26 @@ class DeckManager:
                 if not dev.connected():
                     raise OSError("Stream Deck disconnected during startup")
                 dev.set_key_callback(self._on_key)
+                dials = _dial_count(dev)
+                if dials:
+                    # Only the Plus answers these, and asking a deck that has
+                    # no encoders must not cost it its connection.
+                    try:
+                        dev.set_dial_callback(self._on_dial)
+                        dev.set_touchscreen_callback(self._on_touchscreen)
+                    except Exception:
+                        log.warning(
+                            "Dials were reported but could not be registered",
+                            exc_info=True,
+                        )
+                        dials = 0
                 self.deck = dev
                 self._clear_open_failures()
                 self.key_count = key_count
                 self.columns = columns
                 self.image_size = image_size
+                self.dial_count = dials
+                self.touch_size = _touch_size(dev) if dials else DIAL_TOUCH_SIZE
                 self.record_activity()
                 log.info(
                     "Connected: %s (%d keys in %d columns, %sx%s)",
@@ -408,11 +487,20 @@ class DeckManager:
     def _close(self, emit: bool, apply_exit_display: bool = False) -> None:
         with self._lock:
             deck, self.deck = self.deck, None
+            # No device means no encoders: leaving a stale count behind would
+            # keep the touchscreen renderer drawing for hardware that is gone.
+            had_dials, self.dial_count = self.dial_count, 0
         if deck is not None:
             try:
                 deck.set_key_callback(None)
             except Exception:
                 pass
+            if had_dials:
+                for setter in ("set_dial_callback", "set_touchscreen_callback"):
+                    try:
+                        getattr(deck, setter)(None)
+                    except Exception:
+                        pass
             if apply_exit_display:
                 self._apply_exit_display(deck)
             else:
@@ -449,6 +537,69 @@ class DeckManager:
                 return
             self._last_activity = time.monotonic()
         self.bus.emit("deck.key", index=index, pressed=pressed)
+
+    def _on_dial(self, deck, index: int, event, value) -> None:
+        """Encoder turned or pushed, on the library's read thread.
+
+        The library reports a turn as a signed tick count and a push as a
+        boolean, so both are normalised here into one direction the controller
+        can act on. A turn has no release, which is why it carries `ticks`: a
+        fast spin arrives as several ticks in one event and must not be
+        flattened into a single step.
+        """
+        with self._screensaver_lock:
+            # A dial wakes the screen saver exactly as a key does, and the
+            # gesture that woke it is consumed rather than acted on.
+            if self._screensaver_active.is_set():
+                self._last_activity = time.monotonic()
+                self._screensaver_preview = None
+                self._screensaver_wakeup.set()
+                return
+            self._last_activity = time.monotonic()
+        direction, ticks = _dial_event(event, value)
+        if direction is None:
+            return
+        self.bus.emit(
+            "deck.dial", index=index, direction=direction, ticks=ticks
+        )
+
+    def _on_touchscreen(self, deck, event, value) -> None:
+        """A tap on the LCD strip, mapped to the dial it sits above."""
+        with self._screensaver_lock:
+            if self._screensaver_active.is_set():
+                self._last_activity = time.monotonic()
+                self._screensaver_preview = None
+                self._screensaver_wakeup.set()
+                return
+            self._last_activity = time.monotonic()
+        if not isinstance(value, dict):
+            return
+        index = touch_segment(value.get("x"), self.touch_size[0], self.dial_count)
+        if index is None:
+            return
+        self.bus.emit("deck.touch", index=index, event=str(event))
+
+    def set_touchscreen_image(self, image: Image.Image) -> None:
+        """Write the full LCD strip of a Stream Deck +."""
+        if self._screensaver_active.is_set():
+            return
+        with self._lock:
+            deck = self.deck
+            if (
+                deck is None
+                or not self.dial_count
+                or self._screensaver_active.is_set()
+            ):
+                return
+            try:
+                from StreamDeck.ImageHelpers import PILHelper
+
+                native = PILHelper.to_native_touchscreen_format(deck, image)
+                deck.set_touchscreen_image(
+                    native, 0, 0, image.width, image.height
+                )
+            except Exception as e:
+                log.warning("Failed writing the touchscreen: %s", e)
 
     def set_key_image(self, index: int, image: Image.Image) -> None:
         if self._screensaver_active.is_set():

@@ -209,12 +209,14 @@ class EditorPanel(Gtk.Box):
                 kc.icon_off = self.app_off.icon()
                 kc.bg_color_off = self.app_off.color()
                 kc.font_size_off = self.app_off.font_size()
+                kc.text_color_off = self.app_off.text_color()
 
         if self.app_main is not None:
             kc.label = self.app_main.label()
             kc.icon = self.app_main.icon()
             kc.bg_color = self.app_main.color()
             kc.font_size = self.app_main.font_size()
+            kc.text_color = self.app_main.text_color()
         return kc
 
     def save(self) -> bool:
@@ -318,6 +320,7 @@ class EditorPanel(Gtk.Box):
                 kc.bg_color,
                 DEFAULT_FOLDER_ICON,
                 kc.font_size,
+                kc.text_color,
             )
             self.body.append(self.app_main)
             self.body.append(self._hint(
@@ -345,6 +348,7 @@ class EditorPanel(Gtk.Box):
                 kc.bg_color,
                 self._action_icon(kc.action),
                 kc.font_size,
+                kc.text_color,
             )
             self.body.append(self.app_main)
 
@@ -368,6 +372,7 @@ class EditorPanel(Gtk.Box):
                 kc.bg_color,
                 self._steps_icon(kc.steps, "mdi:playlist-play"),
                 kc.font_size,
+                kc.text_color,
             )
             self.body.append(self.app_main)
 
@@ -389,6 +394,7 @@ class EditorPanel(Gtk.Box):
                 kc.bg_color,
                 self._steps_icon(kc.steps, "mdi:shuffle-variant"),
                 kc.font_size,
+                kc.text_color,
             )
             self.body.append(self.app_main)
 
@@ -431,6 +437,7 @@ class EditorPanel(Gtk.Box):
                     "mdi:gesture-tap",
                 ),
                 kc.font_size,
+                kc.text_color,
             )
             self.body.append(self.app_main)
 
@@ -450,6 +457,7 @@ class EditorPanel(Gtk.Box):
                 kc.bg_color,
                 self._steps_icon(kc.steps_on, "mdi:toggle-switch"),
                 kc.font_size,
+                kc.text_color,
             )
             self.body.append(self._frame("▶ ON state", [self.on_list, self.app_main]))
 
@@ -469,6 +477,7 @@ class EditorPanel(Gtk.Box):
                     "mdi:toggle-switch-off-outline",
                 ),
                 kc.font_size_off,
+                kc.text_color_off,
             )
             self.body.append(self._frame("■ OFF state", [self.off_list, self.app_off]))
 

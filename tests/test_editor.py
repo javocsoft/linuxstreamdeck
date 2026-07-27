@@ -191,21 +191,17 @@ class GridHintWidthTests(unittest.TestCase):
 
         from linuxstreamdeck.ui.window import (
             GRID_COLS,
+            GRID_HINT,
             HINT_MAX_CHARS,
             KEY_PIXELS,
             MainWindow,
         )
 
-        # Same text the window builds; kept here so a longer one fails loudly.
-        source = inspect.getsource(MainWindow._build_ui)
-        self.assertIn("Ctrl+Z undoes the last change", source)
-        text = (
-            "Drag to move · right-click to copy/paste · "
-            "double-click a folder to open it · "
-            "Ctrl+Z undoes the last change"
-        )
+        # The window builds this very string, so lengthening it fails here
+        # rather than silently pushing the centered grid off the window.
+        self.assertIn("GRID_HINT", inspect.getsource(MainWindow._build_ui))
         hint = Gtk.Label(
-            label=text,
+            label=GRID_HINT,
             wrap=True,
             justify=Gtk.Justification.CENTER,
             max_width_chars=HINT_MAX_CHARS,
@@ -225,14 +221,9 @@ class GridHintWidthTests(unittest.TestCase):
         """Confirms the check above can actually fail."""
         from gi.repository import Gtk
 
-        from linuxstreamdeck.ui.window import GRID_COLS, KEY_PIXELS
+        from linuxstreamdeck.ui.window import GRID_COLS, GRID_HINT, KEY_PIXELS
 
-        text = (
-            "Drag to move · right-click to copy/paste · "
-            "double-click a folder to open it · "
-            "Ctrl+Z undoes the last change"
-        )
-        unwrapped = Gtk.Label(label=text)
+        unwrapped = Gtk.Label(label=GRID_HINT)
         unwrapped.add_css_class("dim-label")
         _, natural, _, _ = unwrapped.measure(Gtk.Orientation.HORIZONTAL, -1)
 

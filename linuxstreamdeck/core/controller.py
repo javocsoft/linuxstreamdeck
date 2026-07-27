@@ -83,6 +83,21 @@ FOLDER_BACK_LABEL = "Back"
 # with the keys of the page that holds it.
 RuntimeKey = tuple[int, int, tuple[int, ...], int]
 
+# The folder path a dial's runtime state is filed under. A real path holds key
+# indices, which are never negative, so this can never name a folder.
+DIAL_PATH = (-1,)
+
+# How the three encoder gestures map onto the dial's stored action lists.
+DIAL_STEPS = {
+    "left": "steps_left",
+    "right": "steps_right",
+    "press": "steps_press",
+}
+# A spin reports several ticks at once, and each one queues the dial's steps.
+# Without a ceiling one flick of the wrist could keep an action worker busy
+# long after the hand stopped.
+MAX_DIAL_TICKS = 8
+
 
 class _ExecutionControl:
     def __init__(self, predecessor: threading.Event | None = None) -> None:
@@ -112,6 +127,7 @@ class DeckController:
         self._folder_path: tuple[int, ...] = ()
         # Reversible key changes for the grid on screen; see _record_undo.
         self._undo: list[_UndoEntry] = []
+        self._redo: list[_UndoEntry] = []
         self._stopping = threading.Event()
         self._action_executor = ThreadPoolExecutor(
             max_workers=2,
@@ -162,6 +178,8 @@ class DeckController:
         self._busy_thread.start()
 
         bus.subscribe("deck.key", self._on_deck_key)
+        bus.subscribe("deck.dial", self._on_deck_dial)
+        bus.subscribe("deck.touch", self._on_deck_touch)
         bus.subscribe("deck.connected", lambda t, d: self.refresh())
         bus.subscribe("deck.screensaver", self._on_screensaver)
         bus.subscribe("obs.state", lambda t, d: self.refresh())
@@ -188,6 +206,15 @@ class DeckController:
             self._folder_path,
             index,
         )
+
+    def _dial_tkey(self, index: int) -> RuntimeKey:
+        """The same identity for a dial, in its own namespace.
+
+        Dials are numbered independently of keys, so dial 0 and key 0 must not
+        share transient state. `DIAL_PATH` cannot collide with a real folder
+        path, whose entries are all key indices and therefore never negative.
+        """
+        return (self.current_profile, self.current_page, DIAL_PATH, index)
 
     def _view(self) -> tuple[int, int, tuple[int, ...]]:
         """What the deck is showing right now."""
@@ -337,6 +364,25 @@ class DeckController:
         self.config.save()
         self.set_profile(len(self.config.profiles) - 1)
 
+    def duplicate_profile(self, index: int) -> None:
+        """Copy a whole profile, so a working setup can be varied safely.
+
+        The copy is independent down to every key, and its page names are kept,
+        so a `nav.page.go` inside it points at the copy's own page rather than
+        back at the original.
+        """
+        from .config import unique_name
+
+        profiles = self.config.profiles
+        if not 0 <= index < len(profiles):
+            return
+        source = profiles[index]
+        name = unique_name(source.name, (p.name for p in profiles))
+        profiles.append(source.clone(name))
+        self.config.save()
+        self.set_profile(len(profiles) - 1)
+        self.bus.emit("status", text=f"Profile duplicated as {name}")
+
     def update_profile(self, name: str, description: str) -> None:
         prof = self.config.profile
         prof.name = name or prof.name
@@ -411,8 +457,9 @@ class DeckController:
             return
         self.page.name = name
         for page in self.config.pages:
-            for top_key in page.keys.values():
-                # Destinations inside a folder must be rewritten too.
+            # Destinations inside a folder must be rewritten too, and a dial
+            # can navigate exactly as a key can.
+            for top_key in (*page.keys.values(), *page.dials.values()):
                 for key in self.config._walk_keys(top_key):
                     for action, params in self.config._action_params(key):
                         if (
@@ -422,6 +469,64 @@ class DeckController:
                             params["page"] = name
         self.config.save()
         self.bus.emit("page.changed", index=self.current_page, name=self.page.name)
+
+    def move_page(self, index: int, target: int) -> None:
+        """Move a page to another position, keeping the same page on screen.
+
+        Nothing has to be rewritten: page navigation is by name, and a move
+        changes no name. The transient toggle and clock state is keyed by page
+        index, though, and every position between the two has just come to mean
+        a different page, so it is dropped exactly as a deletion drops it.
+        """
+        pages = self.config.pages
+        if not (0 <= index < len(pages) and 0 <= target < len(pages)):
+            return
+        if index == target:
+            return
+        pages.insert(target, pages.pop(index))
+        self._toggle.clear()
+        self._clear_time_actions()
+        self.forget_undo()
+        self._leave_folders()
+        self.config.current_page = self._shifted_index(
+            self.current_page, index, target
+        )
+        self.config.save()
+        self.bus.emit("page.changed", index=self.current_page, name=self.page.name)
+        self.refresh()
+
+    @staticmethod
+    def _shifted_index(current: int, index: int, target: int) -> int:
+        """Where `current` ends up once the item at `index` moves to `target`."""
+        if current == index:
+            return target
+        if index < current <= target:
+            return current - 1
+        if target <= current < index:
+            return current + 1
+        return current
+
+    def duplicate_page(self, index: int) -> None:
+        """Copy a page and its keys, placing the copy right after the original."""
+        from .config import unique_name
+
+        pages = self.config.pages
+        if not 0 <= index < len(pages):
+            return
+        source = pages[index]
+        name = unique_name(source.name, (page.name for page in pages))
+        pages.insert(index + 1, source.clone(name))
+        # Indices at and after the insertion now mean a different page.
+        self._toggle.clear()
+        self._clear_time_actions()
+        self.forget_undo()
+        self._leave_folders()
+        self.config.current_page = self.current_page + (
+            1 if self.current_page > index else 0
+        )
+        self.config.save()
+        self.set_page(index + 1)
+        self.bus.emit("status", text=f"Page duplicated as {name}")
 
     def delete_page(self, index: int) -> None:
         pages = self.config.pages
@@ -486,6 +591,15 @@ class DeckController:
 
     # ---------- undo ----------
 
+    @staticmethod
+    def _snapshot(label: str, container, indices) -> _UndoEntry:
+        """What those slots hold right now, as a restorable entry."""
+        before = {}
+        for index in indices:
+            stored = container.key(index)
+            before[index] = stored.clone() if stored is not None else None
+        return _UndoEntry(label, container, before)
+
     def _record_undo(self, label: str, *indices: int) -> None:
         """Remember what the affected keys held, so the change can be taken back.
 
@@ -493,18 +607,33 @@ class DeckController:
         state: undoing restores a saved configuration, and a restored key starts
         from a clean runtime state exactly as a pasted one does.
         """
-        container = self.container
-        before = {}
-        for index in indices:
-            stored = container.key(index)
-            before[index] = stored.clone() if stored is not None else None
-        self._undo.append(_UndoEntry(label, container, before))
+        self._undo.append(self._snapshot(label, self.container, indices))
         del self._undo[:-UNDO_DEPTH]
+        # A fresh change branches away from anything that had been undone, so
+        # the redo future no longer describes this configuration.
+        self._redo.clear()
+
+    def _apply_entry(self, entry: _UndoEntry) -> _UndoEntry:
+        """Restore an entry, returning the entry that reverses it.
+
+        Taking the inverse before writing is what makes undo and redo each
+        other's mirror image, so a change can be walked back and forward any
+        number of times without the two stacks drifting apart.
+        """
+        inverse = self._snapshot(entry.label, entry.container, entry.before)
+        for index, stored in entry.before.items():
+            entry.container.set_key(
+                index, stored.clone() if stored is not None else None
+            )
+            self.key_config_changed(index, drop_folder_state=True)
+        self.config.save()
+        self.refresh()
+        return inverse
 
     def can_undo(self) -> bool:
         """Whether the last change can still be taken back from this view.
 
-        The stack is dropped on every page, profile and folder change, so an
+        Both stacks are dropped on every page, profile and folder change, so an
         entry can only ever belong to the grid on screen. Restoring a key into
         a grid the user is no longer looking at would be invisible and, for a
         folder, would address a different key entirely.
@@ -516,18 +645,27 @@ class DeckController:
         if not self.can_undo():
             return ""
         entry = self._undo.pop()
-        for index, stored in entry.before.items():
-            entry.container.set_key(
-                index, stored.clone() if stored is not None else None
-            )
-            self.key_config_changed(index, drop_folder_state=True)
-        self.config.save()
-        self.refresh()
+        self._redo.append(self._apply_entry(entry))
+        del self._redo[:-UNDO_DEPTH]
+        return entry.label
+
+    def can_redo(self) -> bool:
+        """Whether an undone change can be put back from this view."""
+        return bool(self._redo) and self._redo[-1].container is self.container
+
+    def redo(self) -> str:
+        """Reapply the last undone change. Returns its label, or "" if none."""
+        if not self.can_redo():
+            return ""
+        entry = self._redo.pop()
+        self._undo.append(self._apply_entry(entry))
+        del self._undo[:-UNDO_DEPTH]
         return entry.label
 
     def forget_undo(self) -> None:
-        """Drop the history, for every change of what the grid is showing."""
+        """Drop both histories, for every change of what the grid is showing."""
         self._undo.clear()
+        self._redo.clear()
 
     def swap_keys(self, a: int, b: int) -> None:
         """Swap two keys (for drag & drop). Their ON/OFF state too."""
@@ -840,9 +978,101 @@ class DeckController:
             ),
         )
 
-    def _submit_steps(self, steps, index: int, show_running: bool) -> None:
-        """Queue a key's steps on an action worker, with running feedback."""
-        execution_key = self._tkey(index)
+    # ---------- dials (Stream Deck +) ----------
+
+    def dial(self, index: int):
+        """The dial's configuration on the active page, if it has one."""
+        return self.page.dial(index)
+
+    def _on_deck_dial(self, _topic: str, data: dict) -> None:
+        self.turn_dial(
+            int(data.get("index", 0)),
+            str(data.get("direction", "")),
+            int(data.get("ticks", 1)),
+        )
+
+    def _on_deck_touch(self, _topic: str, data: dict) -> None:
+        """A tap on the strip runs the dial's push action.
+
+        The strip has no configuration of its own: it labels the encoders, so
+        tapping a panel is a second way of pressing the dial under it.
+        """
+        self.turn_dial(int(data.get("index", 0)), "press", 1)
+
+    def turn_dial(self, index: int, direction: str, ticks: int = 1) -> None:
+        """Run what an encoder gesture is configured to do.
+
+        A turn arrives with a tick count, and the steps run once per tick so a
+        fast spin moves a volume by the amount the hand actually turned. The
+        count is bounded: the actions are queued on a worker, and a spin that
+        outran the queue could otherwise leave it running for a long time.
+        """
+        if self._stopping.is_set() or self.deck.record_activity():
+            return
+        field = DIAL_STEPS.get(direction)
+        if field is None:
+            return
+        dial = self.page.dial(index)
+        if dial is None or dial.is_empty():
+            return
+        steps = list(getattr(dial, field, []))
+        if not steps:
+            return
+        execution_key = self._dial_tkey(index)
+        for _ in range(max(1, min(int(ticks), MAX_DIAL_TICKS))):
+            self._submit_steps(
+                steps,
+                index,
+                show_running=False,
+                execution_key=execution_key,
+            )
+
+    def refresh_touchscreen(self) -> None:
+        """Redraw the LCD strip on its own, after editing a dial."""
+        if not getattr(self.deck, "dial_count", 0):
+            return
+        try:
+            self._render_executor.submit(
+                self._render_touchscreen, self._page_dials()
+            )
+        except RuntimeError:
+            if not self._stopping.is_set():
+                raise
+
+    def dial_config_changed(self, index: int) -> None:
+        """Drop a dial's transient state after it is edited, and repaint."""
+        key = self._dial_tkey(index)
+        self._clocks.reset(key, refresh=False)
+        self._cancel_timer_sound(key)
+        self.refresh_touchscreen()
+
+    def _render_touchscreen(self, dials: dict) -> None:
+        from ..device.touchscreen import touchscreen_image
+
+        try:
+            image = touchscreen_image(
+                dials,
+                size=self.deck.touch_size,
+                count=self.deck.dial_count,
+            )
+            self.deck.set_touchscreen_image(image)
+        except Exception:
+            log.debug("Could not refresh the touchscreen", exc_info=True)
+
+    def _submit_steps(
+        self,
+        steps,
+        index: int,
+        show_running: bool,
+        execution_key: RuntimeKey | None = None,
+    ) -> None:
+        """Queue a key's steps on an action worker, with running feedback.
+
+        `execution_key` is passed only by a caller whose identity is not a key
+        of the visible grid — a dial, which is numbered separately.
+        """
+        if execution_key is None:
+            execution_key = self._tkey(index)
         runtime_key = execution_key if show_running else None
         control = self._prepare_execution(execution_key, steps)
         if runtime_key is not None:
@@ -1159,6 +1389,17 @@ class DeckController:
     def _render_page(self) -> None:
         self._render_pending.clear()
         self._render_keys(range(self.deck.key_count), self._view())
+        # The strip labels the encoders, so it follows the page exactly as the
+        # keys do. Already on the render worker, so it draws inline.
+        if getattr(self.deck, "dial_count", 0):
+            self._render_touchscreen(self._page_dials())
+
+    def _page_dials(self) -> dict:
+        return {
+            int(raw): dial
+            for raw, dial in self.page.dials.items()
+            if str(raw).lstrip("-").isdigit()
+        }
 
     def _render_keys(self, indices, view: tuple[int, int, tuple[int, ...]]) -> None:
         if view != self._view() or self.deck.screensaver_active:
@@ -1199,7 +1440,8 @@ class DeckController:
             return {"size": size, "label": kc.label, "icon_path": icon,
                     "bg": kc.bg_color, "busy": busy, "busy_phase": phase,
                     "badge": "RUN" if busy else badge,
-                    "font_size": kc.font_size}
+                    "font_size": kc.font_size,
+                    "text_color": kc.text_color}
         return self._single_spec(index, kc, size)
 
     def _back_spec(self, size) -> dict:
@@ -1228,6 +1470,7 @@ class DeckController:
             # How many keys are inside, so a folder is not a black box.
             "badge": str(configured) if configured else "",
             "font_size": kc.font_size,
+            "text_color": kc.text_color,
         }
 
     @staticmethod
@@ -1266,6 +1509,7 @@ class DeckController:
             "badge": "RUN" if busy else fb.get("badge", ""),
             "center_text": fb.get("display", ""),
             "font_size": kc.font_size,
+            "text_color": kc.text_color,
         }
 
     def _toggle_spec(self, index: int, kc: KeyConfig, size) -> dict:
@@ -1275,13 +1519,15 @@ class DeckController:
             return {"size": size, "label": kc.label, "icon_path": icon,
                     "bg": kc.bg_color, "active": True, "busy": busy,
                     "busy_phase": phase, "badge": "RUN" if busy else "ON",
-                    "font_size": kc.font_size}
+                    "font_size": kc.font_size,
+                    "text_color": kc.text_color}
         icon = (kc.icon_off or kc.icon
                 or self._first_step_icon(kc.steps_off) or "mdi:toggle-switch-off-outline")
         return {"size": size, "label": kc.label_off or kc.label, "icon_path": icon,
                 "bg": kc.bg_color_off, "busy": busy, "busy_phase": phase,
                 "badge": "RUN" if busy else "OFF",
-                "font_size": kc.font_size_off or kc.font_size}
+                "font_size": kc.font_size_off or kc.font_size,
+                "text_color": kc.text_color_off or kc.text_color}
 
     def wait_until_stopped(self, timeout: float) -> bool:
         """Wait for timeout seconds, returning early when shutdown begins."""

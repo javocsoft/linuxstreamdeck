@@ -19,7 +19,8 @@ it is fully usable and testable **without the physical hardware connected**.
   (key image composition), `obsws-python` (obs-websocket v5 client), GStreamer
   1.0 `playbin` (local audio playback).
 - **Target devices:** every Stream Deck with key displays — Mini (3x2), Neo
-  (4x2), Original/MK.2 (5x3, `0fd9:006d`), Stream Deck + (4x2, keys only) and XL
+  (4x2), Original/MK.2 (5x3, `0fd9:006d`), Stream Deck + (4x2 keys, 4 dials and
+  an 800x100 LCD strip) and XL
   (8x4). The Pedal has no displays and is refused. Geometry comes from
   `key_layout()` at connection time, never from a constant: `GRID_COLS` in
   `ui/window.py` and `GRID_COLUMNS` in the renderers are only the
@@ -167,6 +168,8 @@ linuxstreamdeck/
 │   ├── exit_display.py Validate/crop static full-deck images for clean shutdown.
 │   ├── screensaver.py Pure-Pillow coordinated full-deck animation renderer.
 │   ├── startup_animation.py 33-frame offscreen physical-deck wake/title sequence.
+│   ├── touchscreen.py Stream Deck + LCD strip: one labelled panel per encoder.
+│   ├── layout_sheet.py Whole profile as one printable, captioned PNG.
 │   └── renderer.py    `compose()` — builds each configured key PNG with Pillow
 │                      (bg, icon or centered value, sized label, badge, lighting,
 │                      running halo).
@@ -180,8 +183,9 @@ linuxstreamdeck/
 │   │                  import/export, pages, deck display, brightness, OBS, About),
 │   │                  folder breadcrumb and navigation, explicit saver activity,
 │   │                  DnD, copy/paste, single-key export/import, unsaved guard,
-│   │                  status bar.
+│   │                  arrow-key grid navigation, OBS connection dot, status bar.
 │   ├── editor.py      EditorPanel: key editor, canonical draft/baseline and key type.
+│   ├── dials.py       Stream Deck + encoder row under the grid, and its editor.
 │   ├── ai_assistant.py OpenAI/Claude proposal dialog and explicit editor handoff.
 │   ├── steps.py       StepEditor / StepList / AppearanceBox — reused by the editor
 │   │                  for single, multi and toggle key types.
@@ -202,6 +206,8 @@ linuxstreamdeck/
 | Topic | Payload | Meaning |
 | --- | --- | --- |
 | `deck.key` | `index:int, pressed:bool` | Physical key pressed/released. |
+| `deck.dial` | `index:int, direction:str, ticks:int` | Stream Deck + encoder turned (`left`/`right`) or pushed (`press`). |
+| `deck.touch` | `index:int, event:str` | LCD strip tapped, resolved to the dial under it. |
 | `deck.connected` | `model:str, keys:int` | Physical device ready after startup. |
 | `deck.disconnected` | — | Device removed. |
 | `deck.screensaver` | `active:bool, preview:bool, style:str` | Screen saver started/stopped; controller restores keys on stop. |
@@ -280,6 +286,50 @@ Everything above is verified in simulation for every model the library knows
 hardware. Supporting more than one deck at once is a different problem: `deck.key`
 carries no device identity, `RuntimeKey` has no device field, and `app.py` builds
 one manager, one controller and one window rather than a collection.
+
+### Stream Deck + dials and touchscreen
+
+The Plus adds four rotary encoders and an 800x100 LCD strip above them. Both are
+gated on `DeckManager.dial_count`, which is 0 on every other model, so nothing
+here is reachable on hardware that has none.
+
+**A dial reuses `KeyConfig`** with `KIND_DIAL` and three lists — `steps_left`,
+`steps_right`, `steps_press`, all three in `STEP_FIELDS`. That is the whole
+reason it is not its own dataclass: every walk over a key's actions and assets
+(portable bundles, `nav.page` migration, `rename_page`, the layout sheet) then
+reaches a dial without being taught about it. What genuinely differs is storage.
+Dials are numbered independently of keys, so they live in `Page.dials`, and
+`_key_configs()` plus the bundle exporter iterate that mapping alongside
+`page.keys`. `Page.from_dict` drops any index at or beyond `MAX_DIALS`, so a
+hand-edited file cannot invent a fifth encoder.
+
+**Transient state uses `DIAL_PATH`**, the folder path `(-1,)`. A real path holds
+key indices, which are never negative, so dial 0 and key 0 can never collide in
+`RuntimeKey` — and no change to that type was needed.
+
+`_dial_event()` is the one place that knows the library reports a push as a
+boolean and a turn as a signed tick count. It drops the release edge (a dial
+acts on the way down, like a key) and keeps the tick count, because a fast spin
+arrives as several ticks in one event: flattening it would move a volume by one
+step no matter how far the hand turned. `turn_dial()` therefore runs the list
+once per tick, bounded by `MAX_DIAL_TICKS` so one flick cannot occupy an action
+worker long after the hand stopped.
+
+`device/touchscreen.py` draws the strip as one panel per encoder. It is the only
+thing that can say what a dial does, so panels are labelled rather than
+free-form. `segment_bounds()` derives each panel from the running edge instead
+of a rounded per-segment width: four panels of `800 // 4` happen to tile, four
+of `801 // 4` leave a one-pixel seam that is plainly visible on black. A tap is
+resolved by `touch_segment()` into the dial beneath it and runs that dial's push
+list, which is why the strip needs no configuration of its own; a coordinate
+outside the strip is discarded rather than clamped.
+
+`ui/dials.py` keeps dials out of `EditorPanel` deliberately. That panel's
+unsaved-change guard compares a canonical draft against a baseline for one slot
+of the key grid, and a dial is not a slot of that grid; its own dialog leaves
+that guard untouched instead of teaching it a second kind of index.
+
+None of this has run on physical hardware — see the note in §1.
 
 ### Physical deck startup and connection ordering
 
@@ -1092,6 +1142,88 @@ OFF state uses `font_size_off or font_size`, mirroring how `label_off` falls bac
 to `label`. The badge keeps its own fixed size, and because the label box grows
 with the font, the icon and any centered clock value shrink to fit.
 
+### Key label colour
+
+`KeyConfig.text_color` / `text_color_off` follow exactly the same inheritance
+rule: empty means the renderer's own `TEXT_COLOR`, so a key that never chose one
+renders identically and clearing the choice restores inheritance rather than
+freezing today's default into the configuration. `_text_color()` validates the
+stored value to `#rgb` / `#rrggbb` at load, because a hand-edited file would
+otherwise reach Pillow mid-render, on a worker thread, once per repaint.
+
+`compose()` resolves it once into `ink` and uses it for **the label, a centered
+value such as a clock, and the badge**. The badge is included on purpose:
+leaving it white would preserve the very problem the setting exists for, since a
+pale background hides a white badge exactly as it hid the label.
+
+`AppearanceBox` blocks its own `notify::rgba` handler while showing the
+inherited colour. Without that, displaying the default is indistinguishable from
+the user picking it, and clearing the choice would immediately write the current
+default back into the key.
+
+### Reordering and duplicating pages and profiles
+
+`move_page()`, `duplicate_page()` and `duplicate_profile()` all shift what a
+stored index means, so each clears the transient toggle/clock state and the undo
+history exactly as `delete_page()` does. What they must not disturb is
+`nav.page.go`, which targets a page **by name**: moving a page changes no name,
+and `Profile.clone()` keeps every page name so a copied profile's navigation
+points inside the copy rather than back at the original. `unique_name()` supplies
+the "Live copy", "Live copy 2" sequence — duplication is the one operation where
+a clashing name is guaranteed rather than possible, so the user is never asked.
+
+`_shifted_index()` keeps the page the user is looking at on screen after a move;
+the arithmetic is worth keeping because every off-by-one there silently switches
+the visible page.
+
+### Redo
+
+`_apply_entry()` restores an undo entry and returns the entry that reverses it,
+which is what makes undo and redo mirror images: a change can be walked back and
+forward any number of times without the two stacks drifting apart. `_redo` is
+bounded by the same `UNDO_DEPTH`, cleared by `_record_undo()` (a new change
+branches away from the undone future) and by `forget_undo()`, and gated by
+`can_redo()` on the same container check as `can_undo()`.
+
+### Layout sheet
+
+`device/layout_sheet.py` composes a whole profile into one printable PNG: every
+page, then every folder inside it, with each key drawn by the real `compose()`
+and captioned with what it does. The caption is the point — an icon-only key is
+unidentifiable away from the hardware. It takes `columns`/`rows` from the
+connected deck rather than assuming 5x3, and it deliberately never consults live
+OBS feedback, or the same profile would render differently every time.
+
+`_draw_caption()` trims against the room left **once the ellipsis is paid for**.
+Testing whether `text + "…"` fits on each pass never succeeds: by then the bare
+text fits too, the loop ends, and the caption is left cut mid-word with nothing
+to show it was shortened.
+
+### Rotating configuration backups
+
+Alongside the single-step `config.json.bak`, `rotate_backups()` keeps up to
+`BACKUP_KEEP` timestamped copies under `CONFIG_DIR/backups`. `BACKUP_MIN_INTERVAL`
+is the whole point of it: saves are frequent — a page switch, a brightness change
+and every key save is one — so without a floor between snapshots a burst of saves
+would push every older state out of the history at exactly the moment it becomes
+worth having. `import_bundle()` passes `force=True`, because replacing the entire
+configuration is precisely when the previous one is worth keeping. Rotation never
+raises: losing a backup must not stop the save it precedes.
+
+### Keyboard navigation of the key grid
+
+`neighbour_index()` walks the deck's own numbering, so left and right lead from
+the end of one row into the start of the next — the grid is one sequence of keys
+drawn in rows, not a set of independent rows. Up and down stop at the edges;
+wrapping them would throw the focus to the far end of the deck.
+
+Focus is **not** selection. Selecting runs the unsaved-change guard, so moving
+the focus with an arrow key would raise a dialog per key press; activating a key
+still selects it. `_on_grid_key_pressed()` returns `True` even at an edge,
+because falling through hands the focus to GTK's own directional search and
+leaves the grid entirely. It is a scoped, bubble-phase `Gtk.EventControllerKey`
+on the grid — not the broad `Gtk.EventControllerLegacy` hook that §5.15 forbids.
+
 ### Running key feedback and workers
 
 Multi and multi-toggle invocations, plus single actions with
@@ -1475,6 +1607,22 @@ ignored and you will chase a ghost.
    state when its folder is replaced or moved but **not** when the folder key
    itself is merely edited. Every walk over a key's actions or assets must
    recurse with `_walk_keys()` / `_walk_raw_keys()`.
+
+23. **Dials are keys everywhere except in storage.** Keep `KIND_DIAL` on
+   `KeyConfig` and its three lists in `STEP_FIELDS`, so bundles, migrations and
+   renames reach a dial for free; keep them in `Page.dials`, walked alongside
+   `page.keys` by `_key_configs()` and the bundle exporter. Keep `DIAL_PATH`
+   negative so a dial can never share a `RuntimeKey` with the key of the same
+   number. Preserve the tick count of a turn and the `MAX_DIAL_TICKS` ceiling,
+   and derive touchscreen panels from the running edge so they tile without a
+   seam. Everything dial-related must stay gated on `dial_count`, which is 0 on
+   every model but the Plus.
+
+24. **An empty appearance value means inherit, never "the default".** That holds
+   for `icon`, `font_size` and now `text_color`: store nothing and let the
+   renderer decide, or clearing a choice silently freezes the current default
+   into the configuration. When the editor shows an inherited value it must
+   block its own change handler while doing so.
 
 ---
 

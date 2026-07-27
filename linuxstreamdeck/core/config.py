@@ -12,6 +12,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
@@ -35,6 +36,17 @@ CONFIG_DIR = Path(
 CONFIG_FILE = CONFIG_DIR / "config.json"
 BACKUP_FILE = CONFIG_DIR / "config.json.bak"
 
+# Rolling history of earlier configurations, kept alongside the single-step
+# config.json.bak. BACKUP_MIN_INTERVAL is the point of it: saves are frequent
+# (a page switch, a brightness change and every key save is one), so without a
+# floor between snapshots a burst of saves would push every older state out of
+# the history at exactly the moment it becomes worth having.
+BACKUP_DIR = CONFIG_DIR / "backups"
+BACKUP_PREFIX = "config-"
+BACKUP_SUFFIX = ".json"
+BACKUP_KEEP = 8
+BACKUP_MIN_INTERVAL = 300.0
+
 DEFAULT_KEY_BG = "#1e1e28"
 
 # Label font size. An empty value is an inheritance marker (the renderer picks a
@@ -49,6 +61,12 @@ KEY_FONT_SIZE_CHOICES = (
     ("xl", "Extra large"),
 )
 KEY_FONT_SIZES = frozenset(choice[0] for choice in KEY_FONT_SIZE_CHOICES)
+
+# Label colour. Empty is an inheritance marker exactly like the font size: the
+# renderer then uses its own default, so a key that never chose one keeps
+# rendering identically and clearing the choice restores that rather than
+# freezing today's default into the configuration.
+KEY_TEXT_COLOR_AUTO = ""
 
 # What closing the window does. "tray" keeps the application running behind its
 # status icon; it falls back to quitting when no status area is available, so the
@@ -190,6 +208,13 @@ KIND_TOGGLE = "multi_toggle"    # toggle: two action lists (ON/OFF state)
 KIND_RANDOM = "random"          # one action picked at random from the list
 KIND_PRESS = "press"            # separate lists for single/double/long press
 KIND_FOLDER = "folder"          # opens its own grid of keys
+KIND_DIAL = "dial"              # a Stream Deck + encoder: turn left/right, push
+
+# Stream Deck + hardware. The four encoders sit under an 800x100 LCD strip, so
+# each one owns a quarter of it and the strip is what tells you which dial does
+# what — the deck has no other way to say so.
+DIAL_TOUCH_SIZE = (800, 100)
+MAX_DIALS = 4
 
 # Folders group keys without spending a page. Their contents share the deck's
 # own key numbering, and the first slot is always the Back key, so the physical
@@ -210,7 +235,17 @@ STEP_FIELDS = (
     "steps_single",
     "steps_double",
     "steps_long",
+    "steps_left",
+    "steps_right",
+    "steps_press",
 )
+
+# A Stream Deck + dial reuses KeyConfig rather than getting a type of its own,
+# so every walk over a key's actions or assets — portable bundles, legacy
+# migration, the layout sheet — reaches a dial without being taught about it.
+# What differs is where they are stored: dials are numbered independently of
+# keys, so they live in their own mapping on the page.
+DIAL_STEP_FIELDS = ("steps_left", "steps_right", "steps_press")
 
 
 def _migrate_page_action(action, params) -> tuple[str, dict]:
@@ -231,6 +266,27 @@ def _font_size(value) -> str:
     """Keep only a known label size; anything else falls back to automatic."""
     size = str(value or "").strip().lower()
     return size if size in KEY_FONT_SIZES else KEY_FONT_SIZE_AUTO
+
+
+def _as_index(value) -> int:
+    """A stored mapping key as an int, or -1 when it is not one at all."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _text_color(value) -> str:
+    """Keep only a '#rgb' / '#rrggbb' colour; anything else inherits.
+
+    Validating here rather than in the renderer keeps a hand-edited file from
+    reaching Pillow with something it would raise on mid-render, on a worker
+    thread, once per repaint.
+    """
+    color = str(value or "").strip().lower()
+    if len(color) not in (4, 7) or not color.startswith("#"):
+        return KEY_TEXT_COLOR_AUTO
+    return color if all(c in "0123456789abcdef" for c in color[1:]) else KEY_TEXT_COLOR_AUTO
 
 
 @dataclass(frozen=True)
@@ -321,6 +377,11 @@ class KeyConfig:
     steps_double: list[ActionStep] = field(default_factory=list)
     steps_long: list[ActionStep] = field(default_factory=list)
 
+    # kind == dial: one list per encoder gesture (Stream Deck + only)
+    steps_left: list[ActionStep] = field(default_factory=list)
+    steps_right: list[ActionStep] = field(default_factory=list)
+    steps_press: list[ActionStep] = field(default_factory=list)
+
     # kind == folder: the grid of keys it opens. Excluded from equality on
     # purpose: its contents are edited by navigating into the folder and saved
     # there, so the editor's unsaved-change check must not read an edit made
@@ -332,12 +393,14 @@ class KeyConfig:
     icon: str = ""                        # path to an optional image
     bg_color: str = DEFAULT_KEY_BG
     font_size: str = KEY_FONT_SIZE_AUTO   # "" inherits the automatic size
+    text_color: str = KEY_TEXT_COLOR_AUTO  # "" inherits the renderer default
 
     # OFF state appearance (toggles only)
     label_off: str = ""
     icon_off: str = ""
     bg_color_off: str = DEFAULT_KEY_BG
     font_size_off: str = KEY_FONT_SIZE_AUTO
+    text_color_off: str = KEY_TEXT_COLOR_AUTO
 
     def is_empty(self) -> bool:
         if self.kind == KIND_SINGLE:
@@ -348,6 +411,8 @@ class KeyConfig:
             return not (self.steps_on or self.steps_off)
         if self.kind == KIND_PRESS:
             return not (self.steps_single or self.steps_double or self.steps_long)
+        if self.kind == KIND_DIAL:
+            return not (self.steps_left or self.steps_right or self.steps_press)
         if self.kind == KIND_FOLDER:
             # A folder is configured as soon as it exists; filling it comes
             # afterwards, so an empty one must still render and open.
@@ -414,15 +479,20 @@ class KeyConfig:
             steps_single=steps("steps_single"),
             steps_double=steps("steps_double"),
             steps_long=steps("steps_long"),
+            steps_left=steps("steps_left"),
+            steps_right=steps("steps_right"),
+            steps_press=steps("steps_press"),
             folder=_folder_contents(d.get("folder"), kind, depth),
             label=d.get("label", ""),
             icon=d.get("icon", ""),
             bg_color=d.get("bg_color", DEFAULT_KEY_BG),
             font_size=_font_size(d.get("font_size")),
+            text_color=_text_color(d.get("text_color")),
             label_off=d.get("label_off", ""),
             icon_off=d.get("icon_off", ""),
             bg_color_off=d.get("bg_color_off", DEFAULT_KEY_BG),
             font_size_off=_font_size(d.get("font_size_off")),
+            text_color_off=_text_color(d.get("text_color_off")),
         )
 
 
@@ -490,6 +560,10 @@ class Page(KeyGrid):
     name: str = "Page 1"
     # keys as str for JSON compatibility: "0".."14"
     keys: dict[str, KeyConfig] = field(default_factory=dict)
+    # Stream Deck + encoders, numbered independently of the keys. Absent from
+    # older configurations and ignored by older builds, so no format version
+    # changes: a deck without dials simply never reads them.
+    dials: dict[str, KeyConfig] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict, index: int = 0) -> "Page":
@@ -498,10 +572,37 @@ class Page(KeyGrid):
         raw_keys = d.get("keys", {})
         if not isinstance(raw_keys, dict):
             raise ValueError("The page keys field must be a JSON object")
+        raw_dials = d.get("dials", {})
+        if not isinstance(raw_dials, dict):
+            raise ValueError("The page dials field must be a JSON object")
         return cls(
             name=d.get("name", f"Page {index + 1}"),
             keys={str(k): KeyConfig.from_dict(v) for k, v in raw_keys.items()},
+            dials={
+                str(k): KeyConfig.from_dict(v)
+                for k, v in raw_dials.items()
+                if 0 <= _as_index(k) < MAX_DIALS
+            },
         )
+
+    def dial(self, index: int) -> KeyConfig | None:
+        return self.dials.get(str(index))
+
+    def set_dial(self, index: int, config: KeyConfig | None) -> None:
+        if config is None or config.is_empty():
+            self.dials.pop(str(index), None)
+        else:
+            self.dials[str(index)] = config
+
+    def configured_dials(self) -> int:
+        return sum(1 for d in self.dials.values() if not d.is_empty())
+
+    def clone(self, name: str = "") -> "Page":
+        """Independent deep copy, optionally renamed."""
+        copied = copy.deepcopy(self)
+        if name:
+            copied.name = name
+        return copied
 
 
 @dataclass
@@ -530,6 +631,35 @@ class Profile:
             pages=pages,
             current_page=max(0, min(current_page, len(pages) - 1)),
         )
+
+    def clone(self, name: str = "") -> "Profile":
+        """Independent deep copy, optionally renamed.
+
+        Page names are unique per profile, so a copied profile keeps every one
+        of them and every `nav.page.go` inside it keeps pointing at the right
+        page of the copy.
+        """
+        copied = copy.deepcopy(self)
+        if name:
+            copied.name = name
+        return copied
+
+
+def unique_name(base: str, taken, suffix: str = "copy") -> str:
+    """A name derived from `base` that is not in `taken`.
+
+    Used for duplicated pages and profiles: "Live" becomes "Live copy", then
+    "Live copy 2". Duplicating is the one operation where a clashing name is
+    guaranteed rather than possible, so the caller never has to ask for one.
+    """
+    existing = set(taken)
+    candidate = f"{base} {suffix}".strip()
+    if candidate not in existing:
+        return candidate
+    counter = 2
+    while f"{candidate} {counter}" in existing:
+        counter += 1
+    return f"{candidate} {counter}"
 
 
 @dataclass
@@ -742,11 +872,59 @@ class Config:
                 shutil.copy2(CONFIG_FILE, BACKUP_FILE)
             except Exception:
                 log.debug("Could not back up the configuration", exc_info=True)
+            self.rotate_backups()
         self._write_json_file(
             CONFIG_FILE,
             self._serializable_dict(include_legacy_password=True),
         )
         log.debug("Configuration saved to %s", CONFIG_FILE)
+
+    @staticmethod
+    def backup_history() -> list[Path]:
+        """The rolling backups, newest first.
+
+        Their names are timestamps, so sorting them is sorting by age.
+        """
+        try:
+            entries = [
+                path
+                for path in BACKUP_DIR.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}")
+                if path.is_file()
+            ]
+        except OSError:
+            return []
+        return sorted(entries, reverse=True)
+
+    @classmethod
+    def rotate_backups(cls, force: bool = False) -> None:
+        """Copy the configuration on disk into the history and prune the oldest.
+
+        `force` ignores the interval, for a caller that is about to replace the
+        whole configuration rather than edit part of it.
+
+        Never raises: losing a backup must not stop the save it precedes.
+        """
+        try:
+            history = cls.backup_history()
+            if history and not force and not cls._backup_due(history[0]):
+                return
+            BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+            target = BACKUP_DIR / f"{BACKUP_PREFIX}{stamp}{BACKUP_SUFFIX}"
+            if not target.exists():
+                shutil.copy2(CONFIG_FILE, target)
+                os.chmod(target, 0o600)
+            for old in cls.backup_history()[BACKUP_KEEP:]:
+                old.unlink(missing_ok=True)
+        except Exception:
+            log.debug("Could not rotate the configuration backups", exc_info=True)
+
+    @staticmethod
+    def _backup_due(newest: Path) -> bool:
+        try:
+            return time.time() - newest.stat().st_mtime >= BACKUP_MIN_INTERVAL
+        except OSError:
+            return True
 
     def finish_password_migration(self) -> None:
         """Persist without the legacy password and scrub it from both JSON files."""
@@ -867,9 +1045,14 @@ class Config:
 
         for profile in raw["profiles"]:
             for page in profile["pages"]:
-                for top_key in page["keys"].values():
-                    # Folders carry their own keys, with their own icons and
-                    # audio, so a bundle has to reach every nested key too.
+                # Folders carry their own keys, with their own icons and audio,
+                # so a bundle has to reach every nested key too; dials carry the
+                # same references from their own mapping.
+                entries = [
+                    *page["keys"].values(),
+                    *page.get("dials", {}).values(),
+                ]
+                for top_key in entries:
                     for key in self._walk_raw_keys(top_key):
                         self._bundle_key_icons(key, icon_files, missing_icons)
                         total_audio_bytes = self._bundle_key_audio(
@@ -1039,6 +1222,10 @@ class Config:
             target.parent.mkdir(parents=True, exist_ok=True)
             self._write_imported_file(target, data)
 
+        # An import replaces everything, so the state it is about to overwrite is
+        # precisely what someone would want back. Snapshot it whatever the
+        # interval says.
+        self.rotate_backups(force=True)
         replacement.save()
         self.profiles = replacement.profiles
         self.current_profile = replacement.current_profile
@@ -1191,6 +1378,10 @@ class Config:
             for page in profile.pages:
                 for key in page.keys.values():
                     yield from self._walk_keys(key)
+                # Dials hold actions and reference icons and audio exactly as
+                # keys do, so every bundle and migration has to reach them too.
+                for dial in page.dials.values():
+                    yield from self._walk_keys(dial)
 
     @classmethod
     def _walk_keys(cls, key: KeyConfig):

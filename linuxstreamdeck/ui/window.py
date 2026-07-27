@@ -19,6 +19,7 @@ from .. import APP_NAME  # noqa: E402
 from ..core import actions as action_registry  # noqa: E402
 from ..core.config import KIND_SINGLE, KeyConfig  # noqa: E402
 from .about import AboutDialog  # noqa: E402
+from .dials import DialRow  # noqa: E402
 from .editor import EditorPanel  # noqa: E402
 from .obs_settings import ObsSettingsDialog  # noqa: E402
 from .screensaver_settings import ScreenSaverSettingsDialog  # noqa: E402
@@ -50,6 +51,12 @@ _CSS = b"""
     background-color: alpha(@accent_bg_color, 0.14);
 }
 .deck-key.reserved { opacity: 0.9; }
+/* Keyboard focus has to stay distinguishable from selection: arrows move the
+   focus, and only activating the key selects it. */
+.deck-key:focus-visible {
+    outline: 2px dashed @accent_bg_color;
+    outline-offset: -5px;
+}
 .statusbar { padding: 4px 10px; font-size: 0.85em; }
 .breadcrumb { padding: 2px 0; }
 /* Steps of a multi-action key (ui/steps.py): reordering and the remove button. */
@@ -67,15 +74,65 @@ _CSS = b"""
 .step-remove:hover { background-color: alpha(@error_color, 0.15); }
 /* Right-click copy/paste menu of an action list (ui/steps.py). */
 .step-menu button { padding: 4px 12px; min-height: 26px; }
+/* Connection dot in the header. The state used to live only in the status bar
+   text, which has to be read; a colour is seen without looking for it. */
+.conn-dot {
+    min-width: 10px;
+    min-height: 10px;
+    border-radius: 999px;
+    margin: 0 2px;
+    background-color: @error_color;
+}
+.conn-dot.online { background-color: @success_color; }
 """
 
 _KEY_DRAG_PREFIX = "linuxstreamdeck-key:"
+
+# The line under the key grid. It lives here rather than inline so the width
+# regression test measures the real text instead of a copy that drifts from it.
+GRID_HINT = (
+    "Drag to move · right-click to copy/paste · "
+    "double-click a folder to open it · "
+    "arrow keys move between keys · "
+    "Ctrl+Z undoes, Ctrl+Shift+Z redoes"
+)
+
+# Both the arrow keys and their keypad twins, so navigation works either way.
+_ARROW_DIRECTIONS = {
+    Gdk.KEY_Left: "left",
+    Gdk.KEY_KP_Left: "left",
+    Gdk.KEY_Right: "right",
+    Gdk.KEY_KP_Right: "right",
+    Gdk.KEY_Up: "up",
+    Gdk.KEY_KP_Up: "up",
+    Gdk.KEY_Down: "down",
+    Gdk.KEY_KP_Down: "down",
+}
 
 
 def action_name(action_id: str) -> str:
     """What an action is called, falling back to its id if it is gone."""
     action = action_registry.get(action_id)
     return action.name if action is not None else action_id
+
+
+def neighbour_index(
+    index: int, direction: str, columns: int, count: int
+) -> int | None:
+    """The key an arrow moves focus to, or None when there is nowhere to go.
+
+    Left and right walk the deck's own numbering, so the end of a row leads
+    into the start of the next one: the grid is one sequence of keys drawn in
+    rows, not a set of independent rows. Up and down simply stop at the edges;
+    wrapping them would throw the focus to the far end of the deck.
+    """
+    if count <= 0 or columns <= 0 or not 0 <= index < count:
+        return None
+    step = {"left": -1, "right": 1, "up": -columns, "down": columns}.get(direction)
+    if step is None:
+        return None
+    target = index + step
+    return target if 0 <= target < count else None
 
 
 def _completes_double_click(
@@ -138,7 +195,11 @@ class MainWindow(Adw.ApplicationWindow):
         profile_menu = Gio.Menu()
         profile_menu.append("New profile…", "win.profile-new")
         profile_menu.append("Edit profile…", "win.profile-edit")
+        profile_menu.append("Duplicate profile", "win.profile-duplicate")
         profile_menu.append("Delete profile", "win.profile-delete")
+        layout_menu = Gio.Menu()
+        layout_menu.append("Export layout sheet…", "win.profile-sheet")
+        profile_menu.append_section(None, layout_menu)
         configuration_menu = Gio.Menu()
         configuration_menu.append(
             "Export configuration…", "win.config-export"
@@ -168,7 +229,12 @@ class MainWindow(Adw.ApplicationWindow):
         page_menu = Gio.Menu()
         page_menu.append("New page…", "win.page-new")
         page_menu.append("Rename page…", "win.page-rename")
+        page_menu.append("Duplicate page", "win.page-duplicate")
         page_menu.append("Delete page", "win.page-delete")
+        order_menu = Gio.Menu()
+        order_menu.append("Move page up", "win.page-move-up")
+        order_menu.append("Move page down", "win.page-move-down")
+        page_menu.append_section(None, order_menu)
         page_menu_btn = Gtk.MenuButton(icon_name="view-more-symbolic",
                                        tooltip_text="Manage pages",
                                        menu_model=page_menu)
@@ -180,6 +246,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.obs_btn.set_sensitive(self.app.obs_password_ready)
         self.obs_btn.connect("clicked", self._on_obs_settings)
         header.pack_end(self.obs_btn)
+        # Packed after the button, so it ends up to its left: the dot reads as
+        # belonging to the OBS control rather than to the brightness one.
+        self.obs_dot = Gtk.Box(valign=Gtk.Align.CENTER)
+        self.obs_dot.add_css_class("conn-dot")
+        header.pack_end(self.obs_dot)
         about_btn = Gtk.Button.new_from_icon_name("help-about-symbolic")
         about_btn.set_tooltip_text("About LinuxStreamDeck")
         about_btn.connect("clicked", self._on_about)
@@ -213,18 +284,17 @@ class MainWindow(Adw.ApplicationWindow):
         self._breadcrumb.set_margin_bottom(10)
         grid_box.append(self._breadcrumb)
         self._key_grid = Gtk.Grid(row_spacing=10, column_spacing=10)
-        # The drag controllers live on the grid itself, so they survive the
-        # rebuild that a deck of another shape triggers.
+        # The drag and key controllers live on the grid itself, so they survive
+        # the rebuild that a deck of another shape triggers.
         self._add_grid_dnd(self._key_grid)
+        self._add_grid_key_navigation(self._key_grid)
         self._build_key_grid()
         grid_box.append(self._key_grid)
         # Wrapped and width-capped: the grid box is centered, so it takes the
         # width of its widest child. An unwrapped hint therefore made the box
         # wider than the window and ran off the edge.
         hint = Gtk.Label(
-            label="Drag to move · right-click to copy/paste · "
-                  "double-click a folder to open it · "
-                  "Ctrl+Z undoes the last change",
+            label=GRID_HINT,
             wrap=True,
             justify=Gtk.Justification.CENTER,
             max_width_chars=HINT_MAX_CHARS,
@@ -232,6 +302,10 @@ class MainWindow(Adw.ApplicationWindow):
         hint.add_css_class("dim-label")
         hint.set_margin_top(12)
         grid_box.append(hint)
+        # Encoders of a Stream Deck +. The row hides itself on every other
+        # model, so nothing about it is reachable without the hardware.
+        self.dial_row = DialRow(self)
+        grid_box.append(self.dial_row)
         content.append(grid_box)
 
         content.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
@@ -294,6 +368,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._build_key_grid()
             self._refresh_reserved_key()
             self.app.controller.refresh()
+        # A Plus brings encoders with it and every other model takes them away.
+        self.dial_row.rebuild()
         self._update_status()
 
     def _connect_bus(self) -> None:
@@ -578,6 +654,7 @@ class MainWindow(Adw.ApplicationWindow):
         menu.append("Clear key", "win.key-clear")
         undo_menu = Gio.Menu()
         undo_menu.append("Undo last change", "win.key-undo")
+        undo_menu.append("Redo last change", "win.key-redo")
         menu.append_section(None, undo_menu)
         portable_menu = Gio.Menu()
         portable_menu.append("Export key…", "win.key-export")
@@ -592,14 +669,20 @@ class MainWindow(Adw.ApplicationWindow):
                          ("key-paste-action", self._paste_action_selected),
                          ("key-clear", self._clear_selected),
                          ("key-undo", lambda: self.undo_key_change()),
+                         ("key-redo", lambda: self.redo_key_change()),
                          ("key-find", lambda: self.find_key()),
                          ("key-export", self._export_selected),
                          ("key-import", self._import_selected),
                          ("profile-new", self._new_profile),
                          ("profile-edit", self._edit_profile),
+                         ("profile-duplicate", self._duplicate_profile),
                          ("profile-delete", self._delete_profile),
+                         ("profile-sheet", self._export_layout_sheet),
                          ("page-new", self._new_page),
                          ("page-rename", self._rename_page),
+                         ("page-duplicate", self._duplicate_page),
+                         ("page-move-up", lambda: self._move_page(-1)),
+                         ("page-move-down", lambda: self._move_page(1)),
                          ("page-delete", self._delete_page),
                          ("config-export", self._export_configuration),
                          ("config-import", self._import_configuration),
@@ -634,6 +717,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_profile_changed(self, topic: str, data: dict) -> None:
         self._refresh_profile_dropdown()
+        self.dial_row.refresh()
         desc = data.get("description", "")
         text = f"Profile: {data.get('name', '')}"
         if desc:
@@ -678,6 +762,47 @@ class MainWindow(Adw.ApplicationWindow):
             self.app.controller.delete_profile(self.app.config.current_profile)
 
     # --- configuration import / export ---
+
+    def _export_layout_sheet(self) -> None:
+        """Save the active profile as one printable PNG."""
+        name = self.app.config.profile.name.strip() or "profile"
+        safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name)
+        chooser = Gtk.FileDialog(title="Export layout sheet")
+        chooser.set_initial_name(f"{safe.strip('-') or 'profile'}-layout.png")
+        chooser.save(self, None, self._on_layout_sheet_chosen)
+
+    def _on_layout_sheet_chosen(self, chooser, result) -> None:
+        from ..device.layout_sheet import save_profile_sheet
+
+        try:
+            file = chooser.save_finish(result)
+        except Exception:
+            return
+        path = file.get_path() if file is not None else None
+        if not path:
+            self._show_configuration_error(
+                "Export failed", "Choose a local destination for the sheet."
+            )
+            return
+        destination = Path(path)
+        if destination.suffix.lower() != ".png":
+            destination = Path(f"{destination}.png")
+        # The sheet documents the hardware it will be used with, so it takes
+        # its shape from the connected deck rather than from the default grid.
+        columns = max(1, getattr(self.app.deck, "columns", GRID_COLS))
+        keys = getattr(self.app.deck, "key_count", columns * 3) or columns * 3
+        try:
+            written = save_profile_sheet(
+                self.app.config.profile,
+                columns,
+                max(1, keys // columns),
+                destination,
+            )
+        except Exception as error:
+            log.exception("Could not export the layout sheet")
+            self._show_configuration_error("Export failed", str(error))
+            return
+        self.app.bus.emit("status", text=f"Layout sheet saved to {written}")
 
     def _export_configuration(self) -> None:
         chooser = Gtk.FileDialog(title="Export configuration")
@@ -869,6 +994,40 @@ class MainWindow(Adw.ApplicationWindow):
         entry.grab_focus()
         dialog.present()
 
+    def _duplicate_page(self) -> None:
+        """Copy the active page. It becomes the active one, so guard the editor."""
+        self._confirm_unsaved_changes(
+            "duplicating the page",
+            lambda: self.app.controller.duplicate_page(
+                self.app.config.current_page
+            ),
+        )
+
+    def _move_page(self, offset: int) -> None:
+        controller = self.app.controller
+        current = self.app.config.current_page
+        target = current + offset
+        if not 0 <= target < len(self.app.config.pages):
+            self._flash_status(
+                "The page is already first" if offset < 0
+                else "The page is already last"
+            )
+            return
+        # Moving keeps the same page on screen, but it drops the transient
+        # state, so the editor is guarded exactly as any other page change.
+        self._confirm_unsaved_changes(
+            "moving the page",
+            lambda: controller.move_page(current, target),
+        )
+
+    def _duplicate_profile(self) -> None:
+        self._confirm_unsaved_changes(
+            "duplicating the profile",
+            lambda: self.app.controller.duplicate_profile(
+                self.app.config.current_profile
+            ),
+        )
+
     def _delete_page(self) -> None:
         if len(self.app.config.pages) <= 1:
             self._flash_status("You can't delete the only page")
@@ -887,6 +1046,51 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_delete_page_response(self, dialog, response) -> None:
         if response == "delete":
             self.app.controller.delete_page(self.app.config.current_page)
+
+    # --- keyboard navigation of the grid ---
+
+    def _add_grid_key_navigation(self, grid: Gtk.Grid) -> None:
+        """Arrow keys walk the grid in the deck's own key order.
+
+        Deliberately in the bubble phase and scoped to the grid: it only ever
+        sees a key press while the focus is already on one of the keys, so no
+        entry or dropdown elsewhere in the window is affected.
+        """
+        keys = Gtk.EventControllerKey()
+        keys.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+        keys.connect("key-pressed", self._on_grid_key_pressed)
+        grid.add_controller(keys)
+
+    def _on_grid_key_pressed(self, _controller, keyval, _keycode, state) -> bool:
+        """Move the focus between keys. Selecting still needs an explicit press.
+
+        Focus alone must not select: the selection runs the unsaved-change
+        guard, and arrowing across the grid would then raise a dialog per key.
+        """
+        if state & (
+            Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK
+        ):
+            return False
+        direction = _ARROW_DIRECTIONS.get(keyval)
+        if direction is None:
+            return False
+        focused = self._focused_key_index()
+        if focused is None:
+            return False
+        target = neighbour_index(
+            focused, direction, self._grid_columns, len(self._key_buttons)
+        )
+        if target is not None:
+            self._key_buttons[target].grab_focus()
+        # Handled either way: falling through at an edge would hand the focus
+        # to GTK's own directional search and leave the grid entirely.
+        return True
+
+    def _focused_key_index(self) -> int | None:
+        for index, button in enumerate(self._key_buttons):
+            if button.has_focus():
+                return index
+        return None
 
     # --- drag & drop (swaps two keys) ---
 
@@ -1055,6 +1259,7 @@ class MainWindow(Adw.ApplicationWindow):
             STEP_CLIPBOARD.has_step()
         )
         self._key_actions["key-undo"].set_enabled(controller.can_undo())
+        self._key_actions["key-redo"].set_enabled(controller.can_redo())
         pop = self._key_popover
         if pop.get_parent() is not None:
             pop.unparent()
@@ -1075,11 +1280,13 @@ class MainWindow(Adw.ApplicationWindow):
                 Gtk.ShortcutTrigger.parse_string(accel),
                 Gtk.CallbackAction.new(lambda w, a, cb=cb, i=index: (cb(i), True)[1]),
             ))
-        # Undo takes no index: it takes back whatever the last change was.
-        sc.add_shortcut(Gtk.Shortcut.new(
-            Gtk.ShortcutTrigger.parse_string("<Control>z"),
-            Gtk.CallbackAction.new(lambda w, a: (self.undo_key_change(), True)[1]),
-        ))
+        # Undo and redo take no index: they act on whatever the last change was.
+        for accel, cb in (("<Control>z", self.undo_key_change),
+                          ("<Control><Shift>z", self.redo_key_change)):
+            sc.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(accel),
+                Gtk.CallbackAction.new(lambda w, a, cb=cb: (cb(), True)[1]),
+            ))
         btn.add_controller(sc)
 
     # ---------- finding a key ----------
@@ -1091,6 +1298,7 @@ class MainWindow(Adw.ApplicationWindow):
         for accel, callback in (
             ("<Control>f", self.find_key),
             ("<Control>z", self.undo_key_change),
+            ("<Control><Shift>z", self.redo_key_change),
         ):
             controller.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(accel),
@@ -1139,12 +1347,30 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _apply_undo(self) -> None:
-        label = self.app.controller.undo()
+        self._announce_history(self.app.controller.undo(), "Undid")
+
+    def redo_key_change(self) -> None:
+        """Put back the last undone key change."""
+        controller = self.app.controller
+        if not controller.can_redo():
+            self._flash_status("Nothing to redo")
+            return
+        self._confirm_unsaved_changes(
+            "redoing the last change",
+            self._apply_redo,
+            offer_save=False,
+        )
+
+    def _apply_redo(self) -> None:
+        self._announce_history(self.app.controller.redo(), "Redid")
+
+    def _announce_history(self, label: str, verb: str) -> None:
+        """Reload the editor over the restored key and report what happened."""
         if not label:
             return
         if self.selected is not None:
             self.editor.load(self.selected)
-        self.app.bus.emit("status", text=f"Undid {label}")
+        self.app.bus.emit("status", text=f"{verb} {label}")
 
     # --- operations ---
 
@@ -1462,6 +1688,8 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_page_changed(self) -> None:
         self._refresh_page_dropdown()
         self._refresh_breadcrumb()
+        # Dials belong to the page, so their row follows it.
+        self.dial_row.refresh()
         if self._selected_container is self.app.controller.container:
             return
         self._clear_selection()
@@ -1515,12 +1743,20 @@ class MainWindow(Adw.ApplicationWindow):
             else "OBS: disconnected"
         )
         self.status.set_label(f"{deck_txt}   ·   {obs_txt}")
+        connected = self.app.obs.connected
         icon = (
             "network-transmit-receive-symbolic"
-            if self.app.obs.connected
+            if connected
             else "network-offline-symbolic"
         )
         self.obs_btn.set_icon_name(icon)
+        # The dot carries the colour; the tooltip carries the words, so the
+        # state is still available to anyone who cannot rely on the colour.
+        if connected:
+            self.obs_dot.add_css_class("online")
+        else:
+            self.obs_dot.remove_css_class("online")
+        self.obs_dot.set_tooltip_text(obs_txt)
 
     def _flash_status(self, text: str) -> None:
         self.status.set_label(text)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -18,7 +19,7 @@ from PIL import ImageDraw, ImageFont
 
 from linuxstreamdeck.core import icons
 from linuxstreamdeck.device import exit_display, renderer, screensaver
-from linuxstreamdeck.device import startup_animation
+from linuxstreamdeck.device import layout_sheet, startup_animation, touchscreen
 
 
 def _clear_font_caches() -> None:
@@ -32,6 +33,8 @@ def _clear_font_caches() -> None:
         screensaver._matrix_glyph,
         screensaver._flap_glyph,
         startup_animation._font,
+        touchscreen._font,
+        layout_sheet._font,
     ):
         cached.cache_clear()
 
@@ -46,6 +49,26 @@ def _render_everything() -> None:
     for frame in startup_animation.startup_frames(15, (72, 72), 40):
         del frame
     exit_display.blank_exit_tiles(15, (72, 72))
+    touchscreen.touchscreen_image(
+        {0: _dial()}, values={1: "72%"}, size=(800, 100), count=4
+    )
+    layout_sheet.profile_sheet(_sheet_profile(), 5, 3)
+
+
+def _dial():
+    from linuxstreamdeck.core.config import KIND_DIAL, ActionStep, KeyConfig
+
+    dial = KeyConfig(kind=KIND_DIAL, label="Mic")
+    dial.steps_press = [ActionStep(action="obs.mute")]
+    return dial
+
+
+def _sheet_profile():
+    from linuxstreamdeck.core.config import KIND_SINGLE, KeyConfig, Page, Profile
+
+    page = Page(name="Live")
+    page.set_key(0, KeyConfig(kind=KIND_SINGLE, action="obs.record", label="REC"))
+    return Profile(name="Sheet", pages=[page])
 
 
 class BasicFontLayoutTests(unittest.TestCase):
@@ -130,15 +153,16 @@ class RenderLockTests(unittest.TestCase):
                 unguarded.append(f"{image.mode} {image.size}")
             return real_draw(image, *args, **kwargs)
 
-        holders = (icons, renderer, screensaver, startup_animation, exit_display)
+        holders = (
+            icons, renderer, screensaver, startup_animation, exit_display,
+            touchscreen, layout_sheet,
+        )
         with patch.object(ImageDraw, "Draw", guarded_draw):
-            with (
-                patch.object(holders[0], "RENDER_LOCK", tracked),
-                patch.object(holders[1], "RENDER_LOCK", tracked),
-                patch.object(holders[2], "RENDER_LOCK", tracked),
-                patch.object(holders[3], "RENDER_LOCK", tracked),
-                patch.object(holders[4], "RENDER_LOCK", tracked),
-            ):
+            with ExitStack() as stack:
+                for holder in holders:
+                    stack.enter_context(
+                        patch.object(holder, "RENDER_LOCK", tracked)
+                    )
                 _render_everything()
 
         self.assertEqual(
@@ -150,7 +174,10 @@ class RenderLockTests(unittest.TestCase):
 
     def test_every_drawing_module_holds_the_same_lock_object(self) -> None:
         """Imported by value, so a second lock would serialize nothing."""
-        for module in (renderer, screensaver, startup_animation, exit_display):
+        for module in (
+            renderer, screensaver, startup_animation, exit_display,
+            touchscreen, layout_sheet,
+        ):
             self.assertIs(
                 module.RENDER_LOCK,
                 icons.RENDER_LOCK,

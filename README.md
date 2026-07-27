@@ -149,16 +149,24 @@ image out across the grid your deck actually has.
 | Stream Deck Mini | 6 | 3 × 2 | ✅ |
 | Stream Deck Neo | 8 | 4 × 2 | ✅ |
 | Stream Deck Original / MK.2 | 15 | 5 × 3 | ✅ tested on hardware |
-| Stream Deck + | 8 | 4 × 2 | ✅ keys only — the dials and touchscreen are not used |
+| Stream Deck + | 8 | 4 × 2 | ✅ keys, plus the 4 dials and the LCD strip |
 | Stream Deck XL | 32 | 8 × 4 | ✅ |
 | Stream Deck Pedal | 3 | — | ❌ no key displays |
 
 One deck at a time: with several connected it uses the first and says so in the
 status bar.
 
+On a **Stream Deck +**, a row of dial buttons appears under the key grid. Each
+dial takes its own action list for turning left, turning right and pushing, and
+the LCD strip above it is drawn with that dial's name and icon — a fast turn
+runs its list once per step, so a dial mapped to volume moves by as much as your
+hand actually turned. Tapping a panel on the strip presses the dial under it.
+
 > Every layout is verified in simulation, but the only model I own and can test
-> on real hardware is the 15-key Original. If you have another one and something
-> looks wrong, please [open an issue](https://github.com/javocsoft/linuxstreamdeck/issues).
+> on real hardware is the 15-key Original. The dials and the LCD strip have
+> therefore never run on a physical Stream Deck +. If you have another model and
+> something looks wrong, please
+> [open an issue](https://github.com/javocsoft/linuxstreamdeck/issues).
 
 ## 📦 Requirements
 
