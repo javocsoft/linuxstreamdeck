@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import math
 import re
 import threading
 import time
@@ -25,6 +26,10 @@ RECONNECT_SECONDS = 3
 # How often the statistics sample may be refreshed. Anything faster costs three
 # serialized websocket requests for a number nobody can read changing that fast.
 STATS_INTERVAL = 1.0
+
+# Floor for a reported audio level. A silent input's raw multiplier turns into
+# about -750 dB, which is noise in a report rather than information.
+AUDIO_SILENCE_DB = -96.0
 
 # Thumbnails held at once. A deck shows at most a screenful of preview keys, and
 # a stale entry is only worth keeping while its key may come back on screen.
@@ -55,6 +60,18 @@ def _milliseconds(value) -> float | None:
         return max(0.0, float(value) / 1000.0)
     except (TypeError, ValueError):
         return None
+
+
+def _to_db(level: float) -> float:
+    """A multiplier level as dB. Digital silence is a floor, not minus infinity.
+
+    OBS reports levels as multipliers, and a truly silent input comes through
+    as a number so small that its logarithm is around -750 dB. Clamping keeps
+    that out of anything a person reads while still being unmistakably silent.
+    """
+    if level <= 0.0:
+        return AUDIO_SILENCE_DB
+    return max(AUDIO_SILENCE_DB, 20.0 * math.log10(level))
 
 
 def _words(text: str) -> list[str]:
@@ -272,6 +289,141 @@ class OBSClient:
         except Exception as e:
             log.debug("Request %s failed: %s", name, e)
             return None
+
+    # ---------- pre-flight helpers ----------
+
+    def measure_audio(self, seconds: float) -> dict[str, float] | None:
+        """Loudest level per input, in dB, over `seconds`. None if unanswered.
+
+        Volume meters are a high-volume subscription: obs-websocket sends them
+        twenty times a second for every active input, which is why the normal
+        connection deliberately does not ask for them. This opens a **second,
+        short-lived** connection that subscribes to nothing else, listens, and
+        closes.
+
+        That separation is not tidiness. The second socket only ever receives,
+        so it makes no request and never touches `_lock` — the one that must
+        serialize every request or the protocol corrupts. The flood lands on a
+        socket of its own and stops when this returns.
+
+        Returning None rather than an empty mapping is the whole point of the
+        check that uses it: no readings at all is a question that went
+        unanswered, while readings that are all silent means nothing is being
+        heard.
+        """
+        if not self.connected:
+            return None
+        peaks: dict[str, float] = {}
+        seen = False
+        lock = threading.Lock()
+
+        def on_input_volume_meters(data) -> None:
+            nonlocal seen
+            with lock:
+                seen = True
+                for entry in getattr(data, "inputs", None) or []:
+                    name = entry.get("inputName") or ""
+                    if not name:
+                        continue
+                    loudest = 0.0
+                    for channel in entry.get("inputLevelsMul") or []:
+                        for value in channel:
+                            try:
+                                loudest = max(loudest, float(value))
+                            except (TypeError, ValueError):
+                                continue
+                    peaks[name] = max(peaks.get(name, 0.0), loudest)
+
+        events = None
+        try:
+            events = obsws.EventClient(
+                host=self.host,
+                port=self.port,
+                password=self.password,
+                timeout=5,
+                subs=obsws.Subs.INPUTVOLUMEMETERS,
+            )
+            events.callback.register(on_input_volume_meters)
+            self._stop.wait(max(0.1, seconds))
+        except Exception as error:
+            log.debug("Could not measure audio levels: %s", error)
+            return None
+        finally:
+            if events is not None:
+                try:
+                    events.disconnect()
+                except Exception:
+                    log.debug("Meter connection did not close cleanly",
+                              exc_info=True)
+        with lock:
+            if not seen:
+                return None
+            return {name: _to_db(level) for name, level in peaks.items()}
+
+    def muted_inputs(self, names) -> dict[str, bool]:
+        """Which of these inputs are muted in OBS.
+
+        Unlike a level reading this is unambiguous: a quiet room and a muted
+        microphone both measure as silence, but only one of them is a mistake.
+        Anything that does not answer is left out rather than guessed at.
+        """
+        states: dict[str, bool] = {}
+        for name in names or ():
+            result = self.try_request("GetInputMute", {"inputName": name})
+            if result and "inputMuted" in result:
+                states[name] = bool(result["inputMuted"])
+        return states
+
+    def capture_sources(self) -> dict[str, str]:
+        """Each V4L2 source and the device it is configured for.
+
+        Only V4L2: a webcam or capture card is the thing whose absence ruins a
+        show, and it is the only source kind whose health can be established
+        from outside OBS without rendering anything.
+        """
+        found: dict[str, str] = {}
+        listing = self.try_request("GetInputList") or {}
+        for entry in listing.get("inputs") or []:
+            if entry.get("inputKind") != "v4l2_input":
+                continue
+            name = entry.get("inputName") or ""
+            if not name:
+                continue
+            settings = self.try_request("GetInputSettings", {"inputName": name})
+            device = ""
+            if settings:
+                device = str(
+                    (settings.get("inputSettings") or {}).get("device_id") or ""
+                )
+            # OBS stores the device as a path that may carry a trailing
+            # description, and commonly as a stable /dev/v4l/by-id symlink.
+            found[name] = device.split()[0] if device else ""
+        return found
+
+    def stream_target(self) -> tuple[str, bool | None]:
+        """The streaming service, and whether a key is set. Never the key.
+
+        `GetStreamServiceSettings` returns the stream key in the clear. It must
+        not be returned, logged or shown: the application writes a log file
+        now, so one careless line would put it on disk in plain text.
+        """
+        result = self.try_request("GetStreamServiceSettings")
+        if not result:
+            return "", None
+        settings = result.get("streamServiceSettings") or {}
+        return str(result.get("streamServiceType") or ""), bool(settings.get("key"))
+
+    def record_directory(self) -> str:
+        result = self.try_request("GetRecordDirectory") or {}
+        return str(result.get("recordDirectory") or "")
+
+    def scene_collection(self) -> tuple[str, int]:
+        """The loaded scene collection and how many exist."""
+        result = self.try_request("GetSceneCollectionList") or {}
+        return (
+            str(result.get("currentSceneCollectionName") or ""),
+            len(result.get("sceneCollections") or ()),
+        )
 
     # ---------- live statistics ----------
 

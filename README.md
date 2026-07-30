@@ -119,6 +119,17 @@ implemented actions, no guessing. It runs, and it's useful.
   read from the kernel, so those keys keep answering while OBS is closed — which
   is exactly when you check whether there is room to record. Point the disk key
   at your recording drive if it is not your home folder.
+- 🚦 **Pre-flight check** — one key, pressed in the minute before you go live.
+  The whole deck turns into a board: is anything actually being *heard*, does
+  OBS really hold each of your capture devices, is there room on disk, is the
+  recording folder writable, is the machine already busy, which scene
+  collection is loaded, is a stream key set. Results appear one at a time and
+  the deck goes back to normal on any press.
+  It reports; it never switches a scene, activates a source or changes a
+  setting. And it does not pretend: anything it could not establish shows as a
+  faded key with a question mark, never as a tick, and the window lists what
+  each answer does **not** cover. There is no "all good" — a board you read is
+  honest, a green light would be a promise it cannot keep.
 - 🔴 **The deck tells you when something went wrong** — a key whose action fails
   is outlined in red with an exclamation mark for a few seconds, so you find out
   from the hardware you were already looking at rather than from a message in a
@@ -164,6 +175,7 @@ implemented actions, no guessing. It runs, and it's useful.
 | Area | Actions |
 | --- | --- |
 | **Scenes** | Switch program / preview · **live scene preview on the key** · studio mode · transitions (type & duration) |
+| **Before going live** | Pre-flight check: nothing muted and audio arriving, capture devices held by OBS, disk space, recording folder, machine load, which scene collection is loaded, stream key set |
 | **Recording & streaming** | Record (start, stop or toggle) · pause recording · add a chapter marker · split the recording file · stream start/stop · virtual camera |
 | **Replay & capture** | Enable & save replay buffer · source screenshots to PNG |
 | **Audio** | Mute (with feedback) · raise/lower volume · set volume in dB. Pick a scene and the list narrows to its audio inputs, plus Desktop Audio and Mic/Aux |

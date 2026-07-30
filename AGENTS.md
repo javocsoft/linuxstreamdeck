@@ -163,6 +163,7 @@ linuxstreamdeck/
 │   ├── references.py  Keys pointing at OBS objects that no longer exist.
 │   ├── sysstats.py    Whole-machine CPU from /proc/stat; free disk space.
 │   ├── starter.py     The keys a brand new configuration is offered.
+│   ├── preflight.py   Checks worth running in the minute before going live.
 │   ├── icons.py       Built-in icon library (Material Design Icons glyphs via
 │   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
 │   └── secrets.py     Async Secret Service storage for OBS and per-provider API keys.
@@ -200,6 +201,7 @@ linuxstreamdeck/
 │   ├── about.py       About dialog: application identity, credits, license and source link.
 │   ├── backups.py    Restore one of the automatic configuration backups.
 │   ├── reference_check.py Report and repoint keys OBS no longer resolves.
+│   ├── preflight.py   The pre-flight report in full sentences.
 │   ├── obs_settings.py OBS connection dialog (host/port/password).
 │   ├── screensaver_settings.py Screen saver and clean-exit display settings.
 │   └── profile_dialog.py New/edit profile dialog (name + description).
@@ -223,6 +225,7 @@ linuxstreamdeck/
 | `profile.changed` | `name, description, …` | Active profile changed. |
 | `ui.key_image` | `index:int, png:bytes` | A key was rendered; UI paints it. |
 | `ui.screensaver_frame` | `images:tuple[bytes, ...]` | One animated full-deck frame for the virtual deck. |
+| `preflight.report` | `checks:tuple` | A pre-flight run finished; the window shows the detail. |
 | `status` | `text:str` | Transient status-bar message. |
 
 The `*` topic receives every event. `EventBus.dispatcher` is `GLib.idle_add` in
@@ -1497,6 +1500,85 @@ unknown back to continuing, so no stored key changes behaviour by being loaded.
 reachable from the menu as **Open log file**. Failing to open it must never stop
 the application: a read-only home is a reason to lose the log, not the deck.
 
+### Pre-flight check
+
+`obs.preflight` answers, on the deck, the question asked in the minute before
+going live. `core/preflight.py` holds the checks; `obs/actions.py` drives them
+and paints the board; `ui/preflight.py` carries the sentences.
+
+**Nothing here has a side effect and nothing here overclaims.** Those are the
+two rules, and both were arrived at by measuring rather than by reasoning:
+
+- **`UNCHECKED` is a result, not a gap**, ranked *above* `OK` in `STATE_ORDER`,
+  always named in `Report.summary()`, drawn with its own colour, a `?` badge and
+  `unavailable=True` so it fades. Several checks can only be answered on the
+  machine OBS runs on (`is_local()`), and a check that was quietly absent would
+  look exactly like one that passed. There is deliberately **no verdict word**:
+  a board is honest, "READY" is a promise this cannot keep, and the first time
+  something broke with everything green it would be worthless for ever after.
+- **Every `detail` states its own limit**, because a key carries two words and
+  the dialog carries the sentence.
+
+**Audio is judged on the mute state, not on the level.** `muted_inputs()`
+answers a fact; a level does not. OBS meters read **before** the mute, measured
+live at -49.8 dB on an input that was muted, so a level never meant it would be
+heard. And silence is not a failure: someone running a pre-flight is usually not
+talking, so treating a quiet room as a dead microphone would cry wolf on nearly
+every run. Muted is `FAIL`, silence with nothing muted is `WARN` telling you to
+say something and try again.
+
+**Audio levels use a second, short-lived `EventClient`.** `OBSClient.measure_audio()`
+opens one subscribed to `Subs.INPUTVOLUMEMETERS` — a high-volume subscription
+the normal connection deliberately never asks for — listens, and closes. That
+separation is not tidiness: the second socket only *receives*, so it makes no
+request and can never touch the `_lock` that must serialize every request (§5.3).
+Measured live: 20 events a second, exactly as the protocol documents. It returns
+`None` rather than an empty mapping when no events arrived at all, and that
+distinction is the check: **meters arriving and flat means a dead microphone,
+while no meters means the question went unanswered.**
+
+**Cameras are checked against the kernel, never against the picture.** The
+obvious version — screenshot the source and call a black frame a dead camera —
+was tried against a real setup and **reported two of three working cameras as
+dead**. `GetSourceScreenshot` does render inactive sources, but at the moment
+someone runs a pre-flight the program scene is a holding card, so a black frame
+means nothing. Instead `capture_sources()` reads each V4L2 source's `device_id`
+and `held_video_devices()` reads `/proc/<obs-pid>/fd`: on Linux OBS never
+releases a V4L2 device when the source is hidden (there is no "deactivate when
+not showing" for V4L2), so a healthy camera has its device open even with the
+deck on a black scene. **Resolve symlinks on both sides** — a source is commonly
+configured as `/dev/v4l/by-id/...` while the descriptor reports `/dev/videoN`,
+and comparing them as strings fails a working camera. That is a real bug that
+was caught live, and `test_a_by_id_symlink_resolves_to_the_same_device` pins it.
+
+**Comparing the deck's keys against OBS cannot be automated, so it is not.**
+obs-websocket can only list the **loaded** scene collection, so a key belonging
+to any other one is indistinguishable from a key whose scene was renamed. On a
+real configuration with nine collections and a folder per collection, the
+automatic version reported **99 perfectly good references as broken** — from the
+page root *and* from inside each folder, since only one collection is ever
+loaded. `check_collection()` replaced it: it states which collection OBS has
+loaded, which is decidable, useful (with nine of them that is exactly what gets
+forgotten) and judges nothing. `check_references()` stays as the deliberate
+tool, and its docstring now says why nothing may call it on its own.
+
+**The stream key must never leave `stream_target()`.**
+`GetStreamServiceSettings` returns it in the clear; only a boolean crosses into
+`check_stream_target()`, whose signature is pinned by a test. The application
+writes a log file now, so one careless line would put someone's stream key on
+disk in plain text.
+
+**The board is a layer, not a device mode.** `DeckController.show_board()` sets
+`_board`, which `_key_spec()` consults first; the screen saver owns the deck and
+needs a thread, a brightness and a wake press, and a second thing like that
+would fight it. A press dismisses the board *instead of* running the key under
+it, `_clear_time_actions()` drops it on every view change, and the action clears
+it in a `finally` — a report left up hides every real key.
+
+`sysstats.cpu_percent()` is primed before the audio check on purpose: machine
+CPU only exists as a difference between two readings, and the two seconds the
+meters take is exactly the gap it needs.
+
 ### First run
 
 `Config.load()` on a clean machine yields one profile, one page and no keys, so
@@ -1890,7 +1972,15 @@ ignored and you will chase a ghost.
    into the configuration. When the editor shows an inherited value it must
    block its own change handler while doing so.
 
-25. **A key that cannot do its job has to say so on the key.** Keep the failure
+25. **A checker may never overclaim.** Keep `UNCHECKED` above `OK` in
+   `STATE_ORDER`, always named in the summary, and drawn faded with its own
+   badge; keep every `detail` stating its own limit and keep any verdict word
+   out. Check cameras through the device handle in `/proc`, never through a
+   screenshot, and resolve symlinks on both sides. Keep the volume meters on
+   their own short-lived `EventClient` so the flood never reaches the request
+   lock. Never let the stream key past `stream_target()`.
+
+26. **A key that cannot do its job has to say so on the key.** Keep the failure
    mark keyed by `RuntimeKey`, expired by the activity thread (never by a timer
    per failure), drawn as a border so artwork and live previews cannot hide it,
    and dropped everywhere the other transient state is dropped. Keep the fade

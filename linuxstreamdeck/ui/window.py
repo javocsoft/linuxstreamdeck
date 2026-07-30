@@ -391,6 +391,7 @@ class MainWindow(Adw.ApplicationWindow):
                       "obs.connected", "obs.disconnected"):
             bus.subscribe(topic, lambda t, d: self._update_status())
         bus.subscribe("status", lambda t, d: self._flash_status(d.get("text", "")))
+        bus.subscribe("preflight.report", self._on_preflight_report)
 
     # ---------- callbacks ----------
 
@@ -1788,6 +1789,21 @@ class MainWindow(Adw.ApplicationWindow):
         from .preferences import PreferencesDialog
 
         PreferencesDialog(self, self.app).present()
+
+    def _on_preflight_report(self, _topic: str, data: dict) -> None:
+        """Show the full report when a pre-flight key was pressed.
+
+        The deck shows two words per check; this is where the sentences and the
+        scope of each answer live. It only presents itself if the window is
+        already open: the report is worth reading, but not worth interrupting
+        someone who is looking at their deck rather than at this.
+        """
+        checks = data.get("checks") or ()
+        if not checks or not self.get_visible():
+            return
+        from .preflight import PreFlightDialog
+
+        PreFlightDialog(self, checks).present()
 
     # ---------- first run ----------
 

@@ -13,7 +13,7 @@ import json
 import logging
 from pathlib import Path
 
-from ..core import sysstats
+from ..core import preflight, sysstats
 from ..core.actions import (
     REGISTRY,
     Action,
@@ -822,6 +822,97 @@ class HotkeyTrigger(Action):
         ctx.obs.request("TriggerHotkeyByName", {"hotkeyName": p.get("hotkey", "")})
 
 
+# Board colours, matching the statistics keys so one vocabulary covers both.
+PREFLIGHT_COLORS = {
+    preflight.OK: "#1e3a24",
+    preflight.WARN: "#5a4410",
+    preflight.FAIL: "#5c1622",
+    preflight.UNCHECKED: "#26262e",
+}
+# A tick, a warning, a cross — and a question mark for what was never asked.
+# That last one is the important glyph: it is the difference between "checked
+# and fine" and "could not be checked", which must never look the same.
+PREFLIGHT_BADGES = {
+    preflight.OK: "✓",
+    preflight.WARN: "!",
+    preflight.FAIL: "✗",
+    preflight.UNCHECKED: "?",
+}
+# Beat between results appearing. Long enough to read as a sequence rather than
+# a flicker, short enough that the whole board is up in a couple of seconds.
+PREFLIGHT_BEAT = 0.22
+# How long the finished board stays before the deck returns. Any press ends it.
+PREFLIGHT_HOLD = 12.0
+
+
+def preflight_spec(check) -> dict:
+    """One result as a key image."""
+    return {
+        "label": check.label,
+        "icon_path": check.icon,
+        "bg": PREFLIGHT_COLORS.get(check.state, PREFLIGHT_COLORS[preflight.UNCHECKED]),
+        "badge": PREFLIGHT_BADGES.get(check.state, "?"),
+        # An unanswered question is drawn faded, the same treatment the deck
+        # already uses for a key that cannot do anything: it reads as "no
+        # answer here" rather than as a quiet pass.
+        "unavailable": check.state == preflight.UNCHECKED,
+    }
+
+
+@register
+class PreFlight(Action):
+    """Everything worth knowing before going live, on the deck at once.
+
+    It reports; it never fixes, switches or activates anything. Several checks
+    can only be answered on the machine OBS runs on, and those say so on their
+    own key rather than being left out, because a check that is quietly absent
+    looks exactly like one that passed.
+    """
+
+    id = "obs.preflight"
+    name = "Pre-flight check"
+    category = CAT_ADVANCED
+    description = (
+        "Check audio, cameras, disk, CPU, keys and the stream destination, "
+        "and show the results across the whole deck. Reports only; changes "
+        "nothing."
+    )
+    running_feedback = True
+
+    def execute(self, ctx, p):
+        controller = ctx.controller
+        if controller is None:
+            return
+        count = max(1, int(getattr(controller.deck, "key_count", 15)))
+        specs: dict[int, dict] = {}
+        results = []
+        try:
+            for check in preflight.run(ctx.obs, controller):
+                results.append(check)
+                if len(specs) < count:
+                    specs[len(specs)] = preflight_spec(check)
+                    controller.show_board(specs)
+                if ctx.wait_until_stopped(PREFLIGHT_BEAT):
+                    return
+            report = preflight.Report(checks=results)
+            ctx.bus.emit("status", text=report.summary())
+            # The keys carry two words each; the window carries the sentences,
+            # including what every result does not cover.
+            ctx.bus.emit("preflight.report", checks=tuple(results))
+            if len(results) > count:
+                ctx.bus.emit(
+                    "status",
+                    text=(
+                        f"{report.summary()} - only {count} of {len(results)} "
+                        "fit on the deck; open the window for the rest"
+                    ),
+                )
+            ctx.wait_until_stopped(PREFLIGHT_HOLD)
+        finally:
+            # Always: leaving a report on the deck would hide every real key.
+            controller.show_board(None)
+
+
 @register
 class RawRequest(Action):
     id = "obs.raw"
@@ -1152,6 +1243,7 @@ apply_default_icons({
     "obs.hotkey": "mdi:keyboard",
     "obs.raw": "mdi:code-json",
     "obs.stats": "mdi:chart-line",
+    "obs.preflight": "mdi:clipboard-check-outline",
 })
 
 

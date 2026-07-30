@@ -250,6 +250,8 @@ class DeckController:
         self._running: dict[RuntimeKey, int] = {}
         # Keys whose last run failed, and when that mark stops being shown.
         self._failed: dict[RuntimeKey, float] = {}
+        # A temporary report drawn over the whole grid; see show_board().
+        self._board: dict[int, dict] | None = None
         self._running_lock = threading.Lock()
         self._busy_phase = False
         self._busy_wakeup = threading.Event()
@@ -658,6 +660,11 @@ class DeckController:
         Deliberately only on demand and only here: switching scene collection
         replaces every name at once, so a checker that ran by itself would cry
         wolf on every switch and be ignored by the time it mattered.
+
+        It is also why nothing may call this on its own: only the loaded
+        collection can be listed, so a key belonging to another one is
+        indistinguishable from a broken key, and only the user standing in
+        front of the grid knows which is which.
         """
         from . import references
 
@@ -1104,6 +1111,11 @@ class DeckController:
         wait out the double-press window, which it must never do.
         """
         if self._stopping.is_set() or self.deck.record_activity():
+            return
+        if self._board is not None:
+            # A report is up: the press that dismisses it must not also run
+            # whatever key happens to be underneath.
+            self.show_board(None)
             return
         if self.is_reserved_key(index):
             self.close_folder()
@@ -1672,6 +1684,8 @@ class DeckController:
         self._clear_gestures()
         with self._running_lock:
             self._failed.clear()
+        # A report describes the grid it was run from.
+        self._board = None
 
     def _cancel_all_timer_sounds(self) -> None:
         with self._notification_lock:
@@ -1730,7 +1744,31 @@ class DeckController:
 
     # ---------- key specs (feedback + compose parameters) ----------
 
+    # ---------- temporary board over the whole grid ----------
+
+    def show_board(self, specs: dict[int, dict] | None) -> None:
+        """Paint an arbitrary set of key images over the grid, or clear it.
+
+        A *layer*, not a device mode. The screen saver owns the deck and needs
+        its own thread, its own brightness and a wake press; this only replaces
+        what each key draws, so it costs one lookup in `_key_spec` and cannot
+        interfere with the saver or with hotplug. Whatever is showing it, the
+        real configuration underneath is untouched.
+        """
+        self._board = dict(specs) if specs else None
+        self.refresh()
+
+    def board_active(self) -> bool:
+        return self._board is not None
+
     def _key_spec(self, index: int, kc: KeyConfig | None, size) -> dict:
+        # Read once: it is replaced wholesale from an action worker while the
+        # render worker is reading it.
+        board = self._board
+        if board is not None:
+            spec = dict(board.get(index) or {})
+            spec["size"] = size
+            return spec
         if self.is_reserved_key(index):
             return self._back_spec(size)
         if kc is None or kc.is_empty():
