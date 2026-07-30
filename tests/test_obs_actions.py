@@ -21,8 +21,120 @@ class RecordingObs:
         return self.responses.get(name, {})
 
 
-def context(obs):
-    return SimpleNamespace(obs=obs, bus=SimpleNamespace(emit=lambda *a, **k: None))
+def context(obs, messages: list | None = None):
+    return SimpleNamespace(
+        obs=obs,
+        bus=SimpleNamespace(
+            emit=lambda _t, **kw: (
+                messages.append(kw.get("text", "")) if messages is not None else None
+            )
+        ),
+    )
+
+
+class RecordMarkerTests(unittest.TestCase):
+    """Marking and splitting a recording: two things a key exists for.
+
+    Both are recent obs-websocket requests, so the likeliest reason either
+    fails is the OBS version or the recording format rather than anything the
+    user did. Saying "request failed" on a key pressed mid-stream helps nobody,
+    so the message names what to change.
+    """
+
+    def setUp(self) -> None:
+        self.obs = RecordingObs()
+        self.messages: list[str] = []
+        self.ctx = context(self.obs, self.messages)
+
+    def _action(self, action_id: str):
+        action = action_registry.get(action_id)
+        self.assertIsNotNone(action, action_id)
+        return action
+
+    # ---------- chapters ----------
+
+    def test_a_chapter_needs_something_to_mark(self) -> None:
+        self._action("obs.record_chapter").execute(self.ctx, {})
+
+        self.assertEqual(self.obs.requests, [])
+        self.assertIn("no recording", self.messages[0])
+
+    def test_a_chapter_is_created_while_recording(self) -> None:
+        self.obs.state.recording = True
+
+        self._action("obs.record_chapter").execute(self.ctx, {"name": "Boss fight"})
+
+        self.assertEqual(
+            self.obs.requests, [("CreateRecordChapter", {"chapterName": "Boss fight"})]
+        )
+
+    def test_an_unnamed_chapter_sends_no_name(self) -> None:
+        """OBS numbers it, which is the point of leaving the field blank."""
+        self.obs.state.recording = True
+
+        self._action("obs.record_chapter").execute(self.ctx, {"name": "   "})
+
+        self.assertEqual(self.obs.requests, [("CreateRecordChapter", None)])
+
+    def test_a_refused_chapter_says_what_is_needed(self) -> None:
+        self.obs.state.recording = True
+
+        def refuse(_name, _data=None):
+            raise RuntimeError("unknown request type")
+
+        self.obs.request = refuse
+
+        with self.assertRaises(RuntimeError) as caught:
+            self._action("obs.record_chapter").execute(self.ctx, {})
+
+        message = str(caught.exception)
+        self.assertIn("30.2", message)
+        self.assertIn("MP4", message)
+
+    # ---------- splitting ----------
+
+    def test_splitting_needs_something_to_split(self) -> None:
+        self._action("obs.record_split").execute(self.ctx, {})
+
+        self.assertEqual(self.obs.requests, [])
+        self.assertIn("no recording", self.messages[0])
+
+    def test_splitting_while_recording_sends_the_request(self) -> None:
+        self.obs.state.recording = True
+
+        self._action("obs.record_split").execute(self.ctx, {})
+
+        self.assertEqual(self.obs.requests, [("SplitRecordFile", None)])
+
+    def test_a_refused_split_says_what_is_needed(self) -> None:
+        self.obs.state.recording = True
+
+        def refuse(_name, _data=None):
+            raise RuntimeError("unknown request type")
+
+        self.obs.request = refuse
+
+        with self.assertRaises(RuntimeError) as caught:
+            self._action("obs.record_split").execute(self.ctx, {})
+
+        self.assertIn("OBS 30", str(caught.exception))
+
+    # ---------- how they look ----------
+
+    def test_both_light_up_only_while_there_is_a_recording(self) -> None:
+        """So the key says when it can be used, not only when it was wasted."""
+        for action_id in ("obs.record_chapter", "obs.record_split"):
+            with self.subTest(action=action_id):
+                action = self._action(action_id)
+                self.obs.state.recording = False
+                self.assertFalse(action.feedback(self.ctx, {})["active"])
+                self.obs.state.recording = True
+                self.assertTrue(action.feedback(self.ctx, {})["active"])
+
+    def test_both_have_an_icon_of_their_own(self) -> None:
+        for action_id in ("obs.record_chapter", "obs.record_split"):
+            with self.subTest(action=action_id):
+                self.assertTrue(self._action(action_id).default_icon)
 
 
 class RecordModeTests(unittest.TestCase):

@@ -159,7 +159,7 @@ class FolderNavigationTests(unittest.TestCase):
         self.bus = EventBus()
         self.deck = FakeDeck()
         self.controller = DeckController(
-            self.config, self.bus, SimpleNamespace(), self.deck
+            self.config, self.bus, SimpleNamespace(connected=False), self.deck
         )
         self.page = self.config.pages[0]
         self.page.set_key(
@@ -298,7 +298,7 @@ class FolderKeyStateTests(unittest.TestCase):
         self.bus = EventBus()
         self.deck = FakeDeck()
         self.controller = DeckController(
-            self.config, self.bus, SimpleNamespace(), self.deck
+            self.config, self.bus, SimpleNamespace(connected=False), self.deck
         )
         self.page = self.config.pages[0]
         self.page.set_key(3, folder_key("Scenes", k7=action_key()))
@@ -378,7 +378,7 @@ class FolderRenderingTests(unittest.TestCase):
         self.bus = EventBus()
         self.deck = FakeDeck()
         self.controller = DeckController(
-            self.config, self.bus, SimpleNamespace(), self.deck
+            self.config, self.bus, SimpleNamespace(connected=False), self.deck
         )
         self.page = self.config.pages[0]
 
@@ -548,7 +548,7 @@ class FolderPageRenameTests(unittest.TestCase):
         config = Config()
         bus = EventBus()
         deck = FakeDeck()
-        controller = DeckController(config, bus, SimpleNamespace(), deck)
+        controller = DeckController(config, bus, SimpleNamespace(connected=False), deck)
         self.addCleanup(controller.shutdown)
         config.pages.append(Page(name="Scenes"))
         inside = KeyConfig(

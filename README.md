@@ -119,6 +119,27 @@ implemented actions, no guessing. It runs, and it's useful.
   read from the kernel, so those keys keep answering while OBS is closed — which
   is exactly when you check whether there is room to record. Point the disk key
   at your recording drive if it is not your home folder.
+- 🔴 **The deck tells you when something went wrong** — a key whose action fails
+  is outlined in red with an exclamation mark for a few seconds, so you find out
+  from the hardware you were already looking at rather than from a message in a
+  window that is probably hidden. A key that cannot work at all — an OBS key with
+  OBS closed — is faded, so "not ready" no longer looks exactly like "idle". A
+  full log is kept at `~/.config/linuxstreamdeck/linuxstreamdeck.log` and opens
+  straight from the menu, which is what to attach to a bug report.
+- 🛑 **Stop a sequence when a step fails** — a key with several actions normally
+  runs the rest even if one fails, which is right when they are independent. When
+  the list is a recipe — switch scene, wait, start recording — set **If an action
+  fails** to *Stop the sequence*, so a failed switch cannot leave you recording
+  the wrong scene.
+- 🔖 **Chapter markers and recording splits** — mark the moment something worth
+  keeping happens and find it as a chapter in your editor instead of hunting
+  through three hours of footage, or close the current recording file and carry
+  on into a new one without stopping. Both need a recent OBS and say so plainly
+  if it is too old.
+- 🎬 **Something on the deck from the first minute** — a fresh install offers to
+  put a handful of keys on your deck: recording, streaming, a chapter marker,
+  studio mode, a stopwatch and live CPU and disk readings. None need setting up,
+  and you can change or remove any of them. Decline it and the deck stays empty.
 - 💾 **Portable configuration backups** — export or import profiles, pages, keys,
   settings, custom key icons, the custom exit image and referenced playback or
   timer audio in one file.
@@ -143,7 +164,7 @@ implemented actions, no guessing. It runs, and it's useful.
 | Area | Actions |
 | --- | --- |
 | **Scenes** | Switch program / preview · **live scene preview on the key** · studio mode · transitions (type & duration) |
-| **Recording & streaming** | Record (start, stop or toggle) · pause recording · stream start/stop · virtual camera |
+| **Recording & streaming** | Record (start, stop or toggle) · pause recording · add a chapter marker · split the recording file · stream start/stop · virtual camera |
 | **Replay & capture** | Enable & save replay buffer · source screenshots to PNG |
 | **Audio** | Mute (with feedback) · raise/lower volume · set volume in dB. Pick a scene and the list narrows to its audio inputs, plus Desktop Audio and Mic/Aux |
 | **Sources & filters** | Show/hide sources per scene (including sources inside groups) · enable/disable filters · **set a text source** · **refresh a browser source** · move/scale/rotate a source |

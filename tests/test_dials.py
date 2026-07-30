@@ -226,12 +226,13 @@ class DialControllerTests(unittest.TestCase):
         self.config = Config()
         self.deck = FakeDeck()
         self.controller = DeckController(
-            self.config, EventBus(), SimpleNamespace(), self.deck
+            self.config, EventBus(), SimpleNamespace(connected=False), self.deck
         )
         self.addCleanup(self.controller.shutdown)
         self.ran: list[tuple] = []
         self.controller._submit_steps = (
-            lambda steps, index, show_running, execution_key=None: self.ran.append(
+            lambda steps, index, show_running, execution_key=None,
+            stop_on_error=False: self.ran.append(
                 (tuple(s.action for s in steps), index, execution_key)
             )
         )
@@ -359,7 +360,7 @@ class DialRenderingTests(unittest.TestCase):
         config = Config()
         deck = FakeDeck()
         controller = DeckController(
-            config, EventBus(), SimpleNamespace(), deck
+            config, EventBus(), SimpleNamespace(connected=False), deck
         )
         self.addCleanup(controller.shutdown)
         config.pages[0].set_dial(0, dial(steps_press=["obs.record"]))
@@ -372,7 +373,7 @@ class DialRenderingTests(unittest.TestCase):
         config = Config()
         deck = FakeDeck(dial_count=0)
         controller = DeckController(
-            config, EventBus(), SimpleNamespace(), deck
+            config, EventBus(), SimpleNamespace(connected=False), deck
         )
         self.addCleanup(controller.shutdown)
 
@@ -404,7 +405,7 @@ class DialBundleTests(unittest.TestCase):
         ]
         config.pages[0].set_dial(0, target)
         controller = DeckController(
-            config, EventBus(), SimpleNamespace(), FakeDeck()
+            config, EventBus(), SimpleNamespace(connected=False), FakeDeck()
         )
         self.addCleanup(controller.shutdown)
         controller.set_page(1)
@@ -419,7 +420,7 @@ class DialBundleTests(unittest.TestCase):
         config = Config()
         config.pages[0].set_dial(0, dial(steps_press=["obs.record"]))
         controller = DeckController(
-            config, EventBus(), SimpleNamespace(), FakeDeck()
+            config, EventBus(), SimpleNamespace(connected=False), FakeDeck()
         )
         self.addCleanup(controller.shutdown)
 

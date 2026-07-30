@@ -14,7 +14,14 @@ import logging
 from pathlib import Path
 
 from ..core import sysstats
-from ..core.actions import Action, ActionContext, Param, apply_default_icons, register
+from ..core.actions import (
+    REGISTRY,
+    Action,
+    ActionContext,
+    Param,
+    apply_default_icons,
+    register,
+)
 
 log = logging.getLogger(__name__)
 
@@ -336,6 +343,89 @@ class ReplaySave(Action):
 
     def execute(self, ctx, p):
         ctx.obs.request("SaveReplayBuffer")
+
+
+@register
+class RecordChapter(Action):
+    """Mark a moment in the recording, for finding it again afterwards.
+
+    This is what a physical key is for: something worth keeping happens, you
+    press once, and the chapter is waiting for you in the editor instead of
+    somewhere in three hours of footage.
+
+    It needs OBS 30.2 or newer (obs-websocket 5.5) and a recording format that
+    can carry chapters, which today means hybrid MP4. Both are reported in
+    words, because "request failed" on a key pressed mid-stream tells nobody
+    what to change.
+    """
+
+    id = "obs.record_chapter"
+    name = "Add recording chapter"
+    category = CAT_OUTPUT
+    description = (
+        "Mark this moment in the recording so it is easy to find later. "
+        "Needs OBS 30.2+ recording to hybrid MP4."
+    )
+    params = [
+        Param(
+            "name",
+            "Chapter name",
+            default="",
+            placeholder="Numbered automatically when left blank",
+        ),
+    ]
+
+    def execute(self, ctx, p):
+        if not ctx.obs.state.recording:
+            ctx.bus.emit("status", text="There is no recording to mark")
+            return
+        name = str(p.get("name") or "").strip()
+        try:
+            ctx.obs.request(
+                "CreateRecordChapter", {"chapterName": name} if name else None
+            )
+        except Exception as error:
+            raise RuntimeError(_CHAPTER_HELP.format(error=error)) from error
+        ctx.bus.emit(
+            "status", text=f"Chapter «{name}» added" if name else "Chapter added"
+        )
+
+    def feedback(self, ctx, p):
+        # Lit while there is a recording to mark, so the key says when it can
+        # be used instead of only when it has been pressed in vain.
+        return {"active": ctx.obs.state.recording}
+
+
+@register
+class RecordSplit(Action):
+    id = "obs.record_split"
+    name = "Split recording file"
+    category = CAT_OUTPUT
+    description = (
+        "Close the current recording file and carry on into a new one, "
+        "without stopping. Needs OBS 30+."
+    )
+
+    def execute(self, ctx, p):
+        if not ctx.obs.state.recording:
+            ctx.bus.emit("status", text="There is no recording to split")
+            return
+        try:
+            ctx.obs.request("SplitRecordFile")
+        except Exception as error:
+            raise RuntimeError(_SPLIT_HELP.format(error=error)) from error
+        ctx.bus.emit("status", text="Recording continues in a new file")
+
+    def feedback(self, ctx, p):
+        return {"active": ctx.obs.state.recording}
+
+
+# Both requests are recent additions to obs-websocket, so the likeliest reason
+# either fails is a version or a format rather than anything the user did wrong.
+_CHAPTER_HELP = (
+    "chapters need OBS 30.2 or newer, recording to hybrid MP4 ({error})"
+)
+_SPLIT_HELP = "splitting the recording file needs OBS 30 or newer ({error})"
 
 
 @register
@@ -952,6 +1042,14 @@ class Stats(Action):
         ),
     ]
 
+    def requires_obs(self, params: dict) -> bool:
+        """Only the measurements that actually come from OBS.
+
+        A key showing free disk space or system CPU keeps working with OBS
+        closed, so dimming it would be a lie.
+        """
+        return stat_needs_obs((params or {}).get("metric"))
+
     def execute(self, ctx, p):
         """Pressing a statistics key reports the value it is showing.
 
@@ -1035,6 +1133,8 @@ apply_default_icons({
     "obs.profile": "mdi:account-cog",
     "obs.record": "mdi:record-circle",
     "obs.record_pause": "mdi:pause-circle",
+    "obs.record_chapter": "mdi:bookmark-plus-outline",
+    "obs.record_split": "mdi:content-cut",
     "obs.stream": "mdi:broadcast",
     "obs.virtualcam": "mdi:webcam",
     "obs.replay": "mdi:backup-restore",
@@ -1053,3 +1153,19 @@ apply_default_icons({
     "obs.raw": "mdi:code-json",
     "obs.stats": "mdi:chart-line",
 })
+
+
+def _mark_obs_dependency() -> None:
+    """Tell the deck that everything defined here needs the connection.
+
+    Derived from the category rather than written on each class, so an action
+    added later cannot forget it: every action in this module is an OBS action
+    by definition, and one that quietly missed the flag would render as usable
+    while OBS is closed, which is the exact confusion this exists to remove.
+    """
+    for action in REGISTRY.values():
+        if action.category.startswith("OBS"):
+            action.needs_obs = True
+
+
+_mark_obs_dependency()

@@ -48,6 +48,14 @@ BACKUP_SUFFIX = ".json"
 BACKUP_KEEP = 8
 BACKUP_MIN_INTERVAL = 300.0
 
+# Where the log is kept. It used to go to stderr only, which is unreachable for
+# the normal case of a session autostart, so an action that failed left no trace
+# anywhere the user could look. Small and rotated: it is evidence for a bug
+# report, not a history of everything the deck has ever done.
+LOG_FILE = CONFIG_DIR / "linuxstreamdeck.log"
+LOG_MAX_BYTES = 512 * 1024
+LOG_KEEP = 2
+
 DEFAULT_KEY_BG = "#1e1e28"
 
 # Label font size. An empty value is an inheritance marker (the renderer picks a
@@ -248,6 +256,23 @@ STEP_FIELDS = (
 # keys, so they live in their own mapping on the page.
 DIAL_STEP_FIELDS = ("steps_left", "steps_right", "steps_press")
 
+# What a list of actions does when one of them fails. Carrying on is the old
+# behaviour and stays the default, because most sequences are independent things
+# done together. Stopping matters when the list is a recipe: "switch scene, wait,
+# start recording" should not record the wrong scene because the switch failed.
+ON_ERROR_CONTINUE = "continue"
+ON_ERROR_STOP = "stop"
+ON_ERROR_CHOICES = (
+    (ON_ERROR_CONTINUE, "Run the remaining actions"),
+    (ON_ERROR_STOP, "Stop the sequence"),
+)
+
+
+def _on_error(value) -> str:
+    """Normalize the stored choice; anything unknown carries on as before."""
+    choice = str(value or "").strip().lower()
+    return choice if choice in dict(ON_ERROR_CHOICES) else ON_ERROR_CONTINUE
+
 
 def _migrate_page_action(action, params) -> tuple[str, dict]:
     """Split the legacy combined page action into one explicit action."""
@@ -404,6 +429,10 @@ class KeyConfig:
     steps_right: list[ActionStep] = field(default_factory=list)
     steps_press: list[ActionStep] = field(default_factory=list)
 
+    # What every list above does when one of its actions fails. Single-action
+    # keys ignore it: there is nothing after the action that failed.
+    on_error: str = ON_ERROR_CONTINUE
+
     # kind == folder: the grid of keys it opens. Excluded from equality on
     # purpose: its contents are edited by navigating into the folder and saved
     # there, so the editor's unsaved-change check must not read an edit made
@@ -504,6 +533,7 @@ class KeyConfig:
             steps_left=steps("steps_left"),
             steps_right=steps("steps_right"),
             steps_press=steps("steps_press"),
+            on_error=_on_error(d.get("on_error")),
             folder=_folder_contents(d.get("folder"), kind, depth),
             label=d.get("label", ""),
             icon=d.get("icon", ""),

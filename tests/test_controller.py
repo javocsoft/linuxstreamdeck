@@ -53,7 +53,7 @@ class ControllerActivityTests(unittest.TestCase):
         self.controller = DeckController(
             self.config,
             self.bus,
-            SimpleNamespace(),
+            SimpleNamespace(connected=False),
             self.deck,
         )
 

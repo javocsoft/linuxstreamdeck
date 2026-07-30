@@ -45,6 +45,11 @@ def _render_everything() -> None:
     renderer.compose((72, 72), label="Live", icon_path="mdi:play", badge="RUN")
     renderer.compose((72, 72), label="Timer", center_text="00:12")
     renderer.compose((72, 72), label="Live", image=_preview_frame(), active=True)
+    # The two states that mark a key rather than its action: both draw, and the
+    # faded one also composites the finished image.
+    renderer.compose((72, 72), label="Rec", icon_path="mdi:play", failed=True,
+                     badge=renderer.ERROR_BADGE)
+    renderer.compose((72, 72), label="Rec", icon_path="mdi:play", unavailable=True)
     for style in ("linuxstreamdeck", "split_flap", "matrix_code", "hal_9000"):
         screensaver.screensaver_frame(style, 1.5, 15, (72, 72), 40)
     for frame in startup_animation.startup_frames(15, (72, 72), 40):

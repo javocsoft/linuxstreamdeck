@@ -27,6 +27,7 @@ from .core.config import (  # noqa: E402
 from .core.controller import DeckController  # noqa: E402
 from .core.events import EventBus  # noqa: E402
 from .core.secrets import ApiKeyStore, SecretStore  # noqa: E402
+from .core.starter import is_first_run  # noqa: E402
 from .device.manager import DeckManager  # noqa: E402
 from .obs.client import OBSClient  # noqa: E402
 
@@ -56,6 +57,9 @@ class LinuxStreamDeckApp:
         self._quitting = False
         self.obs_password_ready = False
 
+        # Asked before loading, which is what creates the file: a first run is
+        # the one moment an empty deck is worth offering to fill.
+        self.first_run = is_first_run()
         self.config = Config.load()
         self.secrets = SecretStore()
         self.ai_keys = ApiKeyStore()
@@ -101,6 +105,11 @@ class LinuxStreamDeckApp:
                 )
                 return
         self.present_window()
+        if self.first_run:
+            # Once only, and after the window is up: the offer is a dialog that
+            # is modal to it.
+            self.first_run = False
+            GLib.idle_add(self.window.offer_starter_keys)
 
     def _verify_hidden_start(self) -> bool:
         if not self.tray_available and not self._shutting_down:

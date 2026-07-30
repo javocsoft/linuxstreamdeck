@@ -32,6 +32,8 @@ from ..core.config import (  # noqa: E402
     KIND_RANDOM,
     KIND_SINGLE,
     KIND_TOGGLE,
+    ON_ERROR_CHOICES,
+    ON_ERROR_CONTINUE,
     ActionStep,
     Folder,
     KeyConfig,
@@ -49,6 +51,10 @@ KINDS = [
     (KIND_FOLDER, "Folder"),
 ]
 KIND_IDS = [k for k, _ in KINDS]
+
+# The key types that run a list of actions, and can therefore be asked what a
+# failure should do to the rest of it.
+ERROR_POLICY_KINDS = (KIND_MULTI, KIND_TOGGLE, KIND_RANDOM, KIND_PRESS)
 
 
 class EditorPanel(Gtk.Box):
@@ -107,6 +113,7 @@ class EditorPanel(Gtk.Box):
         self.single_press_list: StepList | None = None
         self.double_press_list: StepList | None = None
         self.long_press_list: StepList | None = None
+        self.on_error_dd: Gtk.DropDown | None = None
 
         self.clear()
 
@@ -211,6 +218,9 @@ class EditorPanel(Gtk.Box):
                 kc.font_size_off = self.app_off.font_size()
                 kc.text_color_off = self.app_off.text_color()
 
+        if kind in ERROR_POLICY_KINDS:
+            kc.on_error = self._current_on_error()
+
         if self.app_main is not None:
             kc.label = self.app_main.label()
             kc.icon = self.app_main.icon()
@@ -284,6 +294,7 @@ class EditorPanel(Gtk.Box):
         self.on_list = self.off_list = self.app_main = self.app_off = None
         self.single_press_list = self.double_press_list = None
         self.long_press_list = None
+        self.on_error_dd = None
         kind = self._current_kind()
         self._show_gesture_tests(kind == KIND_PRESS)
         self._folder = (
@@ -480,6 +491,36 @@ class EditorPanel(Gtk.Box):
                 kc.text_color_off,
             )
             self.body.append(self._frame("■ OFF state", [self.off_list, self.app_off]))
+
+        if kind in ERROR_POLICY_KINDS:
+            self._append_error_policy(kc)
+
+    def _append_error_policy(self, kc: KeyConfig) -> None:
+        """What a failing action does to the rest of the key.
+
+        Only a list can answer it: a single action has nothing left to abandon,
+        and a folder runs nothing at all. Carrying on stays the default, so no
+        existing key changes behaviour by being opened and saved.
+        """
+        self.on_error_dd = Gtk.DropDown.new_from_strings(
+            [name for _, name in ON_ERROR_CHOICES]
+        )
+        values = [value for value, _ in ON_ERROR_CHOICES]
+        self.on_error_dd.set_selected(
+            values.index(kc.on_error) if kc.on_error in values else 0
+        )
+        self.body.append(
+            self._labelled("If an action fails", self.on_error_dd)
+        )
+
+    def _current_on_error(self) -> str:
+        if self.on_error_dd is None:
+            return ON_ERROR_CONTINUE
+        index = self.on_error_dd.get_selected()
+        values = [value for value, _ in ON_ERROR_CHOICES]
+        if index == Gtk.INVALID_LIST_POSITION or index >= len(values):
+            return ON_ERROR_CONTINUE
+        return values[index]
 
     @staticmethod
     def _action_icon(action_id: str) -> str:

@@ -51,14 +51,15 @@ class GestureTests(unittest.TestCase):
         self.bus = EventBus()
         self.deck = FakeDeck()
         self.controller = DeckController(
-            self.config, self.bus, SimpleNamespace(), self.deck
+            self.config, self.bus, SimpleNamespace(connected=False), self.deck
         )
         self.ran: list = []
         # Capture what the controller decides to run instead of executing it.
         patcher = patch.object(
             DeckController,
             "_submit_steps",
-            lambda _self, steps, index, show_running=True: self.ran.append(
+            lambda _self, steps, index, show_running=True,
+            stop_on_error=False: self.ran.append(
                 [step.params.get("command") for step in steps]
             ),
         )
@@ -246,13 +247,14 @@ class RandomKeyTests(unittest.TestCase):
         self.config = Config()
         self.deck = FakeDeck()
         self.controller = DeckController(
-            self.config, EventBus(), SimpleNamespace(), self.deck
+            self.config, EventBus(), SimpleNamespace(connected=False), self.deck
         )
         self.ran: list = []
         patcher = patch.object(
             DeckController,
             "_submit_steps",
-            lambda _self, steps, index, show_running=True: self.ran.append(
+            lambda _self, steps, index, show_running=True,
+            stop_on_error=False: self.ran.append(
                 [step.params.get("command") for step in steps]
             ),
         )
@@ -316,7 +318,7 @@ class KeySpecTests(unittest.TestCase):
         self.config = Config()
         self.deck = FakeDeck()
         self.controller = DeckController(
-            self.config, EventBus(), SimpleNamespace(), self.deck
+            self.config, EventBus(), SimpleNamespace(connected=False), self.deck
         )
 
     def tearDown(self) -> None:

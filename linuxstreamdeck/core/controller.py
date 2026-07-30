@@ -30,6 +30,9 @@ from .config import (
     KIND_SINGLE,
     KIND_TOGGLE,
     MAX_FOLDER_DEPTH,
+    ON_ERROR_CONTINUE,
+    ON_ERROR_STOP,
+    STEP_FIELDS,
     ActionStep,
     Config,
     ImportResult,
@@ -44,6 +47,13 @@ from ..device import renderer
 log = logging.getLogger(__name__)
 
 BUSY_PULSE_SECONDS = 0.75
+
+# How long a key stays marked after one of its actions failed. Long enough to be
+# noticed by someone looking at the deck a moment later, short enough that it
+# does not go on hiding the key's real state. The message it used to rely on
+# went to a status bar in a window that is normally hidden behind the status
+# icon, so the deck itself has to say it.
+ERROR_FEEDBACK_SECONDS = 4.0
 
 # Press-gesture keys. Holding at least LONG_PRESS_SECONDS is a long press; a
 # second tap within DOUBLE_PRESS_SECONDS of the first release is a double press.
@@ -61,6 +71,15 @@ GESTURE_LONG = "long"
 # How many key changes can be taken back. The history is dropped on every
 # change of view, so this only ever bounds one grid's worth of edits.
 UNDO_DEPTH = 20
+
+
+def _stops_on_error(kc) -> bool:
+    """Whether a failing action should abandon the rest of this key.
+
+    Only a list of actions can answer yes: a single-action key has nothing left
+    to abandon, so its choice would be meaningless either way.
+    """
+    return getattr(kc, "on_error", ON_ERROR_CONTINUE) == ON_ERROR_STOP
 
 
 def gesture_steps(kc, gesture: str) -> list:
@@ -229,6 +248,8 @@ class DeckController:
         self._toggle: dict[RuntimeKey, bool] = {}
         # Number of queued/running feedback-enabled invocations for each key.
         self._running: dict[RuntimeKey, int] = {}
+        # Keys whose last run failed, and when that mark stops being shown.
+        self._failed: dict[RuntimeKey, float] = {}
         self._running_lock = threading.Lock()
         self._busy_phase = False
         self._busy_wakeup = threading.Event()
@@ -832,6 +853,9 @@ class DeckController:
         self._clocks.swap(pa, pb)
         self._cancel_timer_sound(pa)
         self._cancel_timer_sound(pb)
+        # A mark refers to the action that failed, which is no longer here.
+        self._forget_failure(pa)
+        self._forget_failure(pb)
         # A gesture in flight belonged to the key that just moved away.
         self._cancel_gesture(pa)
         self._cancel_gesture(pb)
@@ -875,6 +899,8 @@ class DeckController:
         self._clocks.reset(key, refresh=False)
         self._cancel_timer_sound(key)
         self._cancel_gesture(key)
+        # The mark belonged to the action that used to be here.
+        self._forget_failure(key)
         if drop_folder_state:
             self._discard_folder_state(index)
 
@@ -892,6 +918,9 @@ class DeckController:
 
         for key in [key for key in self._toggle if inside(key)]:
             self._toggle.pop(key, None)
+        with self._running_lock:
+            for key in [key for key in self._failed if inside(key)]:
+                self._failed.pop(key, None)
         self._clocks.discard(inside)
         with self._notification_lock:
             controls = [
@@ -1021,6 +1050,7 @@ class DeckController:
         except Exception as error:
             log.exception("Long press of %s failed", action.id)
             self.bus.emit("status", text=f"Error: {error}")
+            self._note_failure(key)
             return
         if not handled and not self._stopping.is_set():
             self.press(index)
@@ -1042,7 +1072,12 @@ class DeckController:
         steps = list(getattr(kc, f"steps_{gesture}", []))
         if not steps:
             return
-        self._submit_steps(steps, index, show_running=True)
+        self._submit_steps(
+            steps,
+            index,
+            show_running=True,
+            stop_on_error=_stops_on_error(kc),
+        )
 
     def _clear_gestures(self) -> None:
         with self._gesture_lock:
@@ -1120,6 +1155,7 @@ class DeckController:
                 kc.kind in (KIND_MULTI, KIND_TOGGLE, KIND_RANDOM, KIND_PRESS)
                 or bool(single_action and single_action.running_feedback)
             ),
+            stop_on_error=_stops_on_error(kc),
         )
 
     # ---------- dials (Stream Deck +) ----------
@@ -1169,6 +1205,7 @@ class DeckController:
                 index,
                 show_running=False,
                 execution_key=execution_key,
+                stop_on_error=_stops_on_error(dial),
             )
 
     def refresh_touchscreen(self) -> None:
@@ -1209,6 +1246,7 @@ class DeckController:
         index: int,
         show_running: bool,
         execution_key: RuntimeKey | None = None,
+        stop_on_error: bool = False,
     ) -> None:
         """Queue a key's steps on an action worker, with running feedback.
 
@@ -1229,6 +1267,7 @@ class DeckController:
                 runtime_key,
                 control,
                 execution_key,
+                stop_on_error,
             )
         except RuntimeError:
             if control is not None:
@@ -1255,6 +1294,7 @@ class DeckController:
                 "status",
                 text=f"Error in «{action.name}»: {error}",
             )
+            self._note_failure(key)
 
     def _run_steps(
         self,
@@ -1263,6 +1303,7 @@ class DeckController:
         runtime_key: RuntimeKey | None = None,
         control: _ExecutionControl | None = None,
         execution_key: RuntimeKey | None = None,
+        stop_on_error: bool = False,
     ) -> None:
         run_ctx = ActionContext(
             obs=self.obs,
@@ -1290,7 +1331,15 @@ class DeckController:
                     log.debug("Ran %s (key %d)", action.id, index)
                 except Exception as e:
                     log.exception("Error running %s", action.id)
-                    self.bus.emit("status", text=f"Error in «{action.name}»: {e}")
+                    text = f"Error in «{action.name}»: {e}"
+                    if stop_on_error:
+                        text += " - the rest of this key was not run"
+                    self.bus.emit("status", text=text)
+                    self._note_failure(
+                        execution_key or runtime_key or self._tkey(index)
+                    )
+                    if stop_on_error:
+                        return
         finally:
             if control is not None:
                 self._finish_execution(
@@ -1364,6 +1413,42 @@ class DeckController:
         with self._running_lock:
             return key in self._running, self._busy_phase
 
+    # ---------- failure feedback ----------
+
+    def _note_failure(self, key: RuntimeKey | None) -> None:
+        """Mark a key as having just failed, and repaint it.
+
+        The activity thread is woken because it is what expires the mark; it is
+        the same thread that pulses running keys, so a failure needs no timer
+        and no second thread of its own.
+        """
+        if key is None:
+            return
+        with self._running_lock:
+            self._failed[key] = time.monotonic() + ERROR_FEEDBACK_SECONDS
+            self._busy_wakeup.set()
+        self._refresh_runtime_keys((key,))
+
+    def _failed_state(self, index: int) -> bool:
+        with self._running_lock:
+            return self._tkey(index) in self._failed
+
+    def _forget_failure(self, key: RuntimeKey) -> None:
+        """Drop the mark, for a key whose meaning has just changed."""
+        with self._running_lock:
+            self._failed.pop(key, None)
+
+    def _expire_failures(self) -> tuple[RuntimeKey, ...]:
+        """Marks whose time is up, removed and returned so they repaint once."""
+        now = time.monotonic()
+        with self._running_lock:
+            done = tuple(
+                key for key, until in self._failed.items() if until <= now
+            )
+            for key in done:
+                self._failed.pop(key, None)
+        return done
+
     def _busy_loop(self) -> None:
         while not self._stopping.is_set():
             self._busy_wakeup.wait()
@@ -1371,14 +1456,19 @@ class DeckController:
                 return
             if self._stopping.wait(BUSY_PULSE_SECONDS):
                 return
+            expired = self._expire_failures()
             with self._running_lock:
-                if not self._running:
+                if not self._running and not self._failed:
+                    # Nothing left to animate or to expire; sleep until the next
+                    # run or failure. The keys that just expired still repaint.
                     self._busy_phase = False
                     self._busy_wakeup.clear()
-                    continue
-                self._busy_phase = not self._busy_phase
-                keys = tuple(self._running)
-            self._refresh_runtime_keys(keys)
+                    keys = expired
+                else:
+                    self._busy_phase = not self._busy_phase
+                    keys = tuple({*self._running, *expired})
+            if keys:
+                self._refresh_runtime_keys(keys)
 
     @property
     def key_image_size(self) -> tuple[int, int]:
@@ -1577,8 +1667,11 @@ class DeckController:
         self._clocks.clear()
         self._cancel_all_timer_sounds()
         # Stored indices shift with the profile/page, so a pending gesture would
-        # resolve against a different key.
+        # resolve against a different key, and a failure mark would be shown on
+        # whatever key now sits where the one that failed used to be.
         self._clear_gestures()
+        with self._running_lock:
+            self._failed.clear()
 
     def _cancel_all_timer_sounds(self) -> None:
         with self._notification_lock:
@@ -1643,25 +1736,76 @@ class DeckController:
         if kc is None or kc.is_empty():
             return {"size": size}
         if kc.kind == KIND_FOLDER:
-            return self._folder_spec(kc, size)
-        if kc.kind == KIND_TOGGLE:
-            return self._toggle_spec(index, kc, size)
-        if kc.kind in (KIND_MULTI, KIND_RANDOM, KIND_PRESS):
-            busy, phase = self._busy_state(index)
-            if kc.kind == KIND_RANDOM:
-                steps, fallback, badge = kc.steps, "mdi:shuffle-variant", "?"
-            elif kc.kind == KIND_PRESS:
-                steps = [*kc.steps_single, *kc.steps_double, *kc.steps_long]
-                fallback, badge = "mdi:gesture-tap", "⋮"
-            else:
-                steps, fallback, badge = kc.steps, "mdi:playlist-play", "⋯"
-            icon = kc.icon or self._first_step_icon(steps) or fallback
-            return {"size": size, "label": kc.label, "icon_path": icon,
-                    "bg": kc.bg_color, "busy": busy, "busy_phase": phase,
-                    "badge": "RUN" if busy else badge,
-                    "font_size": kc.font_size,
-                    "text_color": kc.text_color}
-        return self._single_spec(index, kc, size)
+            spec = self._folder_spec(kc, size)
+        elif kc.kind == KIND_TOGGLE:
+            spec = self._toggle_spec(index, kc, size)
+        elif kc.kind in (KIND_MULTI, KIND_RANDOM, KIND_PRESS):
+            spec = self._sequence_spec(index, kc, size)
+        else:
+            spec = self._single_spec(index, kc, size)
+        return self._mark_key_state(index, kc, spec)
+
+    def _sequence_spec(self, index: int, kc: KeyConfig, size) -> dict:
+        busy, phase = self._busy_state(index)
+        if kc.kind == KIND_RANDOM:
+            steps, fallback, badge = kc.steps, "mdi:shuffle-variant", "?"
+        elif kc.kind == KIND_PRESS:
+            steps = [*kc.steps_single, *kc.steps_double, *kc.steps_long]
+            fallback, badge = "mdi:gesture-tap", "⋮"
+        else:
+            steps, fallback, badge = kc.steps, "mdi:playlist-play", "⋯"
+        icon = kc.icon or self._first_step_icon(steps) or fallback
+        return {"size": size, "label": kc.label, "icon_path": icon,
+                "bg": kc.bg_color, "busy": busy, "busy_phase": phase,
+                "badge": "RUN" if busy else badge,
+                "font_size": kc.font_size,
+                "text_color": kc.text_color}
+
+    def _mark_key_state(self, index: int, kc: KeyConfig, spec: dict) -> dict:
+        """Add the two states that are about the key rather than its action.
+
+        Both exist because the deck used to be silent about them. A failure
+        only reached a status bar in a window that is normally hidden behind
+        the status icon, and a key that could not work at all rendered exactly
+        like one that was merely idle, so the only way to tell was to press it
+        and watch nothing happen.
+        """
+        if self._failed_state(index):
+            spec["failed"] = True
+            if not spec.get("busy"):
+                # A run that is still going keeps saying so; the mark outlives
+                # it and takes the badge back when it ends.
+                spec["badge"] = renderer.ERROR_BADGE
+        if not self.obs.connected and self._needs_obs(kc):
+            spec["unavailable"] = True
+        return spec
+
+    @staticmethod
+    def _needs_obs(kc: KeyConfig) -> bool:
+        """Whether this key can do nothing whatsoever without OBS.
+
+        Every action of the key has to need it. One that mixes an OBS action
+        with a local one still does half its job, and fading it would overstate
+        the problem; an action that is not registered at all is unknowable, and
+        unknown is not the same as unavailable.
+        """
+        if kc.kind == KIND_FOLDER:
+            return False
+        if kc.kind == KIND_SINGLE:
+            pairs = [(kc.action, kc.params)]
+        else:
+            pairs = [
+                (step.action, step.params)
+                for field in STEP_FIELDS
+                for step in getattr(kc, field, [])
+            ]
+        pairs = [(action_id, params) for action_id, params in pairs if action_id]
+        if not pairs:
+            return False
+        actions = [(action_registry.get(a), p) for a, p in pairs]
+        if any(action is None for action, _ in actions):
+            return False
+        return all(action.requires_obs(params or {}) for action, params in actions)
 
     def _back_spec(self, size) -> dict:
         """The reserved key that leaves the open folder.

@@ -217,6 +217,9 @@ class MainWindow(Adw.ApplicationWindow):
         profile_menu.append_section(None, find_menu)
         application_menu = Gio.Menu()
         application_menu.append("Preferences…", "win.app-preferences")
+        # The log is the only place an action failure survives once its status
+        # message has passed, so it needs a way in that is not a file manager.
+        application_menu.append("Open log file", "win.app-log")
         profile_menu.append_section(None, application_menu)
         menu_btn = Gtk.MenuButton(icon_name="view-more-symbolic",
                                   tooltip_text="Manage profiles and configuration",
@@ -692,6 +695,7 @@ class MainWindow(Adw.ApplicationWindow):
                          ("config-export", self._export_configuration),
                          ("config-import", self._import_configuration),
                          ("config-backups", self._open_backups),
+                         ("app-log", self._open_log_file),
                          ("app-preferences", self._open_preferences)):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda a, p, cb=cb: cb())
@@ -1784,6 +1788,80 @@ class MainWindow(Adw.ApplicationWindow):
         from .preferences import PreferencesDialog
 
         PreferencesDialog(self, self.app).present()
+
+    # ---------- first run ----------
+
+    def offer_starter_keys(self) -> bool:
+        """Offer to fill an empty deck, the first time the application runs.
+
+        Offered, never imposed: a configuration nobody asked for is worse than
+        an empty one. It is also silently dropped if the page already holds
+        anything, since the answer can arrive long after the question.
+        """
+        from ..core.starter import starter_keys
+
+        if self.app.controller.container.configured_keys():
+            return False
+        if not starter_keys(self.app.deck.key_count):
+            return False
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Start with a few keys?",
+            body=(
+                "Your deck is empty. LinuxStreamDeck can put a few keys on it "
+                "to get you going: recording, streaming, a chapter marker, "
+                "studio mode, a stopwatch and live CPU and disk readings.\n\n"
+                "None of them need setting up, and you can change or remove "
+                "any of them afterwards."
+            ),
+        )
+        dialog.add_response("empty", "Start empty")
+        dialog.add_response("add", "Add the keys")
+        dialog.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("add")
+        dialog.connect("response", self._on_starter_response)
+        dialog.present()
+        return False
+
+    def _on_starter_response(self, _dialog, response: str) -> None:
+        if response != "add":
+            return
+        from ..core.starter import apply_starter_keys
+
+        added = apply_starter_keys(self.app.config, self.app.deck.key_count)
+        if not added:
+            return
+        # Nothing preceded these keys, so there is nothing to take back to.
+        self.app.controller.forget_undo()
+        self.app.controller.refresh()
+        self._flash_status(
+            f"Added {added} keys to get started; select one to change it"
+        )
+
+    def _open_log_file(self) -> None:
+        """Hand the log to whatever the desktop opens text files with.
+
+        It reports the path either way. A missing file is worth saying plainly,
+        and so is the path itself: attaching it to a bug report is the point,
+        and nobody can attach a file they cannot find.
+        """
+        from ..core.config import LOG_FILE
+
+        if not LOG_FILE.exists():
+            self._flash_status(f"No log file yet at {LOG_FILE}")
+            return
+        launcher = Gtk.FileLauncher.new(Gio.File.new_for_path(str(LOG_FILE)))
+        launcher.launch(self, None, self._on_log_launched)
+
+    def _on_log_launched(self, launcher, result) -> None:
+        try:
+            launcher.launch_finish(result)
+        except Exception:
+            from ..core.config import LOG_FILE
+
+            # No handler for a .log file is common enough to be worth naming
+            # the path rather than reporting a failure the user cannot act on.
+            self._flash_status(f"Log file: {LOG_FILE}")
 
     # ---------- state ----------
 

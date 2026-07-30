@@ -137,7 +137,7 @@ class FontSizeControllerTests(unittest.TestCase):
         self.bus = EventBus()
         self.deck = FakeDeck()
         self.controller = DeckController(
-            self.config, self.bus, SimpleNamespace(), self.deck
+            self.config, self.bus, SimpleNamespace(connected=False), self.deck
         )
 
     def tearDown(self) -> None:

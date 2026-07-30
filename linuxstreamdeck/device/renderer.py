@@ -47,6 +47,19 @@ FONT_SIZE_DIVISORS = {
 }
 MIN_FONT_SIZE = 8
 
+# A key whose action just failed. Drawn as a border rather than a background so
+# it survives a key that carries its own artwork or a live scene preview, where
+# a background change is invisible.
+ERROR_BORDER = "#f06b73"
+ERROR_BG_BLEND = 0.30
+ERROR_BADGE = "!"
+
+# A key that cannot do anything right now, because what it drives is not
+# reachable. Kept as a plain fade of the finished key: it is the one treatment
+# every desktop already uses for "unavailable", so it needs no explaining, and
+# it composes with any artwork underneath.
+UNAVAILABLE_FADE = 0.42
+
 # How dark the gradient behind the label gets over a live preview. Enough for
 # white text over a bright scene, light enough to still see what is under it.
 SCRIM_STRENGTH = 0.82
@@ -85,14 +98,17 @@ def _active_bg(bg) -> tuple[int, int, int]:
     return (min(255, int(r * 255)), min(255, int(g * 255)), min(255, int(b * 255)))
 
 
-def _accent_blend(color, amount: float) -> tuple[int, int, int]:
-    """Blend a color gently towards the application accent."""
-    base = _rgb(color)
-    accent = _rgb(ACCENT)
+def _blend(color, towards, amount: float) -> tuple[int, int, int]:
+    """Move a color part of the way towards another."""
     return tuple(
         round(channel + (target - channel) * amount)
-        for channel, target in zip(base, accent)
+        for channel, target in zip(_rgb(color), _rgb(towards))
     )
+
+
+def _accent_blend(color, amount: float) -> tuple[int, int, int]:
+    """Blend a color gently towards the application accent."""
+    return _blend(color, ACCENT, amount)
 
 
 _FONT_CANDIDATES = [
@@ -216,6 +232,8 @@ def compose(
     font_size: str = "",
     text_color: str = "",
     image: bytes | None = None,
+    failed: bool = False,
+    unavailable: bool = False,
 ) -> Image.Image:
     w, h = size
     # Everything drawn as text shares one colour: the label, a centered value
@@ -227,6 +245,8 @@ def compose(
     base_bg = _active_bg(bg or EMPTY_BG) if active else (bg or EMPTY_BG)
     if busy:
         base_bg = _accent_blend(base_bg, BUSY_BG_BLEND[int(busy_phase)])
+    if failed:
+        base_bg = _blend(base_bg, ERROR_BORDER, ERROR_BG_BLEND)
     # all text drawing runs under the shared lock (FreeType is not thread-safe);
     # it is reentrant, so icon_library.render can re-acquire it without blocking.
     with RENDER_LOCK:
@@ -316,6 +336,22 @@ def compose(
                 outline=halo,
                 width=max(1, min(w, h) // 36),
             )
+
+        if failed:
+            # Drawn last so it sits over artwork, a live preview and any halo:
+            # the point is that it cannot be missed on a glance at the deck.
+            inset = max(1, min(w, h) // 48)
+            draw.rounded_rectangle(
+                (inset, inset, w - inset - 1, h - inset - 1),
+                radius=max(5, min(w, h) // 9),
+                outline=ERROR_BORDER,
+                width=max(2, min(w, h) // 22),
+            )
+
+        if unavailable:
+            # Faded as a whole, after everything else, so nothing on the key can
+            # escape it and look usable.
+            img = Image.blend(Image.new("RGB", size, "black"), img, UNAVAILABLE_FADE)
 
     return img
 

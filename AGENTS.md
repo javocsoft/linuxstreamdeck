@@ -161,7 +161,8 @@ linuxstreamdeck/
 │   │                  operations and imports.
 │   ├── search.py      Key search across profiles, pages and nested folders.
 │   ├── references.py  Keys pointing at OBS objects that no longer exist.
-│   ├── sysstats.py    Whole-machine CPU use, read from /proc/stat.
+│   ├── sysstats.py    Whole-machine CPU from /proc/stat; free disk space.
+│   ├── starter.py     The keys a brand new configuration is offered.
 │   ├── icons.py       Built-in icon library (Material Design Icons glyphs via
 │   │                  Pillow, recolorable, cached). `RENDER_LOCK`.
 │   └── secrets.py     Async Secret Service storage for OBS and per-provider API keys.
@@ -618,6 +619,11 @@ Actions are declarative and self-registering:
   Long-running actions must cooperate through `ActionContext.stop_requested()`
   or `ActionContext.wait_until_stopped()`, which observe both application
   shutdown and replacement cancellation.
+- `needs_obs` says the action can do nothing without the OBS connection, and
+  `requires_obs(params)` lets a key answer per configuration (`obs.stats`
+  overrides it). The deck fades a key whose every action needs OBS while OBS is
+  closed. Everything in `obs/actions.py` is flagged by `_mark_obs_dependency()`
+  from its category, so a new OBS action gets it without doing anything.
 - `apply_default_icons({action_id: "mdi:…"})` assigns default icons after
   registration. Registration happens on import (`app.py` imports the catalogues).
 
@@ -966,6 +972,9 @@ actions — portable bundles, legacy migration — must iterate it rather than
 hard-coding the three original names, or the new lists silently lose their
 bundled audio and their `nav.page` migration. For the same reason it must walk
 nested folder keys with `Config._walk_keys()` / `_walk_raw_keys()`.
+
+`KeyConfig.on_error` applies to every one of those lists: `ON_ERROR_CONTINUE`
+(the default) or `ON_ERROR_STOP`. See **When a key cannot do its job**.
 
 ### Undo, action search and key search
 
@@ -1433,6 +1442,81 @@ promptly. Do not merge the executors or reorder teardown in a way that lets
 actions, clocks or activity submit work after their destination executor has
 stopped.
 
+### When a key cannot do its job
+
+Three separate silences used to leave someone pressing a key and watching
+nothing happen. All three are now answered on the deck itself, because that is
+where the user is looking.
+
+**A failing action marks its own key.** `_note_failure()` records the key and a
+deadline in `_failed`, and `_mark_key_state()` turns that into `failed=True`
+plus the `!` badge on whatever spec the key would otherwise have produced.
+`renderer.compose()` draws it as a **border**, last, over artwork and live
+previews alike — a background change is invisible on a key carrying a scene
+thumbnail. The mark is expired by the **activity thread**, not by a timer of its
+own: that thread already pulses running keys, so `_busy_loop()` gained
+`_expire_failures()` and now also stays awake while anything is marked. It must
+keep repainting the keys that just expired even on the tick where it goes back
+to sleep, or a mark stays on screen until something else repaints the key.
+
+The mark is transient state keyed by `RuntimeKey`, so it is dropped everywhere
+the others are: editing, clearing, pasting, swapping, discarding a folder's
+subtree and every page/profile change. A run still in flight keeps its `RUN`
+badge, because that is the more useful message while it lasts.
+
+The reason this exists rather than a status message: `_flash_status()` shows a
+message for five seconds in a window that `close_action = tray` normally keeps
+hidden, and the traceback went to a stderr that a session autostart discards.
+
+**A key that cannot work does not look idle.** `Action.needs_obs` says whether
+an action can do anything without the connection, and
+`Action.requires_obs(params)` lets a key answer per configuration — `obs.stats`
+overrides it, since free disk space and system CPU come from the kernel.
+`_mark_obs_dependency()` in `obs/actions.py` sets the flag from the **category**
+rather than on each class, so an action added later cannot forget it.
+`DeckController._needs_obs()` fades a key only when **every** action of it needs
+OBS: one that mixes an OBS action with a local one still does half its job, and
+an unregistered action is unknowable, so neither is faded.
+`compose(unavailable=True)` blends the finished key toward black last, so
+nothing on it can escape the fade and look usable. The keys come back on
+`obs.state`, which the client emits on connect and disconnect alike.
+
+**A list can stop at the first failure.** `KeyConfig.on_error` is
+`ON_ERROR_CONTINUE` (the default and the old behaviour) or `ON_ERROR_STOP`, and
+`_stops_on_error()` carries it into `_submit_steps` / `_run_steps`. Continuing is
+right for a list of independent things done together; stopping is right when the
+list is a recipe, because "switch scene, wait, start recording" must not record
+the wrong scene after the switch failed. The message says which happened, in one
+status emit rather than two — a second would immediately overwrite the first.
+Only list kinds offer it (`ERROR_POLICY_KINDS` in `ui/editor.py`): a single
+action has nothing left to abandon, and `_on_error()` normalizes anything
+unknown back to continuing, so no stored key changes behaviour by being loaded.
+
+**The log is a file.** `CONFIG_DIR/linuxstreamdeck.log`, rotated by
+`_add_file_logging()` at `LOG_MAX_BYTES` with `LOG_KEEP` older copies, and
+reachable from the menu as **Open log file**. Failing to open it must never stop
+the application: a read-only home is a reason to lose the log, not the deck.
+
+### First run
+
+`Config.load()` on a clean machine yields one profile, one page and no keys, so
+a fresh install opened on an empty deck and an editor to decipher.
+`core/starter.py` answers that, and two rules define it:
+
+- **Offered, never imposed.** `app.py` records `is_first_run()` *before* loading
+  (loading is what creates the file), and `MainWindow.offer_starter_keys()` asks
+  once, after the window is up, since the dialog is modal to it.
+  `apply_starter_keys()` refuses a page that already holds anything, because the
+  answer can arrive long after the question.
+- **Every key works on arrival.** That is the whole selection rule for
+  `STARTER_KEYS`: nothing that has to be pointed at a scene or an audio input,
+  on a machine where OBS may not even be running. They are ordered by how much
+  someone wants them, because `starter_keys(capacity)` stops at the deck's key
+  count — a Mini has six.
+
+The OBS keys among them are faded until OBS is reachable, which makes the first
+run explain the fade rather than look broken.
+
 ### Unsaved editor protection
 
 `EditorPanel.current_key_config()` must reconstruct the complete canonical
@@ -1805,6 +1889,18 @@ ignored and you will chase a ghost.
    renderer decide, or clearing a choice silently freezes the current default
    into the configuration. When the editor shows an inherited value it must
    block its own change handler while doing so.
+
+25. **A key that cannot do its job has to say so on the key.** Keep the failure
+   mark keyed by `RuntimeKey`, expired by the activity thread (never by a timer
+   per failure), drawn as a border so artwork and live previews cannot hide it,
+   and dropped everywhere the other transient state is dropped. Keep the fade
+   driven by `Action.requires_obs(params)` and applied only when **every** action
+   of the key needs OBS; an unregistered action is unknown, not unavailable.
+   Keep `_mark_obs_dependency()` deriving the flag from the category, or an
+   action added later silently renders as usable while OBS is closed. Keep
+   `ON_ERROR_CONTINUE` as the default and normalize unknown values to it, so no
+   stored key changes behaviour by being loaded. Keep the log file optional:
+   failing to open it must never stop the application.
 
 ---
 

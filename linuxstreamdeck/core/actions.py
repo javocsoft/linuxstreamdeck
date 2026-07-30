@@ -144,6 +144,19 @@ class Action:
     # Set when holding a single-action key should do something other than
     # execute(); the controller then waits for the release to tell them apart.
     supports_long_press: bool = False
+    # Whether the action can do anything at all without the OBS connection. The
+    # deck dims a key that cannot, because an OBS key with OBS closed otherwise
+    # renders identically to one that is simply idle, and the only way to tell
+    # them apart was to press it and watch nothing happen.
+    needs_obs: bool = False
+
+    def requires_obs(self, params: dict) -> bool:
+        """Whether this key, as configured, needs OBS to be reachable.
+
+        Almost always the class answer. `obs.stats` overrides it because some of
+        its measurements come from the kernel and keep working regardless.
+        """
+        return self.needs_obs
 
     def execute(self, ctx: ActionContext, params: dict) -> None:
         raise NotImplementedError
