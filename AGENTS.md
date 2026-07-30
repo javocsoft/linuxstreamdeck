@@ -559,7 +559,11 @@ Actions are declarative and self-registering:
   optional_duration | file`). Duration fields accept `MM:SS` / `H:MM:SS`;
   `optional_duration` may stay blank. Numeric parameters may declare
   `minimum` / `maximum` / `step`; file parameters may declare `extensions` and
-  `file_filter_name` for the native chooser. A parameter may also set
+  `file_filter_name` for the native chooser, or `directory=True` to pick a folder
+  instead (no extensions apply then). Any parameter may set `placeholder`, which
+  is worth doing when blank is a meaningful value rather than an unfinished one,
+  so the empty field can say what it means — `obs.stats`'s `disk_folder` is the
+  case. A parameter may also set
   `choices_source` so the editor fills the dropdown **live from OBS**
   (`scenes`, `inputs`, `media_inputs`, `transitions`, `scene_collections`,
   `profiles`, `sources_in_scene`, `audio_sources_in_scene`, `filters_of_source`,
@@ -1338,7 +1342,28 @@ measuring noise across a few microseconds.
 A metric that does not come from OBS sets `needs_obs = False`, which both
 `Stats._read()` and `DeckController._live_interval()` honour: a kernel reading
 keeps working, and keeps being repainted, while OBS is closed. That is also why
-`_live_loop()` has no `obs.connected` guard of its own.
+`_live_loop()` has no `obs.connected` guard of its own. Such a reader is handed
+the key's own **parameters** in place of an OBS sample, since what it needs is
+configured rather than reported.
+
+**Free disk space is a kernel reading for a reason of its own.** OBS reports it
+as `GetStats.availableDiskSpace`, but only while OBS is running, and "have I got
+room to record" is asked *before* opening it at least as often as during a
+session — so the key that answers it must not go blank with OBS. `disk_free_mb()`
+reads the filesystem directly and `client.py` deliberately no longer carries
+`availableDiskSpace` into the sample, so there is one source rather than two that
+can disagree.
+
+Which filesystem is asked comes from the key's own `disk_folder` parameter
+(`kind="file"`, `directory=True`), blank meaning the home folder. It is asked
+rather than taken from OBS's recording path on purpose: a key that measured home
+with OBS closed and the recording drive with it open would silently be showing
+two different numbers, which on a warning key is worse than showing nothing.
+`disk_folder()` resolves blank and `~`; a folder that does not exist answers
+`None` rather than being walked up to its nearest existing parent, because an
+unmounted recording drive would then report the root filesystem's free space.
+Readings are cached per folder for `DISK_INTERVAL` and the cache is bounded by
+`DISK_CACHE_LIMIT`, since a page can hold several keys watching one drive.
 
 Percentages go through `_percent_text()`, which keeps one decimal below 10.
 Whole numbers threw away most of the information exactly where these values

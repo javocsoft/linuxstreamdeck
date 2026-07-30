@@ -10,8 +10,11 @@ connection, competing with the feedback of every other key.
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from linuxstreamdeck import basic_actions as _basic_actions  # noqa: F401
@@ -30,7 +33,7 @@ from linuxstreamdeck.core.controller import (
 )
 from linuxstreamdeck.core.events import EventBus
 from linuxstreamdeck.obs import actions as _obs_actions  # noqa: F401
-from linuxstreamdeck.obs.actions import NO_VALUE, STAT_METRICS
+from linuxstreamdeck.obs.actions import NO_VALUE, STAT_METRICS, stat_needs_obs
 from linuxstreamdeck.obs.client import OBSClient
 
 
@@ -62,7 +65,6 @@ class FakeDeck:
 FULL_SAMPLE = {
     "cpu": 82.4,
     "memory_mb": 1200,
-    "disk_mb": 1536,
     "fps": 60.0,
     "render_skipped": 3,
     "render_total": 12000,
@@ -158,7 +160,6 @@ class MetricTests(unittest.TestCase):
             "congestion": "31%",
             "stream_time": "1:15:17",
             "record_time": "12:34",
-            "disk": "2GB",
             "cpu": "82%",
             "fps": "60",
         }
@@ -181,13 +182,6 @@ class MetricTests(unittest.TestCase):
 
         self.assertEqual(
             self.action.feedback(ctx, {"metric": "bitrate"})["display"], "850kb"
-        )
-
-    def test_disk_space_switches_to_megabytes_when_low(self) -> None:
-        ctx = context({"disk_mb": 700})
-
-        self.assertEqual(
-            self.action.feedback(ctx, {"metric": "disk"})["display"], "700MB"
         )
 
     # ---------- nothing to show ----------
@@ -244,13 +238,6 @@ class MetricTests(unittest.TestCase):
 
         self.assertEqual(len(colors), 3)
 
-    def test_running_out_of_disk_warns_before_the_last_gigabyte(self) -> None:
-        """Filling the disk mid-recording is a classic way to lose a session."""
-        plenty = self.action.feedback(context({"disk_mb": 200000}), {"metric": "disk"})
-        low = self.action.feedback(context({"disk_mb": 5000}), {"metric": "disk"})
-
-        self.assertNotEqual(plenty["color"], low["color"])
-
     def test_colour_can_be_turned_off(self) -> None:
         state = self.action.feedback(
             context({"cpu": 95.0}), {"metric": "cpu", "colored": "no"}
@@ -280,6 +267,179 @@ class MetricTests(unittest.TestCase):
         self.action.execute(ctx, {"metric": "cpu"})
 
         self.assertIn("not available", ctx.messages[0])
+
+
+class FreeDiskTests(unittest.TestCase):
+    """Free space, which is a property of the filesystem rather than of OBS.
+
+    OBS does report it, but only while it is running, and "have I got room to
+    record" is asked before opening it at least as often as during a session.
+    """
+
+    def setUp(self) -> None:
+        from linuxstreamdeck.core import sysstats
+
+        self.sysstats = sysstats
+        original_reader = sysstats.disk_free_mb
+
+        def restore() -> None:
+            sysstats.disk_free_mb = original_reader
+            sysstats.reset()
+
+        sysstats.reset()
+        self.addCleanup(restore)
+        self.action = registry.get(STATS_ACTION_ID)
+
+    def _free(self, megabytes) -> None:
+        self.sysstats.disk_free_mb = lambda _path=None: megabytes
+
+    # ---------- it no longer needs OBS ----------
+
+    def test_the_key_keeps_working_while_obs_is_closed(self) -> None:
+        """The whole point: with OBS shut the key used to go blank."""
+        self._free(200000.0)
+
+        display = self.action.feedback(
+            context(connected=False), {"metric": "disk"}
+        )["display"]
+
+        self.assertEqual(display, "195GB")
+
+    def test_it_is_declared_as_not_needing_obs(self) -> None:
+        """Which is what keeps the controller repainting it with OBS closed."""
+        self.assertFalse(stat_needs_obs("disk"))
+
+    def test_pressing_it_reports_a_value_with_obs_closed(self) -> None:
+        self._free(51200.0)
+        ctx = context(connected=False)
+
+        self.action.execute(ctx, {"metric": "disk"})
+
+        self.assertIn("50GB", ctx.messages[0])
+
+    # ---------- reading it ----------
+
+    def test_it_measures_a_real_folder(self) -> None:
+        """Against the real filesystem, not a fixture."""
+        value = self.sysstats.disk_free_mb(tempfile.gettempdir())
+
+        self.assertIsNotNone(value)
+        self.assertGreater(value, 0.0)
+
+    def test_a_blank_folder_means_home(self) -> None:
+        """Blank is a meaningful value here, not an unfinished one."""
+        self.assertEqual(self.sysstats.disk_folder(""), str(Path.home()))
+        self.assertEqual(self.sysstats.disk_folder(None), str(Path.home()))
+
+    def test_a_tilde_is_expanded(self) -> None:
+        self.assertEqual(self.sysstats.disk_folder("~"), str(Path.home()))
+
+    def test_a_missing_folder_answers_nothing(self) -> None:
+        """Not the root filesystem's free space.
+
+        Walking up to the nearest existing parent would report the root
+        filesystem for an unmounted recording drive, and a confidently wrong
+        number on a key whose job is to warn you is worse than a dash.
+        """
+        missing = Path(tempfile.gettempdir()) / "lsd-not-a-real-mount-point-42"
+
+        self.assertIsNone(self.sysstats.disk_free_mb(str(missing)))
+
+    def test_a_missing_folder_shows_a_dash(self) -> None:
+        missing = str(Path(tempfile.gettempdir()) / "lsd-not-a-real-mount-42")
+
+        display = self.action.feedback(
+            context(connected=False), {"metric": "disk", "disk_folder": missing}
+        )["display"]
+
+        self.assertEqual(display, NO_VALUE)
+
+    def test_the_configured_folder_is_the_one_measured(self) -> None:
+        seen: list[str] = []
+        self.sysstats.disk_free_mb = lambda path=None: seen.append(path) or 1024.0
+
+        self.action.feedback(
+            context(connected=False), {"metric": "disk", "disk_folder": "/srv/video"}
+        )
+
+        self.assertEqual(seen, ["/srv/video"])
+
+    def test_a_reading_is_shared_for_a_moment(self) -> None:
+        """A page can hold several keys watching the same drive."""
+        calls: list[int] = []
+        original = shutil.disk_usage
+        shutil.disk_usage = lambda path: calls.append(1) or original(path)
+        self.addCleanup(lambda: setattr(shutil, "disk_usage", original))
+
+        target = tempfile.gettempdir()
+        for _ in range(5):
+            self.sysstats.disk_free_mb(target)
+
+        self.assertEqual(len(calls), 1)
+
+    def test_it_is_safe_to_read_from_several_threads(self) -> None:
+        values: list[object] = []
+        target = tempfile.gettempdir()
+
+        def read() -> None:
+            for _ in range(20):
+                values.append(self.sysstats.disk_free_mb(target))
+
+        threads = [threading.Thread(target=read) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(len(values), 80)
+        self.assertTrue(all(value is not None for value in values))
+
+    def test_remembering_folders_is_bounded(self) -> None:
+        for index in range(self.sysstats.DISK_CACHE_LIMIT * 3):
+            self.sysstats.disk_free_mb(f"{tempfile.gettempdir()}/lsd-cache-{index}")
+
+        self.assertLessEqual(
+            len(self.sysstats._disk), self.sysstats.DISK_CACHE_LIMIT
+        )
+
+    # ---------- what it shows ----------
+
+    def test_it_switches_to_megabytes_when_low(self) -> None:
+        self._free(700.0)
+
+        self.assertEqual(
+            self.action.feedback(context(), {"metric": "disk"})["display"], "700MB"
+        )
+
+    def test_running_out_of_disk_warns_before_the_last_gigabyte(self) -> None:
+        """Filling the disk mid-recording is a classic way to lose a session."""
+        self._free(200000.0)
+        plenty = self.action.feedback(context(), {"metric": "disk"})
+        self._free(5000.0)
+        low = self.action.feedback(context(), {"metric": "disk"})
+
+        self.assertNotEqual(plenty["color"], low["color"])
+
+    # ---------- how it is asked for ----------
+
+    def test_the_folder_is_chosen_as_a_folder(self) -> None:
+        """A file chooser cannot pick the drive someone records to."""
+        param = next(p for p in self.action.params if p.name == "disk_folder")
+
+        self.assertEqual(param.kind, "file")
+        self.assertTrue(param.directory)
+
+    def test_the_field_says_what_leaving_it_blank_means(self) -> None:
+        param = next(p for p in self.action.params if p.name == "disk_folder")
+
+        self.assertIn("Home", param.placeholder)
+
+    def test_a_key_saved_before_the_folder_existed_still_works(self) -> None:
+        self._free(102400.0)
+
+        display = self.action.feedback(context(), {"metric": "disk"})["display"]
+
+        self.assertEqual(display, "100GB")
 
 
 class SystemCpuTests(unittest.TestCase):
@@ -542,6 +702,45 @@ class StatsRefreshTests(unittest.TestCase):
         keys = self.controller._live_keys()
 
         self.assertEqual(list(keys.values()), [STATS_REFRESH_SECONDS])
+
+    def _offline_controller(self) -> DeckController:
+        controller = DeckController(
+            self.config, EventBus(), SimpleNamespace(connected=False), FakeDeck()
+        )
+        self.addCleanup(controller.shutdown)
+        return controller
+
+    def test_a_kernel_reading_still_repaints_with_obs_closed(self) -> None:
+        """Free space and system CPU come from the kernel, so they keep ticking."""
+        controller = self._offline_controller()
+        for index, metric in ((3, "disk"), (5, "system_cpu")):
+            self.page.set_key(
+                index,
+                KeyConfig(
+                    kind=KIND_SINGLE,
+                    action=STATS_ACTION_ID,
+                    params={"metric": metric},
+                ),
+            )
+
+        keys = controller._live_keys()
+
+        self.assertEqual(len(keys), 2)
+        self.assertEqual(set(keys.values()), {STATS_REFRESH_SECONDS})
+
+    def test_an_obs_reading_asks_for_nothing_with_obs_closed(self) -> None:
+        """Repainting a key that can only show a dash is wasted work."""
+        controller = self._offline_controller()
+        self.page.set_key(
+            3,
+            KeyConfig(
+                kind=KIND_SINGLE,
+                action=STATS_ACTION_ID,
+                params={"metric": "bitrate"},
+            ),
+        )
+
+        self.assertEqual(controller._live_keys(), {})
 
     def test_the_repaint_thread_is_joined_on_shutdown(self) -> None:
         """It submits to the render executor, so it may not outlive it."""

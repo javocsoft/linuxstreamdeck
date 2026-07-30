@@ -309,7 +309,8 @@ class OBSClient:
         sample = {
             "cpu": general.get("cpuUsage"),
             "memory_mb": general.get("memoryUsage"),
-            "disk_mb": general.get("availableDiskSpace"),
+            # `availableDiskSpace` is deliberately not carried: free space is
+            # read from the kernel so the key still answers with OBS closed.
             "fps": general.get("activeFps"),
             "render_skipped": general.get("renderSkippedFrames"),
             "render_total": general.get("renderTotalFrames"),

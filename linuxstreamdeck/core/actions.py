@@ -21,6 +21,7 @@ class Param:
     name: str
     label: str
     # string | int | float | choice | duration | optional_duration | file
+    # ("file" covers a folder too; see `directory` below)
     kind: str = "string"
     default: Any = None
     choices: list[str] = field(default_factory=list)   # for kind == "choice"
@@ -34,6 +35,12 @@ class Param:
     step: float = 1
     file_filter_name: str = ""
     extensions: list[str] = field(default_factory=list)
+    # For kind == "file": pick a folder instead of a file. Extensions no longer
+    # apply, since a directory has none.
+    directory: bool = False
+    # Hint shown in an empty field. Worth setting when blank is a meaningful
+    # value rather than an unfinished one, so the field can say what it means.
+    placeholder: str = ""
     # True when the value only narrows the editor's own dropdowns and is never
     # sent anywhere. The audio actions' `scene` is the case: it filters the
     # input list and the action still targets the input globally. A reference

@@ -115,7 +115,10 @@ implemented actions, no guessing. It runs, and it's useful.
   stream or recording time, free disk space, FPS, OBS's own CPU and memory, or
   your whole machine's CPU straight on the deck, refreshed while you work. The key turns amber and then red as a
   measurement gets worse, so you notice you are dropping frames or running out
-  of disk without leaving what you were doing.
+  of disk without leaving what you were doing. Free disk space and system CPU are
+  read from the kernel, so those keys keep answering while OBS is closed — which
+  is exactly when you check whether there is room to record. Point the disk key
+  at your recording drive if it is not your home folder.
 - 💾 **Portable configuration backups** — export or import profiles, pages, keys,
   settings, custom key icons, the custom exit image and referenced playback or
   timer audio in one file.

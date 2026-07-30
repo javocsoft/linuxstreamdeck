@@ -231,6 +231,52 @@ class LabelledChoiceWidgetTests(unittest.TestCase):
 
 
 @unittest.skipUnless(HAS_DISPLAY, "GTK needs a display to build widgets")
+class FolderParameterTests(unittest.TestCase):
+    """A `file` parameter that picks a folder rather than a file.
+
+    `obs.stats` needs one for the drive whose free space it reports, and a file
+    chooser cannot select a drive.
+    """
+
+    def setUp(self) -> None:
+        from linuxstreamdeck.ui.steps import StepEditor
+
+        self.editor = StepEditor(fake_app(FakeObs()))
+
+    def _widget(self):
+        return self.editor._param_widgets["disk_folder"][1]
+
+    def test_it_offers_a_folder_chooser(self) -> None:
+        self.editor.load(ActionStep(action="obs.stats"))
+
+        self.assertTrue(self.editor._param_widgets["disk_folder"][0].directory)
+
+    def test_a_chosen_folder_round_trips(self) -> None:
+        self.editor.load(
+            ActionStep(
+                action="obs.stats",
+                params={"metric": "disk", "disk_folder": "/srv/video"},
+            )
+        )
+
+        self.assertEqual(self._widget().get_text(), "/srv/video")
+        self.assertEqual(
+            self.editor.get_step().params["disk_folder"], "/srv/video"
+        )
+
+    def test_leaving_it_blank_stores_nothing(self) -> None:
+        """Blank means the home folder; it must not become a literal path."""
+        self.editor.load(ActionStep(action="obs.stats", params={"metric": "disk"}))
+
+        self.assertEqual(self.editor.get_step().params["disk_folder"], "")
+
+    def test_the_empty_field_says_what_blank_means(self) -> None:
+        self.editor.load(ActionStep(action="obs.stats"))
+
+        self.assertIn("Home folder", self._widget().entry.get_placeholder_text())
+
+
+@unittest.skipUnless(HAS_DISPLAY, "GTK needs a display to build widgets")
 class DependentDropdownTests(unittest.TestCase):
     def setUp(self) -> None:
         from linuxstreamdeck.ui.steps import StepEditor

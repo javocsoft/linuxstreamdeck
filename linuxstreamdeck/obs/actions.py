@@ -775,6 +775,10 @@ def _percent_text(value: float) -> str:
 # Each metric: how it is labelled, how a sample becomes text, and an optional
 # warning test. Keeping them in one table means adding a metric is one entry
 # rather than a branch in three methods.
+#
+# `read` is handed the OBS sample, except for a `needs_obs: False` metric, which
+# is handed the key's own parameters instead: it reads the kernel, so what it
+# needs is configured rather than reported.
 STAT_METRICS: dict[str, dict] = {
     "dropped": {
         "label": "Dropped frames",
@@ -815,7 +819,11 @@ STAT_METRICS: dict[str, dict] = {
     "disk": {
         "label": "Free disk space",
         "icon": "mdi:harddisk",
-        "read": lambda s: s.get("disk_mb"),
+        # Read from the kernel rather than from OBS, which only reports it while
+        # it is running. "Have I got room to record?" is asked before opening
+        # OBS at least as often as during a session, and the filesystem can
+        # answer either way.
+        "read": lambda p: sysstats.disk_free_mb(p.get("disk_folder")),
         "text": lambda v: (
             f"{v / 1024:.0f}GB" if v >= 1024 else f"{v:.0f}MB"
         ),
@@ -823,6 +831,7 @@ STAT_METRICS: dict[str, dict] = {
         # a session, so it warns early rather than at the last gigabyte.
         "warn": lambda v: v < 10240,
         "alarm": lambda v: v < 2048,
+        "needs_obs": False,
     },
     # OBS reports its own process, which is the number its Stats window shows.
     # Naming it plainly "CPU usage" reads as the machine's, and someone
@@ -840,7 +849,7 @@ STAT_METRICS: dict[str, dict] = {
         "icon": "mdi:chip",
         # Read from the kernel, not from OBS: this is the whole machine, so it
         # answers even while OBS is closed.
-        "read": lambda _s: sysstats.cpu_percent(),
+        "read": lambda _p: sysstats.cpu_percent(),
         "text": _percent_text,
         "warn": lambda v: v >= 75,
         "alarm": lambda v: v >= 92,
@@ -905,8 +914,9 @@ class Stats(Action):
     name = "OBS statistics"
     category = CAT_ADVANCED
     description = (
-        "Show a live OBS measurement on the key: dropped frames, bitrate, "
-        "stream or recording time, free disk space, CPU or FPS."
+        "Show a live measurement on the key: dropped frames, bitrate, "
+        "stream or recording time, free disk space, CPU or FPS. System CPU and "
+        "free disk space keep working while OBS is closed."
     )
     params = [
         Param(
@@ -927,6 +937,18 @@ class Stats(Action):
             default="yes",
             choices=["yes", "no"],
             choice_labels={"yes": "Yes", "no": "No"},
+        ),
+        # Only free disk space uses it, and only a machine that records
+        # somewhere other than home needs to set it. It is asked here rather
+        # than taken from OBS so the reading means the same thing whether OBS
+        # happens to be running; see `sysstats.disk_folder`.
+        Param(
+            "disk_folder",
+            "Disk folder (free disk space)",
+            kind="file",
+            default="",
+            directory=True,
+            placeholder="Home folder, unless you pick your recording drive",
         ),
     ]
 
@@ -953,7 +975,7 @@ class Stats(Action):
         metric = STAT_METRICS.get(p.get("metric") or "dropped")
         if metric is None:
             return {}
-        raw = self._read(ctx, metric)
+        raw = self._read(ctx, metric, p)
         state = {"display": self._format(metric, raw)}
         if raw is not None and str(p.get("colored", "yes")) != "no":
             color = self._color(metric, raw)
@@ -963,17 +985,19 @@ class Stats(Action):
 
     def _value(self, ctx, p) -> str:
         metric = STAT_METRICS[p.get("metric") or "dropped"]
-        return self._format(metric, self._read(ctx, metric))
+        return self._format(metric, self._read(ctx, metric, p))
 
     @staticmethod
-    def _read(ctx, metric: dict):
+    def _read(ctx, metric: dict, p):
         """This metric's current value, asking OBS only when it has to.
 
-        A machine-wide measurement comes from the kernel, so it must keep
-        answering while OBS is closed rather than going blank with it.
+        A measurement that comes from the kernel must keep answering while OBS
+        is closed rather than going blank with it. Those readers are handed the
+        key's own parameters in place of an OBS sample, since what they need is
+        configured rather than reported.
         """
         if not metric.get("needs_obs", True):
-            return metric["read"]({})
+            return metric["read"](p or {})
         sample = ctx.obs.stats() if ctx.obs.connected else {}
         return metric["read"](sample) if sample else None
 

@@ -239,7 +239,7 @@ def _clear(box: Gtk.Box) -> None:
 
 
 class _FileEntry(Gtk.Box):
-    """Editable path plus a filtered native file chooser."""
+    """Editable path plus a filtered native chooser, for a file or a folder."""
 
     def __init__(self, param: Param, value) -> None:
         super().__init__(spacing=6)
@@ -248,7 +248,10 @@ class _FileEntry(Gtk.Box):
             text=str(value if value is not None else param.default or ""),
             hexpand=True,
         )
-        self.entry.set_placeholder_text("Choose a local file")
+        self.entry.set_placeholder_text(
+            param.placeholder
+            or ("Choose a local folder" if param.directory else "Choose a local file")
+        )
         self.entry.connect(
             "changed",
             lambda entry: entry.set_tooltip_text(entry.get_text() or None),
@@ -256,8 +259,10 @@ class _FileEntry(Gtk.Box):
         self.entry.set_tooltip_text(self.entry.get_text() or None)
         self.append(self.entry)
 
-        button = Gtk.Button.new_from_icon_name("document-open-symbolic")
-        button.set_tooltip_text("Choose file")
+        button = Gtk.Button.new_from_icon_name(
+            "folder-symbolic" if param.directory else "document-open-symbolic"
+        )
+        button.set_tooltip_text("Choose folder" if param.directory else "Choose file")
         button.connect("clicked", self._choose)
         self.append(button)
 
@@ -266,6 +271,10 @@ class _FileEntry(Gtk.Box):
 
     def _choose(self, _button) -> None:
         dialog = Gtk.FileDialog(title=f"Choose {self.param.label.lower()}")
+        if self.param.directory:
+            # A folder has no extensions to filter on, so the filter is skipped.
+            dialog.select_folder(self.get_root(), None, self._chosen)
+            return
         if self.param.extensions:
             file_filter = Gtk.FileFilter()
             file_filter.set_name(self.param.file_filter_name or "Supported files")
@@ -278,7 +287,11 @@ class _FileEntry(Gtk.Box):
 
     def _chosen(self, dialog, result) -> None:
         try:
-            file = dialog.open_finish(result)
+            file = (
+                dialog.select_folder_finish(result)
+                if self.param.directory
+                else dialog.open_finish(result)
+            )
         except Exception:
             return
         if file is not None and (path := file.get_path()):
