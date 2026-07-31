@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import time
 from pathlib import Path
 
 from ..core import preflight, sysstats
@@ -909,10 +910,27 @@ class PreFlight(Action):
                         "fit on the deck; open the window for the rest"
                     ),
                 )
-            ctx.wait_until_stopped(PREFLIGHT_HOLD)
+            self._hold(ctx, controller)
         finally:
             # Always: leaving a report on the deck would hide every real key.
             controller.show_board(None)
+
+    @staticmethod
+    def _hold(ctx, controller) -> None:
+        """Keep the report on the deck, but only for as long as it is wanted.
+
+        The hold is for someone reading the deck, so anything that puts the
+        report away ends it: a press on the deck, closing the report window, or
+        leaving the page it describes. Waiting the whole of `PREFLIGHT_HOLD`
+        regardless left the key pulsing `RUN` after the user had plainly
+        finished with it.
+        """
+        deadline = time.monotonic() + PREFLIGHT_HOLD
+        while time.monotonic() < deadline:
+            if ctx.wait_until_stopped(PREFLIGHT_BEAT):
+                return
+            if not controller.board_active():
+                return
 
 
 @register

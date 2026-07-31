@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import inspect
 import unittest
+import unittest.mock
 from types import SimpleNamespace
 
 from linuxstreamdeck import basic_actions as _basic_actions  # noqa: F401
 from linuxstreamdeck.core.config import ActionStep, KeyConfig
 from linuxstreamdeck.obs import actions as _obs_actions  # noqa: F401
-from linuxstreamdeck.ui.editor import EditorPanel
+from linuxstreamdeck.ui.editor import EditorPanel, acknowledge_press
 from linuxstreamdeck.ui.window import MainWindow
 
 
@@ -356,23 +357,40 @@ class KeyDragTests(unittest.TestCase):
         )
         self.assertIsNone(MainWindow._decode_key_drag(None))
 
-    def test_drop_uses_the_key_under_the_pointer_in_any_direction(self) -> None:
-        moves = []
-        destinations = []
+    @staticmethod
+    def _drop_window(moves, source, hovered, path=(), destinations=None):
+        """A window stub whose real `_is_drag_source` decides source identity."""
         window = SimpleNamespace(
             app=SimpleNamespace(
                 controller=SimpleNamespace(
-                    is_reserved_key=lambda _index: False
+                    is_reserved_key=lambda _index: False,
+                    folder_path=path,
                 )
             ),
-            _drag_source_index=11,
-            _key_at_grid_point=lambda _x, _y: 1,
+            _drag_source=source,
+            _key_at_grid_point=lambda _x, _y: hovered,
             _decode_key_drag=MainWindow._decode_key_drag,
+            _cancel_spring=lambda: None,
             _confirm_unsaved_changes=lambda _text, callback: callback(),
-            _apply_key_drop=lambda source, destination: moves.append(
-                (source, destination)
+            _apply_key_drop=lambda source_path, source, destination: moves.append(
+                (source_path, source, destination)
             ),
-            _set_drag_destination=lambda index: destinations.append(index),
+            _set_drag_destination=(
+                (lambda index: destinations.append(index))
+                if destinations is not None
+                else (lambda _index: None)
+            ),
+        )
+        window._is_drag_source = lambda index: MainWindow._is_drag_source(
+            window, index
+        )
+        return window
+
+    def test_drop_uses_the_key_under_the_pointer_in_any_direction(self) -> None:
+        moves: list = []
+        destinations: list = []
+        window = self._drop_window(
+            moves, ((), 11), 1, destinations=destinations
         )
 
         accepted = MainWindow._on_drop(
@@ -384,26 +402,12 @@ class KeyDragTests(unittest.TestCase):
         )
 
         self.assertTrue(accepted)
-        self.assertEqual(moves, [(11, 1)])
+        self.assertEqual(moves, [((), 11, 1)])
         self.assertEqual(destinations, [None])
 
     def test_drop_rejects_foreign_or_stale_drag_data(self) -> None:
-        moves = []
-        window = SimpleNamespace(
-            app=SimpleNamespace(
-                controller=SimpleNamespace(
-                    is_reserved_key=lambda _index: False
-                )
-            ),
-            _drag_source_index=4,
-            _key_at_grid_point=lambda _x, _y: 9,
-            _decode_key_drag=MainWindow._decode_key_drag,
-            _confirm_unsaved_changes=lambda _text, callback: callback(),
-            _apply_key_drop=lambda source, destination: moves.append(
-                (source, destination)
-            ),
-            _set_drag_destination=lambda _index: None,
-        )
+        moves: list = []
+        window = self._drop_window(moves, ((), 4), 9)
 
         foreign = MainWindow._on_drop(
             window,
@@ -422,6 +426,53 @@ class KeyDragTests(unittest.TestCase):
 
         self.assertFalse(foreign)
         self.assertFalse(stale)
+        self.assertEqual(moves, [])
+
+    def test_a_drop_carries_the_grid_the_drag_started_in(self) -> None:
+        """A folder that sprang open mid-drag left the source behind in it."""
+        moves: list = []
+        window = self._drop_window(moves, ((3,), 7), 5, path=())
+
+        accepted = MainWindow._on_drop(
+            window,
+            None,
+            "linuxstreamdeck-key:7",
+            20,
+            20,
+        )
+
+        self.assertTrue(accepted)
+        self.assertEqual(moves, [((3,), 7, 5)])
+
+    def test_the_same_index_in_another_grid_is_not_the_dragged_key(self) -> None:
+        """Without the path, dropping on slot 7 of a folder would be refused."""
+        moves: list = []
+        window = self._drop_window(moves, ((), 7), 7, path=(3,))
+
+        accepted = MainWindow._on_drop(
+            window,
+            None,
+            "linuxstreamdeck-key:7",
+            20,
+            20,
+        )
+
+        self.assertTrue(accepted)
+        self.assertEqual(moves, [((), 7, 7)])
+
+    def test_dropping_a_key_on_itself_is_still_refused(self) -> None:
+        moves: list = []
+        window = self._drop_window(moves, ((3,), 7), 7, path=(3,))
+
+        accepted = MainWindow._on_drop(
+            window,
+            None,
+            "linuxstreamdeck-key:7",
+            20,
+            20,
+        )
+
+        self.assertFalse(accepted)
         self.assertEqual(moves, [])
 
 
@@ -445,6 +496,371 @@ class KeyExportNameTests(unittest.TestCase):
     def test_a_key_without_a_usable_label_falls_back_to_its_position(self) -> None:
         self.assertEqual(self._name(""), "key-5")
         self.assertEqual(self._name("***"), "key-5")
+
+
+class _FakeButton:
+    def __init__(self, label: str = "") -> None:
+        self.classes: set[str] = set()
+        self.label = label
+
+    def add_css_class(self, name: str) -> None:
+        self.classes.add(name)
+
+    def remove_css_class(self, name: str) -> None:
+        self.classes.discard(name)
+
+    def get_label(self) -> str:
+        return self.label
+
+    def set_label(self, label: str) -> None:
+        self.label = label
+
+
+class _FakeGLib:
+    """Just enough of GLib to run the hover timer without a main loop."""
+
+    def __init__(self) -> None:
+        self.timers: dict[int, tuple] = {}
+        self.removed: list[int] = []
+        self._next = 1
+
+    def timeout_add(self, _ms, callback, *args) -> int:
+        source = self._next
+        self._next += 1
+        self.timers[source] = (callback, args)
+        return source
+
+    def source_remove(self, source: int) -> None:
+        self.removed.append(source)
+        self.timers.pop(source, None)
+
+    def fire(self, source: int):
+        callback, args = self.timers.pop(source)
+        return callback(*args)
+
+
+class SpringLoadedFolderTests(unittest.TestCase):
+    """A drag resting on a folder opens it, so the key can be dropped inside."""
+
+    def setUp(self) -> None:
+        self.glib = _FakeGLib()
+        patcher = unittest.mock.patch(
+            "linuxstreamdeck.ui.window.GLib", self.glib
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.navigated: list = []
+        self.status: list[str] = []
+
+    def _window(
+        self,
+        *,
+        path: tuple[int, ...] = (),
+        folders: tuple[int, ...] = (3,),
+        keys: tuple[int, ...] = (5, 9),
+        source=((), 5),
+        unsaved: bool = False,
+        depth_left: bool = True,
+    ):
+        def key(index):
+            if index in folders:
+                return SimpleNamespace(contents=object())
+            if index in keys:
+                return SimpleNamespace(contents=None)
+            return None
+
+        window = SimpleNamespace(
+            app=SimpleNamespace(
+                controller=SimpleNamespace(
+                    folder_path=path,
+                    is_reserved_key=lambda i: bool(path) and i == 0,
+                    container=SimpleNamespace(key=key),
+                    can_add_folder=lambda: depth_left,
+                    open_folder=lambda i: self.navigated.append(("open", i)),
+                    close_folder=lambda: self.navigated.append(("back",)),
+                )
+            ),
+            editor=SimpleNamespace(has_unsaved_changes=lambda: unsaved),
+            _drag_source=source,
+            _key_buttons=[_FakeButton() for _ in range(15)],
+            _drag_destination_index=None,
+            _spring_index=None,
+            _spring_timer=None,
+            _flash_status=self.status.append,
+        )
+        for name in (
+            "_is_drag_source",
+            "_springs_open",
+            "_arm_spring",
+            "_cancel_spring",
+            "_spring_open",
+            "_set_drag_destination",
+            "_refresh_drag_source_feedback",
+        ):
+            setattr(window, name, getattr(MainWindow, name).__get__(window))
+        return window
+
+    # --- what springs open ---
+
+    def test_a_folder_key_springs_open(self) -> None:
+        window = self._window()
+        self.assertTrue(window._springs_open(3))
+
+    def test_an_ordinary_key_does_not(self) -> None:
+        window = self._window()
+        # 9 holds a key that is not a folder, 11 holds nothing at all.
+        self.assertFalse(window._springs_open(9))
+        self.assertFalse(window._springs_open(11))
+
+    def test_the_back_key_springs_out_so_a_key_can_leave_a_folder(self) -> None:
+        window = self._window(path=(3,))
+        self.assertTrue(window._springs_open(0))
+
+    def test_a_folder_at_the_depth_limit_does_not_open(self) -> None:
+        window = self._window(depth_left=False)
+        self.assertFalse(window._springs_open(3))
+
+    def test_the_key_being_dragged_never_springs_open_under_itself(self) -> None:
+        window = self._window(source=((), 3))
+        self.assertFalse(window._springs_open(3))
+
+    def test_nothing_springs_open_without_a_drag(self) -> None:
+        window = self._window(source=None)
+        self.assertFalse(window._springs_open(3))
+
+    # --- the countdown ---
+
+    def test_resting_on_a_folder_marks_it_and_arms_the_timer(self) -> None:
+        window = self._window()
+
+        window._arm_spring(3)
+
+        self.assertEqual(window._spring_index, 3)
+        self.assertIn("spring-target", window._key_buttons[3].classes)
+        self.assertEqual(len(self.glib.timers), 1)
+
+    def test_moving_within_the_same_key_keeps_the_countdown_running(self) -> None:
+        window = self._window()
+
+        window._arm_spring(3)
+        armed = window._spring_timer
+        window._arm_spring(3)
+
+        self.assertEqual(window._spring_timer, armed)
+        self.assertEqual(self.glib.removed, [])
+
+    def test_crossing_to_another_key_restarts_it(self) -> None:
+        """Passing over a folder on the way somewhere else opens nothing."""
+        window = self._window()
+
+        window._arm_spring(3)
+        first = window._spring_timer
+        window._arm_spring(5)
+
+        self.assertEqual(self.glib.removed, [first])
+        self.assertIsNone(window._spring_timer)
+        self.assertNotIn("spring-target", window._key_buttons[3].classes)
+
+    def test_leaving_the_grid_cancels_it(self) -> None:
+        window = self._window()
+
+        window._arm_spring(3)
+        window._arm_spring(None)
+
+        self.assertIsNone(window._spring_timer)
+        self.assertEqual(self.glib.timers, {})
+
+    # --- what firing does ---
+
+    def test_the_timer_enters_the_folder(self) -> None:
+        window = self._window()
+        window._arm_spring(3)
+
+        self.glib.fire(window._spring_timer)
+
+        self.assertEqual(self.navigated, [("open", 3)])
+        self.assertNotIn("spring-target", window._key_buttons[3].classes)
+        self.assertIsNone(window._spring_index)
+
+    def test_the_timer_on_the_back_key_leaves_the_folder(self) -> None:
+        window = self._window(path=(3,))
+        window._arm_spring(0)
+
+        self.glib.fire(window._spring_timer)
+
+        self.assertEqual(self.navigated, [("back",)])
+
+    def test_an_unsaved_key_edit_stops_it_rather_than_asking(self) -> None:
+        """A drag in progress cannot put up a modal dialog, and entering a
+        folder clears the selection the editor is holding."""
+        window = self._window(unsaved=True)
+        window._arm_spring(3)
+
+        self.glib.fire(window._spring_timer)
+
+        self.assertEqual(self.navigated, [])
+        self.assertEqual(len(self.status), 1)
+
+    def test_the_source_stays_marked_only_in_its_own_grid(self) -> None:
+        window = self._window()
+        window._refresh_drag_source_feedback()
+        self.assertIn("drag-source", window._key_buttons[5].classes)
+
+        # The folder sprang open: slot 5 is now somebody else's key.
+        window.app.controller.folder_path = (3,)
+        window._refresh_drag_source_feedback()
+
+        self.assertNotIn("drag-source", window._key_buttons[5].classes)
+
+    def test_coming_back_out_marks_the_source_again(self) -> None:
+        window = self._window(path=(3,))
+        window._refresh_drag_source_feedback()
+        self.assertNotIn("drag-source", window._key_buttons[5].classes)
+
+        window.app.controller.folder_path = ()
+        window._refresh_drag_source_feedback()
+
+        self.assertIn("drag-source", window._key_buttons[5].classes)
+
+
+class PressFeedbackTests(unittest.TestCase):
+    """Buttons whose result is not on the button have to say they were pressed.
+
+    Save writes to disk and to the deck, Test runs the key, and the editor
+    panel looks identical afterwards either way; a quick click never even
+    paints the theme's own pressed state, since press and release land in the
+    same frame.
+    """
+
+    def setUp(self) -> None:
+        self.glib = _FakeGLib()
+        patcher = unittest.mock.patch(
+            "linuxstreamdeck.ui.editor.GLib", self.glib
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_press_lights_the_button_and_names_what_happened(self) -> None:
+        button = _FakeButton("Save")
+
+        acknowledge_press(button, "Saved")
+
+        self.assertEqual(button.label, "Saved")
+        self.assertIn("press-echo-on", button.classes)
+
+    def test_it_goes_back_to_normal_by_itself(self) -> None:
+        button = _FakeButton("Save")
+
+        acknowledge_press(button, "Saved")
+        self.glib.fire(button._echo_timer)
+
+        self.assertEqual(button.label, "Save")
+        self.assertNotIn("press-echo-on", button.classes)
+        # The base class carries the fade back, so it has to stay.
+        self.assertIn("press-echo", button.classes)
+
+    def test_pressing_again_while_lit_does_not_capture_the_echo(self) -> None:
+        """Otherwise the button would read "Saved" for the rest of the session."""
+        button = _FakeButton("Save")
+
+        acknowledge_press(button, "Saved")
+        first = button._echo_timer
+        acknowledge_press(button, "Saved")
+
+        self.assertEqual(self.glib.removed, [first])
+        self.glib.fire(button._echo_timer)
+        self.assertEqual(button.label, "Save")
+
+    def test_a_button_with_no_word_only_lights_up(self) -> None:
+        button = _FakeButton("Test")
+
+        acknowledge_press(button)
+        self.assertEqual(button.label, "Test")
+
+        self.glib.fire(button._echo_timer)
+        self.assertEqual(button.label, "Test")
+
+    def test_save_confirms_only_when_a_key_was_actually_saved(self) -> None:
+        button = _FakeButton("Save")
+        panel = SimpleNamespace(save=lambda: False)
+
+        EditorPanel._save(panel, button)
+
+        self.assertEqual(button.label, "Save")
+        self.assertEqual(button.classes, set())
+
+    def test_save_confirms_when_it_wrote_the_key(self) -> None:
+        button = _FakeButton("Save")
+        panel = SimpleNamespace(save=lambda: True)
+
+        EditorPanel._save(panel, button)
+
+        self.assertEqual(button.label, "Saved")
+
+    def test_test_acknowledges_the_press_after_running_the_key(self) -> None:
+        button = _FakeButton("Test")
+        ran: list = []
+        panel = SimpleNamespace(
+            index=4,
+            app=SimpleNamespace(
+                controller=SimpleNamespace(
+                    press=lambda i, g: ran.append((i, g))
+                )
+            ),
+        )
+
+        EditorPanel._test(panel, button, "single")
+
+        self.assertEqual(ran, [(4, "single")])
+        self.assertIn("press-echo-on", button.classes)
+
+    def test_no_selected_key_neither_runs_nor_confirms(self) -> None:
+        button = _FakeButton("Test")
+        panel = SimpleNamespace(index=None, app=None)
+
+        EditorPanel._test(panel, button, "single")
+
+        self.assertEqual(button.classes, set())
+
+
+class WindowStylesheetTests(unittest.TestCase):
+    """The stylesheet is one byte blob that nothing else validates."""
+
+    def setUp(self) -> None:
+        if not GridHintWidthTests._gtk_ready():
+            self.skipTest("GTK needs a display to parse a stylesheet")
+
+    def test_the_stylesheet_parses_without_a_single_error(self) -> None:
+        from gi.repository import Gtk
+
+        from linuxstreamdeck.ui.window import _CSS
+
+        # GtkCssProvider reports a bad rule on a signal instead of raising, so
+        # a typo here is silently dropped and the style it carried never
+        # appears -- with nothing in the log that names the file.
+        provider = Gtk.CssProvider()
+        errors: list[str] = []
+        provider.connect(
+            "parsing-error",
+            lambda _p, _section, error: errors.append(error.message),
+        )
+        provider.load_from_data(_CSS)
+
+        self.assertEqual(errors, [])
+
+    def test_every_class_the_editor_applies_is_styled(self) -> None:
+        """They are added in ui/editor.py and defined in ui/window.py."""
+        from linuxstreamdeck.ui.window import _CSS
+
+        source = inspect.getsource(acknowledge_press)
+        applied = {
+            name
+            for name in ("press-echo", "press-echo-on")
+            if f'"{name}"' in source
+        }
+        self.assertEqual(applied, {"press-echo", "press-echo-on"})
+        for name in applied:
+            self.assertIn(f".{name}".encode(), _CSS)
 
 
 if __name__ == "__main__":

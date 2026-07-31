@@ -75,6 +75,8 @@ on the same hardware as the scene switches.
 - ✋ **Drag & drop and copy/paste** — drag any configured key with the primary
   mouse button to an empty position to move it, or onto another configured key
   to swap them. The source dims and the destination highlights while dragging.
+  **Hold the drag over a folder** and it opens, so the key can be dropped
+  inside; holding it over the Back key comes back out again.
   Duplicate any key with right-click → Copy/Paste (or `Ctrl+C`/`Ctrl+V`).
 - 🖥️ **Virtual deck** — the on-screen grid mirrors the physical device, so you can
   configure and test everything **without the hardware even connected**, single,
@@ -129,7 +131,8 @@ on the same hardware as the scene switches.
   recording folder writable, is the machine already busy, which scene
   collection is loaded, is a stream key set — and, if you have connected an
   account, is your Twitch title and category set and are you already live.
-  Results appear one at a time and the deck goes back to normal on any press.
+  Results appear one at a time, and the deck goes back to normal on any press —
+  or the moment you close the report window, since by then you have read it.
   It reports; it never switches a scene, activates a source or changes a
   setting. And it does not pretend: anything it could not establish shows as a
   faded key with a question mark, never as a tick, and the window lists what
@@ -422,6 +425,9 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
 4. **Test** runs the action without needing the physical deck. For a
    **Single / double / long press** key the **••** and **—** buttons beside it
    run the other two lists, so the whole key is testable without hardware.
+   Save and Test both light up when pressed — and Save briefly reads **Saved** —
+   because everything they do happens somewhere else: on disk, on the deck, or
+   in OBS.
    Next to the **Action** dropdown, the magnifier searches **every** action at
    once — by name, by category or by what its description says — so you do not
    have to know which category it lives in.
@@ -435,8 +441,11 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
 7. **Reorder** configured keys by dragging with the primary mouse button. Drop
    onto an empty position to move the key, or onto an occupied position to swap
    both keys; dragging works in any direction. Empty keys are destinations, not
-   drag sources. **Duplicate** a key with right-click → Copy, then Paste onto
-   another (or `Ctrl+C`/`Ctrl+V`).
+   drag sources. To move a key **into** a folder, hold the drag still over that
+   folder for about a second: it opens, and you drop the key on a position
+   inside it. Holding over the Back key leaves the folder the same way, so a key
+   can also be dragged back out. **Duplicate** a key with right-click → Copy,
+   then Paste onto another (or `Ctrl+C`/`Ctrl+V`).
 8. **Folders** — set a key's type to **Folder** and save it; then double-click it
    on the grid (or right-click → Open folder) to configure the keys it holds.
    Pressing it on the physical deck opens it too.
@@ -549,7 +558,11 @@ without spending a whole page on them.
    folder**, or the **Open folder** button in the editor, do the same). On the
    physical deck a normal press opens it.
 3. Configure the keys inside exactly as anywhere else: any key type, drag & drop,
-   copy/paste, single-key export and import all work the same.
+   copy/paste, single-key export and import all work the same. A key can be
+   dragged in from outside by resting the drag on the folder until it opens, and
+   dragged back out by then resting it on the Back key. Dropping a key onto an
+   occupied position inside sends that position's key back where the dragged one
+   came from, exactly as a swap on one grid does.
 4. The **first key of every folder is a reserved Back key** showing the folder
    name. It cannot be configured, moved or overwritten, so the physical deck can
    never enter a folder it is unable to leave.

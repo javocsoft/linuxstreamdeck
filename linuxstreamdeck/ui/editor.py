@@ -18,7 +18,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gtk  # noqa: E402
+from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from ..core import actions as action_registry  # noqa: E402
 from ..core.controller import (  # noqa: E402
@@ -58,6 +58,48 @@ KIND_IDS = [k for k, _ in KINDS]
 # The key types that run a list of actions, and can therefore be asked what a
 # failure should do to the rest of it.
 ERROR_POLICY_KINDS = (KIND_MULTI, KIND_TOGGLE, KIND_RANDOM, KIND_PRESS)
+
+# How long a button whose result is not on the button keeps saying it was
+# pressed. Long enough to read a word, short enough that it reads as a pulse
+# rather than as a state the button is now stuck in.
+PRESS_ECHO_MS = 900
+
+
+def acknowledge_press(button: Gtk.Button, label: str = "") -> None:
+    """Make a button whose result is somewhere else show that it was pressed.
+
+    This panel stays exactly as it was when Save writes the key to disk and to
+    the deck, and when Test runs it: the only thing that moved was a line in
+    the status bar at the far end of the window. The theme's own `:active`
+    state does not fill that gap either, because a quick click is released
+    before it is ever painted -- press and release land in the same frame -- so
+    the press is acknowledged deliberately here instead.
+
+    `label` replaces the button's text for the same moment. That is only safe
+    on a button with room to spare, or the row it sits in shifts under the
+    pointer: Save hexpands, so a longer word cannot move anything.
+    """
+    pending = getattr(button, "_echo_timer", None)
+    if pending is not None:
+        GLib.source_remove(pending)
+    else:
+        # Only the first press of a run captures the real text. A second one
+        # while the echo is still up would otherwise capture the echo itself
+        # and leave the button reading "Saved" for good.
+        button._echo_label = button.get_label()
+    button.add_css_class("press-echo")
+    button.add_css_class("press-echo-on")
+    if label:
+        button.set_label(label)
+
+    def restore() -> bool:
+        button._echo_timer = None
+        button.remove_css_class("press-echo-on")
+        if label:
+            button.set_label(button._echo_label)
+        return False
+
+    button._echo_timer = GLib.timeout_add(PRESS_ECHO_MS, restore)
 
 
 class EditorPanel(Gtk.Box):
@@ -695,16 +737,16 @@ class EditorPanel(Gtk.Box):
         save.connect("clicked", self._save)
         test = Gtk.Button(label="Test")
         test.set_tooltip_text("Run this key now")
-        test.connect("clicked", lambda _b: self._test(GESTURE_SINGLE))
+        test.connect("clicked", self._test, GESTURE_SINGLE)
         # A gesture key can only be half-tested from a click, which has no
         # release to time. These name the gesture instead, so the whole key is
         # testable without the physical deck.
         self.test_double = Gtk.Button(label="••")
         self.test_double.set_tooltip_text("Run the double-press list")
-        self.test_double.connect("clicked", lambda _b: self._test(GESTURE_DOUBLE))
+        self.test_double.connect("clicked", self._test, GESTURE_DOUBLE)
         self.test_long = Gtk.Button(label="—")
         self.test_long.set_tooltip_text("Run the long-press list")
-        self.test_long.connect("clicked", lambda _b: self._test(GESTURE_LONG))
+        self.test_long.connect("clicked", self._test, GESTURE_LONG)
         wipe = Gtk.Button(label="Clear")
         wipe.add_css_class("destructive-action")
         wipe.connect("clicked", self._wipe)
@@ -712,9 +754,14 @@ class EditorPanel(Gtk.Box):
             btns.append(b)
         return btns
 
-    def _test(self, gesture: str) -> None:
-        if self.index is not None:
-            self.app.controller.press(self.index, gesture)
+    def _test(self, button: Gtk.Button, gesture: str) -> None:
+        if self.index is None:
+            return
+        self.app.controller.press(self.index, gesture)
+        # Deliberately no word here, unlike Save. The press is what landed; a
+        # key that fails says so with its own red mark and a status message,
+        # and a button claiming otherwise would be quicker and louder.
+        acknowledge_press(button)
 
     def _show_gesture_tests(self, visible: bool) -> None:
         self.test_double.set_visible(visible)
@@ -722,8 +769,11 @@ class EditorPanel(Gtk.Box):
 
     # ---------- save / clear ----------
 
-    def _save(self, _btn) -> None:
-        self.save()
+    def _save(self, button) -> None:
+        # Only a save that happened says so: with no key selected there is
+        # nothing to confirm, and the button must not claim otherwise.
+        if self.save():
+            acknowledge_press(button, "Saved")
 
     def _wipe(self, _btn) -> None:
         if self.index is None or self._container is None:

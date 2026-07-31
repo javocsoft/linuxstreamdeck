@@ -13,8 +13,14 @@ that is turn it off — which puts them back to missing messages entirely.
 from __future__ import annotations
 
 import json
+import tempfile
+import threading
 import unittest
+import unittest.mock
+from pathlib import Path
 from types import SimpleNamespace
+
+from tests.test_audio import FakeGst, FakeMessage
 
 from linuxstreamdeck import basic_actions as _basic_actions  # noqa: F401
 from linuxstreamdeck.core import actions as registry
@@ -893,6 +899,214 @@ class BorderRenderTests(unittest.TestCase):
         self.assertGreater(sum(centre(breathed)), sum(centre(quiet)))
         self.assertAlmostEqual(hue(centre(breathed)), hue(centre(quiet)), places=2)
         self.assertNotAlmostEqual(hue(centre(tinted)), hue(centre(quiet)), places=2)
+
+
+def follow(display="ana", at=None, user_id="7"):
+    return Alert(
+        source=events.FOLLOW, display=display, text="", user_id=user_id,
+        at=att.time.monotonic() if at is None else at,
+    )
+
+
+class AlertSoundDeliveryTests(unittest.TestCase):
+    """From "this should make a noise" to a noise actually coming out.
+
+    Everything about the sound used to be tested as policy — `should_sound`
+    alone — and the call that plays it was not tested at all. Both bugs that
+    made a configured follower sound completely silent lived in that gap: the
+    volume was handed over as a fraction where a percentage was expected, so a
+    key set to 70 played at 0.7%, and the shutdown flag was handed over as an
+    Event where a callable was expected, so playback raised on its first
+    iteration -- into a Future nobody reads.
+    """
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.sound = Path(self.temp.name) / "ding.mp3"
+        self.sound.write_bytes(b"not really audio, the player is a fake")
+
+    def _played(self, params: dict):
+        """The arguments the controller ends up giving the audio player."""
+        from linuxstreamdeck.core import controller as controller_module
+        from linuxstreamdeck.core.controller import DeckController
+
+        jobs: list = []
+        stub = SimpleNamespace(
+            _stopping=threading.Event(),
+            _notification_executor=SimpleNamespace(
+                submit=lambda fn, *a: jobs.append(lambda: fn(*a))
+            ),
+            bus=SimpleNamespace(emit=lambda *a, **k: None),
+        )
+        stub._alert_sound = DeckController._alert_sound.__get__(
+            stub, type(stub)
+        )
+        DeckController._play_alert_sound(stub, params)
+
+        recorded: list = []
+        with unittest.mock.patch.object(
+            controller_module,
+            "play_audio",
+            lambda *a, **k: recorded.append((a, k)),
+        ):
+            for job in jobs:
+                job()
+        return recorded
+
+    def test_what_is_submitted_really_plays(self) -> None:
+        """The end-to-end check: those arguments, through the real player.
+
+        Asserting the controller called *something* is what let both bugs
+        through; this feeds what it passed to `play_audio` itself.
+        """
+        from linuxstreamdeck.core.audio import play_audio
+
+        (args, kwargs), = self._played(
+            {"sound": str(self.sound), "volume": 70}
+        )
+        gst = FakeGst([FakeMessage(FakeGst.MessageType.EOS)])
+
+        play_audio(*args, **kwargs, gst=gst)
+
+        self.assertEqual(gst.player.properties["volume"], 0.7)
+        self.assertEqual(gst.player.states, ["playing", "null"])
+
+    def test_the_volume_is_a_percentage_like_everywhere_else(self) -> None:
+        from linuxstreamdeck.core.audio import play_audio
+
+        (args, kwargs), = self._played(
+            {"sound": str(self.sound), "volume": 25}
+        )
+        gst = FakeGst([FakeMessage(FakeGst.MessageType.EOS)])
+
+        play_audio(*args, **kwargs, gst=gst)
+
+        self.assertEqual(gst.player.properties["volume"], 0.25)
+
+    def test_shutdown_is_asked_rather_than_handed_over(self) -> None:
+        """`play_audio` calls it; an Event would raise on the first loop."""
+        (args, kwargs), = self._played(
+            {"sound": str(self.sound), "volume": 70}
+        )
+        stop = kwargs.get("stop_requested", args[3] if len(args) > 3 else None)
+
+        self.assertTrue(callable(stop))
+        self.assertIs(stop(), False)
+
+    def test_a_key_with_no_sound_plays_nothing(self) -> None:
+        self.assertEqual(self._played({"sound": "", "volume": 70}), [])
+
+    def test_a_sound_that_cannot_be_played_says_so(self) -> None:
+        """The executor keeps a worker's error in a Future nobody reads, so
+        without this a missing file is silent exactly like a working one."""
+        from linuxstreamdeck.core.controller import DeckController
+
+        said: list = []
+        jobs: list = []
+        stub = SimpleNamespace(
+            _stopping=threading.Event(),
+            _notification_executor=SimpleNamespace(
+                submit=lambda fn, *a: jobs.append(lambda: fn(*a))
+            ),
+            bus=SimpleNamespace(
+                emit=lambda _topic, **data: said.append(data.get("text", ""))
+            ),
+        )
+        stub._alert_sound = DeckController._alert_sound.__get__(
+            stub, type(stub)
+        )
+
+        DeckController._play_alert_sound(
+            stub, {"sound": "/nowhere/at/all.mp3", "volume": 70}
+        )
+        with self.assertLogs("linuxstreamdeck.core.controller", "ERROR"):
+            for job in jobs:
+                job()
+
+        self.assertEqual(len(said), 1)
+        self.assertIn("not found", said[0])
+
+
+class AlertRunTests(unittest.TestCase):
+    """When a key counts as having gone quiet, so the next arrival sounds.
+
+    The mailbox rule needs to know whether this key was *already* showing
+    somebody waiting. Remembering that as a flag looked equivalent and was not:
+    nothing cleared it once the alerts it referred to were forgotten, so a key
+    nobody pressed made its noise once and then stayed silent for good.
+    """
+
+    def _controller(self, **params):
+        from linuxstreamdeck.core.config import KIND_SINGLE, KeyConfig
+        from linuxstreamdeck.core.controller import DeckController
+
+        settings = {"source": "followers", "sound": "/ding.mp3", "volume": 70}
+        settings.update(params)
+        stub = SimpleNamespace(
+            _stopping=threading.Event(),
+            bus=SimpleNamespace(emit=lambda *a, **k: None),
+            twitch=None,
+            attention=Attention(),
+            _alerting={},
+            _refresh_runtime_keys=lambda _keys: None,
+            sounds=[],
+        )
+        stub.attention._on_change = lambda alert: DeckController._on_alert(
+            stub, alert
+        )
+        key = KeyConfig(
+            kind=KIND_SINGLE, action="twitch.alert", params=settings
+        )
+        stub._alert_keys = lambda: {("p", 0, (), 3): key}
+        stub._play_alert_sound = lambda params: stub.sounds.append(params)
+        return stub
+
+    def test_the_first_follower_makes_a_noise(self) -> None:
+        deck = self._controller()
+
+        deck.attention.add(follow())
+
+        self.assertEqual(len(deck.sounds), 1)
+
+    def test_the_second_one_straight_after_does_not(self) -> None:
+        """A noise per event is what makes people turn the sound off."""
+        deck = self._controller()
+
+        deck.attention.add(follow())
+        deck.attention.add(follow(display="bea"))
+
+        self.assertEqual(len(deck.sounds), 1)
+
+    def test_a_key_that_went_quiet_again_makes_a_noise_again(self) -> None:
+        deck = self._controller()
+
+        deck.attention.add(follow(at=att.time.monotonic() - 10.0))
+        # Long enough that the first one has stopped waiting on anybody.
+        deck.attention._alerts[0].__dict__["at"] = (
+            att.time.monotonic() - att.FORGET_SECONDS - 60
+        )
+        deck.attention.add(follow(display="bea"))
+
+        self.assertEqual(len(deck.sounds), 2)
+
+    def test_pressing_the_key_starts_a_new_run(self) -> None:
+        deck = self._controller()
+
+        deck.attention.add(follow())
+        deck.attention.acknowledge(("p", 0, (), 3))
+        deck.attention.add(follow(display="bea"))
+
+        self.assertEqual(len(deck.sounds), 2)
+
+    def test_a_reminder_interval_still_repeats_the_noise(self) -> None:
+        deck = self._controller(remind_after="00:01")
+
+        deck.attention.add(follow())
+        deck._alerting[("p", 0, (), 3)] = att.time.monotonic() - 120
+        deck.attention.add(follow(display="bea"))
+
+        self.assertEqual(len(deck.sounds), 2)
 
 
 if __name__ == "__main__":

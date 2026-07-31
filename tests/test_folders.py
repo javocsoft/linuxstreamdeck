@@ -594,5 +594,136 @@ class DoubleClickTests(unittest.TestCase):
         self.assertFalse(self.completes((3, 100.0), 4, 100.01))
 
 
+class CrossFolderMoveTests(unittest.TestCase):
+    """Dragging a key across a folder boundary, once a folder sprang open."""
+
+    def setUp(self) -> None:
+        self.config = Config()
+        self.bus = EventBus()
+        self.deck = FakeDeck()
+        self.status: list[str] = []
+        self.bus.subscribe("status", lambda _t, d: self.status.append(d["text"]))
+        self.controller = DeckController(
+            self.config, self.bus, SimpleNamespace(connected=False), self.deck
+        )
+        self.page = self.config.pages[0]
+        self.page.set_key(3, folder_key("Scenes"))
+        self.page.set_key(5, action_key(url="https://outside"))
+        self.folder = self.page.key(3).contents
+
+    def tearDown(self) -> None:
+        self.controller.shutdown()
+
+    def test_a_key_moves_from_the_page_into_the_open_folder(self) -> None:
+        self.controller.open_folder(3)
+
+        self.assertTrue(self.controller.move_key_to((), 5, 7))
+
+        self.assertIsNone(self.page.key(5))
+        self.assertEqual(self.folder.key(7).params["url"], "https://outside")
+
+    def test_an_occupied_slot_sends_its_key_back_the_other_way(self) -> None:
+        self.folder.set_key(7, action_key(url="https://inside"))
+        self.controller.open_folder(3)
+
+        self.assertTrue(self.controller.move_key_to((), 5, 7))
+
+        self.assertEqual(self.folder.key(7).params["url"], "https://outside")
+        self.assertEqual(self.page.key(5).params["url"], "https://inside")
+
+    def test_a_key_moves_back_out_of_a_folder_onto_the_page(self) -> None:
+        self.folder.set_key(7, action_key(url="https://inside"))
+
+        self.assertTrue(self.controller.move_key_to((3,), 7, 9))
+
+        self.assertIsNone(self.folder.key(7))
+        self.assertEqual(self.page.key(9).params["url"], "https://inside")
+
+    def test_the_same_grid_is_still_an_ordinary_swap(self) -> None:
+        self.assertTrue(self.controller.move_key_to((), 5, 9))
+
+        self.assertIsNone(self.page.key(5))
+        self.assertEqual(self.page.key(9).params["url"], "https://outside")
+
+    def test_the_reserved_back_slot_is_refused_at_both_ends(self) -> None:
+        self.folder.set_key(7, action_key())
+        self.controller.open_folder(3)
+
+        self.assertFalse(
+            self.controller.move_key_to((), 5, FOLDER_BACK_INDEX)
+        )
+        self.controller.close_folder()
+        self.assertFalse(
+            self.controller.move_key_to((3,), FOLDER_BACK_INDEX, 9)
+        )
+
+        self.assertIsNone(self.folder.key(FOLDER_BACK_INDEX))
+        self.assertEqual(self.page.key(5).params["url"], "https://outside")
+
+    def test_a_folder_cannot_be_dropped_inside_itself(self) -> None:
+        """Its own contents are only reachable because it holds them."""
+        self.controller.open_folder(3)
+
+        self.assertFalse(self.controller.move_key_to((), 3, 7))
+
+        self.assertIsNone(self.folder.key(7))
+        self.assertIsNotNone(self.page.key(3))
+        self.assertIn("A folder cannot be moved inside itself", self.status)
+
+    def test_a_moved_key_takes_its_running_clock_with_it(self) -> None:
+        outside = self.controller._path_tkey((), 5)
+        self.controller.toggle_countdown(outside, 30, "", 100)
+        self.controller.open_folder(3)
+        inside = self.controller._path_tkey((3,), 7)
+
+        self.controller.move_key_to((), 5, 7)
+
+        self.assertTrue(self.controller.countdown_snapshot(inside, 30).running)
+        self.assertFalse(
+            self.controller.countdown_snapshot(outside, 30).running
+        )
+
+    def test_moving_a_folder_discards_the_state_of_its_contents(self) -> None:
+        self.page.set_key(6, folder_key("Audio", k4=action_key()))
+        deep = self.controller._path_tkey((6,), 4)
+        self.controller.toggle_countdown(deep, 30, "", 100)
+        self.controller.open_folder(3)
+
+        self.controller.move_key_to((), 6, 7)
+
+        self.assertFalse(self.controller.countdown_snapshot(deep, 30).running)
+
+    def test_a_folder_too_deep_for_its_destination_is_refused(self) -> None:
+        deepest = action_key()
+        for _ in range(MAX_FOLDER_DEPTH):
+            deepest = folder_key("Nested", k1=deepest)
+        self.page.set_key(8, deepest)
+        self.controller.open_folder(3)
+
+        self.assertFalse(self.controller.move_key_to((), 8, 7))
+
+        self.assertIsNone(self.folder.key(7))
+        self.assertIsNotNone(self.page.key(8))
+
+    def test_a_move_across_grids_drops_the_undo_history(self) -> None:
+        """An undo entry names indices of one container; this spans two.
+
+        Undoing the earlier change here would put its key back over the one
+        just moved in, and leave the moved key in neither grid.
+        """
+        self.folder.set_key(7, action_key(url="https://was-here"))
+        self.controller.open_folder(3)
+        self.controller.clear_key(7)
+        self.assertTrue(self.controller.can_undo())
+
+        self.controller.move_key_to((), 5, 7)
+
+        self.assertFalse(self.controller.can_undo())
+
+    def test_a_source_grid_that_no_longer_resolves_is_refused(self) -> None:
+        self.assertFalse(self.controller.move_key_to((11,), 2, 9))
+        self.assertIsNone(self.page.key(9))
+
+
 if __name__ == "__main__":
     unittest.main()

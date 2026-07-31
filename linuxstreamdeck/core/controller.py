@@ -274,8 +274,9 @@ class DeckController:
         # for the same reason ClockRuntime is: it is transient key state, and
         # the sound it may trigger belongs on the notification executor.
         self.attention = Attention(self._on_alert)
-        # Which alert keys were already showing somebody waiting, so a sound
-        # marks the change from quiet rather than every message that follows.
+        # When each alert key last made a noise, for the optional reminder
+        # interval only. Whether it should make one at all is asked of the
+        # alerts themselves in _on_alert, never of this.
         self._alerting: dict[RuntimeKey, float] = {}
         # ON/OFF state of toggle keys, keyed by RuntimeKey
         self._toggle: dict[RuntimeKey, bool] = {}
@@ -342,12 +343,15 @@ class DeckController:
 
     def _tkey(self, index: int) -> RuntimeKey:
         """Stable identity for transient key state (see RuntimeKey)."""
-        return (
-            self.current_profile,
-            self.current_page,
-            self._folder_path,
-            index,
-        )
+        return self._path_tkey(self._folder_path, index)
+
+    def _path_tkey(self, path: tuple[int, ...], index: int) -> RuntimeKey:
+        """The same identity for a slot of a grid that is not the open one.
+
+        Drag and drop can now cross a folder boundary, so a key's state has to
+        be addressable where it came from as well as where it is going.
+        """
+        return (self.current_profile, self.current_page, tuple(path), index)
 
     def _dial_tkey(self, index: int) -> RuntimeKey:
         """The same identity for a dial, in its own namespace.
@@ -387,6 +391,21 @@ class DeckController:
     def _folder_at(grid: KeyGrid, index: int):
         kc = grid.key(index)
         return kc.contents if kc is not None else None
+
+    def _grid_at(self, path: tuple[int, ...]) -> KeyGrid | None:
+        """The grid at a folder path, or None when the path no longer resolves.
+
+        Unlike `container` this never heals a broken path back to the page: a
+        caller asking for one particular grid must be told it has gone rather
+        than handed a different one.
+        """
+        grid: KeyGrid = self.page
+        for index in tuple(path):
+            contents = self._folder_at(grid, index)
+            if contents is None:
+                return None
+            grid = contents
+        return grid
 
     def is_reserved_key(self, index: int) -> bool:
         """Whether this slot is the folder Back key rather than a real key."""
@@ -886,22 +905,7 @@ class DeckController:
         for i in (a, b):
             if grid.keys.get(str(i)) is None:
                 grid.keys.pop(str(i), None)
-        # the toggle state travels with the key
-        pa, pb = self._tkey(a), self._tkey(b)
-        sa, sb = self._toggle.pop(pa, None), self._toggle.pop(pb, None)
-        if sb is not None:
-            self._toggle[pa] = sb
-        if sa is not None:
-            self._toggle[pb] = sa
-        self._clocks.swap(pa, pb)
-        self._cancel_timer_sound(pa)
-        self._cancel_timer_sound(pb)
-        # A mark refers to the action that failed, which is no longer here.
-        self._forget_failure(pa)
-        self._forget_failure(pb)
-        # A gesture in flight belonged to the key that just moved away.
-        self._cancel_gesture(pa)
-        self._cancel_gesture(pb)
+        self._swap_key_state(self._tkey(a), self._tkey(b))
         # A folder that moved would leave its contents' state under the old
         # index. Those keys are transient, so drop them and re-render, exactly
         # as deleting a page does.
@@ -909,6 +913,93 @@ class DeckController:
         self._discard_folder_state(b)
         self.config.save()
         self.refresh()
+
+    def _swap_key_state(self, a: RuntimeKey, b: RuntimeKey) -> None:
+        """Move two slots' transient state with the keys that just changed place.
+
+        Shared by the swap inside one grid and the move across a folder
+        boundary, so the two can never drift apart on what travels with a key.
+        """
+        # the toggle state travels with the key
+        sa, sb = self._toggle.pop(a, None), self._toggle.pop(b, None)
+        if sb is not None:
+            self._toggle[a] = sb
+        if sa is not None:
+            self._toggle[b] = sa
+        self._clocks.swap(a, b)
+        for key in (a, b):
+            self._cancel_timer_sound(key)
+            # A mark refers to the action that failed, which is no longer here.
+            self._forget_failure(key)
+            # A gesture in flight belonged to the key that just moved away.
+            self._cancel_gesture(key)
+
+    def move_key_to(
+        self,
+        source_path,
+        source_index: int,
+        dest_index: int,
+    ) -> bool:
+        """Move a key from another grid of this page into the one on screen.
+
+        A drag crosses a folder boundary when a folder springs open under a
+        paused pointer, so by the time the key is dropped it is no longer in
+        the grid it lands in. Inside one grid that is `swap_keys`; across two
+        it cannot be, because an index, a `RuntimeKey` and an undo entry are
+        each relative to one container.
+        """
+        source_path = tuple(source_path)
+        dest_path = self._folder_path
+        if source_path == dest_path:
+            self.swap_keys(source_index, dest_index)
+            return True
+        if self.is_reserved_key(dest_index) or (
+            source_path and source_index == FOLDER_BACK_INDEX
+        ):
+            return False
+        source_grid = self._grid_at(source_path)
+        if source_grid is None:
+            return False
+        moving = source_grid.key(source_index)
+        if moving is None:
+            return False
+        # A folder cannot end up inside itself: the destination grid only
+        # exists because the key being carried holds it.
+        inside = source_path + (source_index,)
+        if dest_path[: len(inside)] == inside:
+            self.bus.emit("status", text="A folder cannot be moved inside itself")
+            return False
+        dest_grid = self.container
+        displaced = dest_grid.key(dest_index)
+        # Each key carries its own folders into the other one's depth.
+        if len(dest_path) + folder_depth(moving) > MAX_FOLDER_DEPTH:
+            self.bus.emit(
+                "status", text="That folder has too many levels to fit here"
+            )
+            return False
+        if displaced is not None and (
+            len(source_path) + folder_depth(displaced) > MAX_FOLDER_DEPTH
+        ):
+            self.bus.emit(
+                "status",
+                text="The key already there has too many levels to fit back",
+            )
+            return False
+        dest_grid.set_key(dest_index, moving)
+        source_grid.set_key(source_index, displaced)
+        self._swap_key_state(
+            self._path_tkey(source_path, source_index),
+            self._path_tkey(dest_path, dest_index),
+        )
+        # A folder that moved leaves its contents' state under the path it came
+        # from, exactly as a swap within one grid does.
+        self._discard_folder_state(source_index, source_path)
+        self._discard_folder_state(dest_index, dest_path)
+        # Every entry names indices of one container; this change spans two.
+        self.forget_undo()
+        self.config.save()
+        self.refresh()
+        return True
 
     def paste_key(self, index: int, kc: KeyConfig) -> None:
         """Place an independent copy of kc at position index."""
@@ -947,10 +1038,16 @@ class DeckController:
         if drop_folder_state:
             self._discard_folder_state(index)
 
-    def _discard_folder_state(self, index: int) -> None:
-        """Forget the transient state of every key inside a folder slot."""
-        profile, page, path = self._view()
-        prefix = path + (index,)
+    def _discard_folder_state(
+        self, index: int, path: tuple[int, ...] | None = None
+    ) -> None:
+        """Forget the transient state of every key inside a folder slot.
+
+        `path` names the grid holding that slot; it defaults to the one on
+        screen, and is given explicitly when a key is moved out of another.
+        """
+        profile, page, current = self._view()
+        prefix = (current if path is None else tuple(path)) + (index,)
 
         def inside(key: RuntimeKey) -> bool:
             key_profile, key_page, key_path, _key_index = key
@@ -1148,10 +1245,9 @@ class DeckController:
         """
         if self._stopping.is_set() or self.deck.record_activity():
             return
-        if self._board is not None:
-            # A report is up: the press that dismisses it must not also run
+        if self.dismiss_board():
+            # A report was up: the press that dismisses it must not also run
             # whatever key happens to be underneath.
-            self.show_board(None)
             return
         if self.is_reserved_key(index):
             self.close_folder()
@@ -1684,13 +1780,18 @@ class DeckController:
                 twitch_actions.alert_sources(kc.params),
                 twitch_actions.alert_filter(kc.params),
             )
+            # Whether this key was already showing somebody waiting, asked of
+            # the alerts themselves rather than remembered as a flag. A flag
+            # has to be cleared when the key goes quiet again, and nothing was
+            # in a position to see that happen: alerts expire on their own
+            # clock and the key is never told. So it made its noise once and
+            # then stayed silent for good.
+            earlier = [other for other in pending if other is not alert]
             reminded = self._alerting.get(runtime_key, 0.0)
             remind_after = float(parse_duration(kc.params.get("remind_after")))
-            if should_sound(bool(reminded), pending, reminded, remind_after):
+            if should_sound(bool(earlier), pending, reminded, remind_after):
                 self._alerting[runtime_key] = time.monotonic()
                 self._play_alert_sound(kc.params)
-            elif pending:
-                self._alerting.setdefault(runtime_key, time.monotonic())
         self._refresh_runtime_keys(tuple(self._alert_keys()))
 
     def _alert_keys(self) -> dict[RuntimeKey, KeyConfig]:
@@ -1718,16 +1819,28 @@ class DeckController:
         except (TypeError, ValueError):
             volume = 70
         try:
-            self._notification_executor.submit(
-                play_audio, sound, volume / 100.0, 0, self._stopping
-            )
+            self._notification_executor.submit(self._alert_sound, sound, volume)
         except RuntimeError:
             # Submitted during shutdown; nothing left to announce.
             log.debug("Alert sound submitted after shutdown")
 
-    def acknowledge_alerts(self, runtime_key: RuntimeKey) -> None:
-        """Forget that this key was already sounding, so the next one does."""
-        self._alerting.pop(runtime_key, None)
+    def _alert_sound(self, sound: str, volume: int) -> None:
+        """Play it, and say so when it cannot be played.
+
+        `play_audio` takes the volume as a **percentage** and the stop signal
+        as something it can **call**; handing it a fraction and an Event made
+        every alert sound play at a hundredth of its volume and then raise on
+        the first turn of its loop. Nothing noticed, because the executor keeps
+        a worker's exception in a Future nobody reads -- which is why the
+        wrapper matters as much as the arguments do.
+        """
+        try:
+            play_audio(sound, volume, stop_requested=self._stopping.is_set)
+        except Exception as error:
+            if self._stopping.is_set():
+                return
+            log.exception("Could not play the Twitch alert sound")
+            self.bus.emit("status", text=f"Alert sound failed: {error}")
 
     def _on_timer_finished(self, completion: TimerCompletion) -> None:
         control = None
@@ -1876,6 +1989,19 @@ class DeckController:
 
     def board_active(self) -> bool:
         return self._board is not None
+
+    def dismiss_board(self) -> bool:
+        """Take a report off the deck now. Returns whether one was showing.
+
+        The single way a report is put away, so whoever is holding it up notices
+        at once: a press on the deck and closing the report window are the same
+        act, and the second used to leave the deck showing a report the user had
+        already read and dismissed for the rest of the hold.
+        """
+        if self._board is None:
+            return False
+        self.show_board(None)
+        return True
 
     def _key_spec(self, index: int, kc: KeyConfig | None, size) -> dict:
         # Read once: it is replaced wholesale from an action worker while the

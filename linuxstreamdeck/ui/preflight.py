@@ -38,7 +38,7 @@ STATE_CSS = {
 
 
 class PreFlightDialog(Adw.Window):
-    def __init__(self, parent, checks) -> None:
+    def __init__(self, parent, checks, on_close=None) -> None:
         super().__init__(
             transient_for=parent,
             modal=True,
@@ -46,6 +46,12 @@ class PreFlightDialog(Adw.Window):
             default_width=560,
             default_height=620,
         )
+        # Closing this window is the same act as pressing the deck to put the
+        # report away: someone who has read the sentences is finished with the
+        # two words on the keys, and should not have to wait out the rest of
+        # the hold to get their deck back.
+        self._on_close = on_close
+        self.connect("close-request", self._closing)
         report = Report(checks=list(checks))
 
         page = Adw.PreferencesPage()
@@ -65,6 +71,12 @@ class PreFlightDialog(Adw.Window):
         bottom.append(close)
         view.add_bottom_bar(bottom)
         self.set_content(view)
+
+    def _closing(self, _window) -> bool:
+        if self._on_close is not None:
+            self._on_close()
+        # Never claim the signal: this only reacts to the window going away.
+        return False
 
     def _results_group(self, report: Report) -> Adw.PreferencesGroup:
         counts = report.counts()

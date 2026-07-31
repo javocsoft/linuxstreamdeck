@@ -8,9 +8,11 @@ first-class result is the property most of these tests defend.
 
 from __future__ import annotations
 
+import inspect
 import os
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -548,6 +550,100 @@ class BoardOverlayTests(unittest.TestCase):
         self.controller.show_board({0: {"label": "Audio"}})
 
         self.assertEqual(self.page.key(0).label, "Watch")
+
+    def test_dismissing_says_whether_there_was_a_report_to_put_away(self) -> None:
+        """The press path needs the answer: it swallows the press only if so."""
+        self.assertFalse(self.controller.dismiss_board())
+
+        self.controller.show_board({0: {"label": "Audio"}})
+
+        self.assertTrue(self.controller.dismiss_board())
+        self.assertFalse(self.controller.board_active())
+        self.assertFalse(self.controller.dismiss_board())
+
+
+class BoardHoldTests(unittest.TestCase):
+    """How long the report stays on the deck once it has been read.
+
+    It is held for whoever is reading the deck, so anything that puts it away
+    ends the hold; waiting out `PREFLIGHT_HOLD` regardless left the key pulsing
+    RUN long after the user had plainly finished with it.
+    """
+
+    @staticmethod
+    def _beats(*, stopped: bool = False, board_beats: int = 10**9) -> int:
+        """Run the hold on a fake clock. Returns the beats it spent waiting.
+
+        The clock has to be a fake one: with a real deadline and a wait that
+        does not wait, every one of these would busy-spin for the whole of
+        PREFLIGHT_HOLD, and a hold that never ended would still look like a
+        pass.
+        """
+        from linuxstreamdeck.obs import actions as obs_actions
+
+        clock = {"now": 0.0}
+        beats = {"count": 0}
+
+        def waited(timeout: float) -> bool:
+            beats["count"] += 1
+            clock["now"] += timeout          # the beat this loop just spent
+            return stopped
+
+        controller = SimpleNamespace(
+            board_active=lambda: beats["count"] < board_beats
+        )
+        ctx = SimpleNamespace(wait_until_stopped=waited)
+        with unittest.mock.patch.object(
+            obs_actions, "time", SimpleNamespace(monotonic=lambda: clock["now"])
+        ):
+            obs_actions.PreFlight._hold(ctx, controller)
+        return beats["count"]
+
+    def test_the_hold_ends_the_moment_the_report_is_put_away(self) -> None:
+        self.assertEqual(self._beats(board_beats=3), 3)
+
+    def test_shutdown_ends_it_too(self) -> None:
+        self.assertEqual(self._beats(stopped=True), 1)
+
+    def test_an_undismissed_report_is_held_for_its_full_time(self) -> None:
+        """Nobody dismissed it, so it stays up for whoever is still reading."""
+        from linuxstreamdeck.obs.actions import PREFLIGHT_BEAT, PREFLIGHT_HOLD
+
+        self.assertAlmostEqual(
+            self._beats() * PREFLIGHT_BEAT,
+            PREFLIGHT_HOLD,
+            delta=PREFLIGHT_BEAT,
+        )
+
+
+class ReportWindowTests(unittest.TestCase):
+    """Closing the report window is the same act as pressing the deck."""
+
+    def test_closing_puts_the_report_away(self) -> None:
+        from linuxstreamdeck.ui.preflight import PreFlightDialog
+
+        dismissed = []
+        dialog = SimpleNamespace(_on_close=lambda: dismissed.append(True))
+
+        claimed = PreFlightDialog._closing(dialog, None)
+
+        self.assertEqual(dismissed, [True])
+        # Claiming the signal would stop the window closing at all.
+        self.assertFalse(claimed)
+
+    def test_a_window_with_nothing_to_tell_still_closes(self) -> None:
+        from linuxstreamdeck.ui.preflight import PreFlightDialog
+
+        self.assertFalse(
+            PreFlightDialog._closing(SimpleNamespace(_on_close=None), None)
+        )
+
+    def test_the_window_is_given_the_way_to_put_it_away(self) -> None:
+        """It is built in ui/window.py and has no controller of its own."""
+        from linuxstreamdeck.ui.window import MainWindow
+
+        source = inspect.getsource(MainWindow._on_preflight_report)
+        self.assertIn("on_close=self.app.controller.dismiss_board", source)
 
 
 if __name__ == "__main__":

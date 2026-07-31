@@ -1155,7 +1155,9 @@ cancels any other primary gesture on the same widget, so such a gesture never
 reaches `n_press == 2`. The secondary-button context menu on those same buttons
 is unaffected, because `GtkButton` never claims that sequence. The second click
 is consumed, so a third one starts a new pair instead of reopening the folder
-just entered.
+just entered. A drag held over the key opens it too — see **Spring-loaded
+folders** — which is the only way to put a key inside one without cutting and
+pasting it.
 
 Transient state therefore keys on `RuntimeKey` — `(profile, page, folder path,
 key index)` — so the same index inside a folder is a different key from the one
@@ -1601,6 +1603,17 @@ would fight it. A press dismisses the board *instead of* running the key under
 it, `_clear_time_actions()` drops it on every view change, and the action clears
 it in a `finally` — a report left up hides every real key.
 
+**`dismiss_board()` is the one way it is put away, and the hold watches for it.**
+`PreFlight._hold()` polls `board_active()` beside its own deadline, so anything
+that clears the board ends the hold: a press on the deck, closing the report
+window, or leaving the page the report describes. Both halves are needed. The
+window's `close-request` calls `dismiss_board`, or the deck kept showing a
+report the user had read and closed for the rest of `PREFLIGHT_HOLD` — twelve
+seconds of a deck they could not use. And the hold has to notice, or the key
+goes on pulsing `RUN` over a report that is no longer there. The dialog must
+return `False` from that handler: claiming the signal stops the window closing
+at all.
+
 `sysstats.cpu_percent()` is primed before the audio check on purpose: machine
 CPU only exists as a difference between two readings, and the two seconds the
 meters take is exactly the gap it needs.
@@ -1919,6 +1932,26 @@ messages. So it sounds when a key goes from quiet to somebody-waiting, and
 again only after an optional reminder interval. The sound goes on the
 notification executor, never an action worker, exactly like a timer's.
 
+**"Was this key already waiting" is asked of the alerts, never remembered as a
+flag.** `_on_alert()` derives it from the key's own pending set minus the alert
+that has just arrived; `_alerting` holds only *when* a noise was last made, for
+the reminder. A flag has to be cleared when the key goes quiet again and
+nothing is in a position to see that: alerts expire on their own clock and the
+key is never told. The first version kept one, so a key nobody pressed made its
+noise once and then stayed silent for good — and the method meant to clear it
+on a press was never called by anything.
+
+**`play_audio()` takes a volume as a percentage and a stop signal it can
+call.** Handing it `volume / 100.0` and the `_stopping` Event — both of which
+look right — made every alert sound play at a hundredth of its volume and then
+raise `TypeError` on the first turn of its loop. Nothing noticed, because a
+`ThreadPoolExecutor` keeps a worker's exception in a Future nobody reads: hence
+`_alert_sound()`, which reports a failure the way the timer's sound does. A
+sound that cannot be played has to be as visible as one that can, or the key is
+silent in exactly the way it is silent when nothing has happened. Tests that
+assert the controller called *something* cannot see any of this; the ones that
+matter feed what it passed to the real `play_audio`.
+
 `events.py` normalizes six payload shapes into one `Alert`. Note that a
 channel's first-ever message from someone is marked by Twitch with its own
 **message type** (`user_intro`) rather than a flag, and that is the one nobody
@@ -2041,6 +2074,46 @@ Clicking the already selected key must not reload the editor. Page-change handli
 tracks the selected page by object identity so renaming that same page preserves
 the selection, while a real page change clears it.
 
+### A button whose result is not on the button
+
+`acknowledge_press()` lights a button for `PRESS_ECHO_MS` and optionally
+replaces its text meanwhile. Only the editor's **Save** and its three **Test**
+buttons use it, and the reason is specific: this panel looks identical after
+either of them ran, so the only thing that moved was a line in the status bar at
+the far end of the window. Every other action button in the application closes
+its dialog, opens something or rewrites its own status line, and needs none of
+this.
+
+**The theme's own `:active` state does not cover it.** A quick click is
+released before that state is ever painted — press and release land in the same
+frame — which is exactly what made Save feel like it had not registered. So the
+press is acknowledged deliberately, and for long enough to be read.
+
+Four details are load-bearing:
+
+- **The word is only safe on a button with room to spare.** Save hexpands, so
+  its allocation stays put while its natural width goes from 68 to 77 px
+  (measured); on a button sized to its label, "Saved" would shove the rest of
+  the row sideways under the pointer. The Test buttons therefore only light up.
+- **Only Save names an outcome, and only when there was one.** `_save()` checks
+  what `save()` returned, so a press with no key selected confirms nothing.
+  Test deliberately says no word at all: it starts the key, and a key that
+  fails reports that itself with its own red mark — a button claiming success
+  would be quicker and louder than the truth.
+- **The first press of a run captures the label.** A second one while the echo
+  is still up would capture the echo instead, and the button would read
+  "Saved" for the rest of the session.
+- **The transition lives on `.press-echo`, the lit state on
+  `.press-echo-on`.** A removed class can only animate out from a rule the
+  widget still matches, so collapsing them into one leaves the button snapping
+  back instead of fading.
+
+`.press-echo-on` brightens the background **and** draws a ring inside the
+button in `@accent_fg_color`. Both are needed: Save is already accent-filled, so
+a background turning accent would change nothing, while the flat Test buttons
+need the fill or the ring alone reads as focus. The pair is guaranteed to
+contrast whatever the desktop's accent is.
+
 ### Grid drag and drop
 
 `MainWindow` owns one `Gtk.DragSource` / `Gtk.DropTarget` pair on the entire key
@@ -2061,9 +2134,52 @@ match the active drag. Foreign, malformed, stale, outside-grid and same-key drop
 are rejected. CSS classes dim the source and subtly highlight the current valid
 destination. Destination feedback clears on leave/drop, and drag end clears all
 remaining feedback. A valid drop still goes through the unsaved-change
-confirmation before `DeckController.swap_keys()`; the key configuration and
+confirmation before `DeckController.move_key_to()`; the key configuration and
 transient toggle/clock state travel together, and selection follows the
 destination. Copy/paste remains a separate context-menu/shortcut operation.
+
+### Spring-loaded folders
+
+A drag that rests on a folder key for `SPRING_OPEN_MS` opens it, so a key can be
+dropped **inside** rather than swapped with the folder. Resting on the Back key
+leaves the folder the same way, which is what stops it being a one-way door.
+Only a pointer that stops counts: `_arm_spring()` restarts the countdown
+whenever the hovered index changes, so crossing a folder on the way somewhere
+else opens nothing.
+
+**The consequence is that `_drag_source` is a `(folder path, key index)` pair,
+not an index.** The grid changes under a drag in progress, so an index alone
+names a slot the carried key is no longer in — and after springing into a
+folder, slot 7 of that folder would compare equal to the slot 7 the drag started
+from on the page, and the drop would be refused as "onto itself".
+`_is_drag_source()` is the one place that comparison lives, and
+`_refresh_drag_source_feedback()` dims the source only while its own grid is the
+one on screen.
+
+Three more rules keep it from doing damage:
+
+- **A dirty editor stops the spring rather than asking.** A drag cannot put up a
+  modal dialog, and entering a folder clears the selection, so `_spring_open()`
+  checks `has_unsaved_changes()` and says so in the status bar instead. Nothing
+  is lost: the ordinary swap-on-drop still happens, with its usual confirmation.
+- **`.spring-target` is deliberately not `.drop-target`.** Dropping on a folder
+  swaps the two keys; waiting on it goes inside. Two different outcomes on one
+  key must not look the same, hence the warning colour against the accent one.
+- **The depth limit is the same one `open_folder()` applies**
+  (`can_add_folder()`), so a folder at `MAX_FOLDER_DEPTH` never springs.
+
+`DeckController.move_key_to(source_path, source_index, dest_index)` performs the
+drop. It delegates to `swap_keys()` when both paths are the same, and otherwise
+moves the key into the grid on screen, sending whatever was there back to the
+source position. It refuses the reserved Back slot at either end, a source grid
+that no longer resolves, a key whose folders do not fit at the destination
+depth, and a folder dropped inside itself — the destination grid only exists
+because the key being carried holds it. It reuses `_swap_key_state()` (shared
+with `swap_keys()`, so what travels with a key cannot drift apart between them),
+discards each moved folder's subtree state exactly as a same-grid swap does, and
+calls `forget_undo()`: an undo entry names indices of **one** container, so
+replaying one across this change would restore a key over the one just moved in
+and leave the moved key in neither grid.
 
 Persistence is atomic JSON with user-only (`0600`) permissions at
 `~/.config/linuxstreamdeck/config.json`, with a `config.json.bak` backup written
@@ -2284,6 +2400,15 @@ ignored and you will chase a ghost.
    occupied keys are valid destinations in any direction. Validate the payload
    against the active source, preserve unsaved-change confirmation, move toggle
    and clock state with the key and always clear source/destination feedback.
+   Keep `_drag_source` a `(folder path, key index)` pair and compare it through
+   `_is_drag_source()`: a folder can spring open mid-drag, and an index alone
+   then names a slot of a grid the carried key is not in. A spring must never
+   run while the editor is dirty — a drag cannot stop to ask, and entering a
+   folder clears the selection — and it must keep its own visual state distinct
+   from the drop target, since resting and dropping do different things.
+   `move_key_to()` refuses the reserved Back slot at either end, a folder that
+   does not fit at the destination depth and a folder dropped inside itself, and
+   drops the undo history, whose entries only name indices of one container.
 
 14. **Stateful clocks must remain key-scoped and cheap.** Keep countdown and
    stopwatch state keyed by profile/page/key and pass that identity through
@@ -2367,9 +2492,10 @@ ignored and you will chase a ghost.
 22. **Folders must stay bounded, reversible and key-scoped.** Slot
    `FOLDER_BACK_INDEX` inside a folder is always the Back key: never store,
    select, drag, drop, paste, clear or swap it, or the physical deck can enter a
-   folder with no way out. Keep `MAX_FOLDER_DEPTH` enforced in three places —
-   loading (`_folder_contents`), creating (`can_add_folder`) and pasting or
-   importing a subtree (`fits_here`). Keep `KeyConfig.folder` `compare=False`, or
+   folder with no way out. Keep `MAX_FOLDER_DEPTH` enforced in four places —
+   loading (`_folder_contents`), creating (`can_add_folder`, which also gates
+   the spring), pasting or importing a subtree (`fits_here`) and dragging one
+   across a boundary (`move_key_to`). Keep `KeyConfig.folder` `compare=False`, or
    editing a key inside a folder makes its parent key look permanently dirty.
    Keep the open folder out of `config.json`: it is view state, and
    `_leave_folders()` must reset it on every page, profile and configuration
@@ -2400,7 +2526,11 @@ ignored and you will chase a ghost.
    out. Check cameras through the device handle in `/proc`, never through a
    screenshot, and resolve symlinks on both sides. Keep the volume meters on
    their own short-lived `EventClient` so the flood never reaches the request
-   lock. Never let the stream key past `stream_target()`.
+   lock. Never let the stream key past `stream_target()`. Keep `dismiss_board()`
+   the single way a report is put away and keep `PreFlight._hold()` polling
+   `board_active()`, so a press on the deck and closing the report window both
+   give the deck straight back instead of leaving it held for the rest of
+   `PREFLIGHT_HOLD`.
 
 26. **A key that cannot do its job has to say so on the key.** Keep the failure
    mark keyed by `RuntimeKey`, expired by the activity thread (never by a timer
@@ -2435,7 +2565,12 @@ ignored and you will chase a ghost.
    overwriting a newer one. Never let the account
    dialog claim a completed disconnection: Twitch has no API to remove the
    authorization, so revoking is all this can do and the user has to finish it
-   on Twitch's own Connections page.
+   on Twitch's own Connections page. Keep an alert key's "was it already
+   waiting" derived from its pending alerts rather than from a flag, or the key
+   sounds once and never again; keep the sound going to `play_audio` as a
+   **percentage** with a **callable** stop signal, and keep it wrapped so a
+   failure is reported — an executor swallows a worker's exception, and a sound
+   that cannot play is otherwise indistinguishable from nothing happening.
 
 ---
 

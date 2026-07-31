@@ -46,8 +46,10 @@ of truth; everything here is Claude-specific and additive.
   rewrite every `nav.page.go` target on rename. See AGENTS.md §3 and §5.
 - Preserve grid-level DnD: CAPTURE must win over child buttons, only configured
   keys may start a primary-button drag, internal payloads must match the active
-  source, and moves/swaps must keep the unsaved-edit guard. See AGENTS.md §3 and
-  §5.
+  source, and moves/swaps must keep the unsaved-edit guard. The drag source is a
+  `(folder path, index)` pair because a folder can spring open mid-drag; a spring
+  never runs while the editor is dirty, and `move_key_to()` keeps the depth,
+  Back-slot and folder-inside-itself refusals. See AGENTS.md §3 and §5.
 - Keep countdown/stopwatch state scoped by profile/page/key. Immediate clock
   presses must stay off action workers, ticks must repaint only changed seconds
   in the visible view, DnD must move runtime state, and edits/import/shutdown

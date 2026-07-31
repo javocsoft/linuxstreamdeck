@@ -33,6 +33,12 @@ KEY_PIXELS = 96
 # How long a second click on the same key still counts as a double click.
 DOUBLE_CLICK_SECONDS = 0.4
 
+# How long a drag has to rest on a folder key before that folder springs open,
+# so the key being carried can be dropped inside it. Long enough that merely
+# crossing a folder on the way somewhere else never triggers it, short enough
+# that it does not feel broken while the pointer is deliberately held still.
+SPRING_OPEN_MS = 800
+
 # Where the hint under the grid wraps. Kept well inside the key grid's own
 # width (5 columns of KEY_PIXELS plus spacing = 520 px) rather than right at it,
 # so a larger desktop font still cannot push it past the keys.
@@ -49,6 +55,13 @@ _CSS = b"""
 .deck-key.drop-target {
     border-color: @accent_bg_color;
     background-color: alpha(@accent_bg_color, 0.14);
+}
+/* A folder (or the Back key) a drag is resting on, about to spring open. It is
+   deliberately unlike .drop-target: dropping here would swap the two keys,
+   waiting here goes inside instead, and the two must not look the same. */
+.deck-key.spring-target {
+    border-color: @warning_color;
+    background-color: alpha(@warning_color, 0.16);
 }
 .deck-key.reserved { opacity: 0.9; }
 /* Keyboard focus has to stay distinguishable from selection: arrows move the
@@ -83,6 +96,22 @@ _CSS = b"""
     font-weight: bold;
 }
 .service-banner button:hover { background-color: shade(@accent_bg_color, 1.15); }
+/* A button whose result is not on the button (ui/editor.py: Save writes to disk
+   and to the deck, Test runs the key). A quick click is released before the
+   theme paints its own :active state, so the press is echoed deliberately and
+   for long enough to be seen. The ring is drawn inside the button so it also
+   registers on the accent-filled Save, where a background turning accent would
+   change nothing at all. The transition lives on the base class because a
+   removed class can only animate out from a rule the widget still matches. */
+.press-echo {
+    transition: background-color 220ms ease-out, box-shadow 220ms ease-out;
+}
+.press-echo.press-echo-on {
+    background-image: none;
+    background-color: shade(@accent_bg_color, 1.18);
+    color: @accent_fg_color;
+    box-shadow: inset 0 0 0 2px @accent_fg_color;
+}
 /* Live suggestions under a text field (ui/steps.py). Kept narrow enough to
    read as a list attached to the entry rather than a floating window. */
 .completion-popup > contents { padding: 2px; }
@@ -119,7 +148,7 @@ _KEY_DRAG_PREFIX = "linuxstreamdeck-key:"
 # regression test measures the real text instead of a copy that drifts from it.
 GRID_HINT = (
     "Drag to move · right-click to copy/paste · "
-    "double-click a folder to open it · "
+    "double-click a folder to open it, or hold a drag over it · "
     "arrow keys move between keys · "
     "Ctrl+Z undoes, Ctrl+Shift+Z redoes"
 )
@@ -186,8 +215,13 @@ class MainWindow(Adw.ApplicationWindow):
         self._unsaved_dialog: Adw.MessageDialog | None = None
         self._allow_close = False
         self._clipboard = None            # copied KeyConfig (for pasting)
-        self._drag_source_index: int | None = None
+        # (folder path, key index) of the key being dragged. The path is part
+        # of it because a folder can spring open mid-drag, and the index alone
+        # would then name a slot of a grid the key is no longer in.
+        self._drag_source: tuple[tuple[int, ...], int] | None = None
         self._drag_destination_index: int | None = None
+        self._spring_index: int | None = None
+        self._spring_timer: int | None = None
         self._last_key_click: tuple[int, float] | None = None
         # Columns the on-screen grid is currently laid out in; see
         # _build_key_grid. GRID_COLS is only the pre-connection default.
@@ -1181,7 +1215,7 @@ class MainWindow(Adw.ApplicationWindow):
                 return index
         return None
 
-    # --- drag & drop (swaps two keys) ---
+    # --- drag & drop (moves a key, across a folder boundary if it has to) ---
 
     def _add_grid_dnd(self, grid: Gtk.Grid) -> None:
         """Use one grid-level DnD pair so child buttons cannot steal gestures."""
@@ -1219,9 +1253,9 @@ class MainWindow(Adw.ApplicationWindow):
             or self.app.controller.is_reserved_key(index)
             or self.app.controller.container.key(index) is None
         ):
-            self._drag_source_index = None
+            self._drag_source = None
             return None
-        self._drag_source_index = index
+        self._drag_source = (self.app.controller.folder_path, index)
         payload = GObject.Value(
             GObject.TYPE_STRING,
             f"{_KEY_DRAG_PREFIX}{index}",
@@ -1229,10 +1263,10 @@ class MainWindow(Adw.ApplicationWindow):
         return Gdk.ContentProvider.new_for_value(payload)
 
     def _on_drag_begin(self, source, drag):
-        index = self._drag_source_index
-        if index is None:
+        if self._drag_source is None:
             return
-        self._key_buttons[index].add_css_class("drag-source")
+        index = self._drag_source[1]
+        self._refresh_drag_source_feedback()
         paintable = self._key_pictures[index].get_paintable()
         if paintable is not None:                       # the drag icon = the key
             source.set_icon(paintable, KEY_PIXELS // 2, KEY_PIXELS // 2)
@@ -1241,46 +1275,59 @@ class MainWindow(Adw.ApplicationWindow):
         self._clear_drag_feedback()
 
     def _on_drag_motion(self, target, x, y):
-        destination = self._key_at_grid_point(x, y)
+        hovered = self._key_at_grid_point(x, y)
+        self._arm_spring(hovered)
+        destination = hovered
         if (
-            destination == self._drag_source_index
-            or (
-                destination is not None
-                and self.app.controller.is_reserved_key(destination)
-            )
+            destination is None
+            or self._is_drag_source(destination)
+            or self.app.controller.is_reserved_key(destination)
         ):
             destination = None
         self._set_drag_destination(destination)
-        if self._drag_source_index is None or destination is None:
+        if self._drag_source is None or destination is None:
             return Gdk.DragAction(0)
         return Gdk.DragAction.MOVE
 
     def _on_drag_leave(self, target) -> None:
+        self._cancel_spring()
         self._set_drag_destination(None)
 
+    def _is_drag_source(self, index: int) -> bool:
+        """Whether this slot of the grid on screen holds the key being dragged.
+
+        The path has to match too: after a folder springs open the same index
+        is a different key entirely.
+        """
+        return self._drag_source == (self.app.controller.folder_path, index)
+
     def _on_drop(self, target, value, x, y):
+        self._cancel_spring()
         if isinstance(value, GObject.Value):
             value = value.get_string()
         source = self._decode_key_drag(value)
+        active = self._drag_source
         destination = self._key_at_grid_point(x, y)
         if (
             source is None
-            or source != self._drag_source_index
+            or active is None
+            or source != active[1]
             or destination is None
-            or source == destination
+            or self._is_drag_source(destination)
             or self.app.controller.is_reserved_key(destination)
         ):
             log.debug(
                 "Rejected key drop: source=%r active=%r destination=%r",
                 source,
-                self._drag_source_index,
+                active,
                 destination,
             )
             self._set_drag_destination(None)
             return False
+        path = active[0]
         self._confirm_unsaved_changes(
             "moving these keys",
-            lambda: self._apply_key_drop(source, destination),
+            lambda: self._apply_key_drop(path, source, destination),
         )
         self._set_drag_destination(None)
         return True
@@ -1304,16 +1351,99 @@ class MainWindow(Adw.ApplicationWindow):
         if index is not None:
             self._key_buttons[index].add_css_class("drop-target")
 
+    def _refresh_drag_source_feedback(self) -> None:
+        """Dim the dragged key, but only while its own grid is the one showing.
+
+        A folder springing open mid-drag leaves that slot holding somebody
+        else's key, which must not be the one that looks picked up.
+        """
+        for button in self._key_buttons:
+            button.remove_css_class("drag-source")
+        if self._drag_source is None:
+            return
+        index = self._drag_source[1]
+        if self._is_drag_source(index) and index < len(self._key_buttons):
+            self._key_buttons[index].add_css_class("drag-source")
+
     def _clear_drag_feedback(self) -> None:
-        source = self._drag_source_index
-        if source is not None and source < len(self._key_buttons):
-            self._key_buttons[source].remove_css_class("drag-source")
-        self._drag_source_index = None
+        self._cancel_spring()
+        self._drag_source = None
+        self._refresh_drag_source_feedback()
         self._set_drag_destination(None)
 
-    def _apply_key_drop(self, source: int, destination: int) -> None:
-        self.app.controller.swap_keys(source, destination)
-        self._apply_selection(destination)
+    def _apply_key_drop(
+        self, source_path: tuple[int, ...], source: int, destination: int
+    ) -> None:
+        if self.app.controller.move_key_to(source_path, source, destination):
+            self._apply_selection(destination)
+
+    # --- spring-loaded folders (a drag held over a folder opens it) ---
+
+    def _arm_spring(self, index: int | None) -> None:
+        """Start counting down to opening the folder under a resting drag.
+
+        Only a pointer that stops counts: moving to another key restarts it, so
+        crossing a folder on the way somewhere else never opens anything.
+        """
+        if index is not None and index == self._spring_index:
+            return
+        self._cancel_spring()
+        if index is None or not self._springs_open(index):
+            return
+        self._spring_index = index
+        self._key_buttons[index].add_css_class("spring-target")
+        self._spring_timer = GLib.timeout_add(
+            SPRING_OPEN_MS, self._spring_open, index
+        )
+
+    def _springs_open(self, index: int) -> bool:
+        """Whether resting on this key should move the grid somewhere else."""
+        controller = self.app.controller
+        if self._drag_source is None:
+            return False
+        if controller.is_reserved_key(index):
+            # Back: the way out, so a key can also be dragged out of a folder.
+            return True
+        if self._is_drag_source(index):
+            return False
+        kc = controller.container.key(index)
+        return (
+            kc is not None
+            and kc.contents is not None
+            and controller.can_add_folder()
+        )
+
+    def _cancel_spring(self) -> None:
+        if self._spring_timer is not None:
+            GLib.source_remove(self._spring_timer)
+            self._spring_timer = None
+        index = self._spring_index
+        self._spring_index = None
+        if index is not None and index < len(self._key_buttons):
+            self._key_buttons[index].remove_css_class("spring-target")
+
+    def _spring_open(self, index: int) -> bool:
+        """The drag rested long enough: go into that folder, or back out of it."""
+        self._spring_timer = None
+        self._cancel_spring()
+        controller = self.app.controller
+        if self.editor.has_unsaved_changes():
+            # Entering clears the selection, and a drag in progress cannot stop
+            # to put up a modal dialog asking about it.
+            self._flash_status(
+                "Save or discard the key you are editing before moving keys "
+                "between folders"
+            )
+            return False
+        if controller.is_reserved_key(index):
+            controller.close_folder()
+        else:
+            controller.open_folder(index)
+        # The grid on screen changed under the drag: the key being carried may
+        # no longer be in it, and the destination named a slot of the old one.
+        self._refresh_drag_source_feedback()
+        self._set_drag_destination(None)
+        return False                                    # one shot
 
     # --- context menu (right-click) ---
 
@@ -1839,7 +1969,9 @@ class MainWindow(Adw.ApplicationWindow):
             return
         from .preflight import PreFlightDialog
 
-        PreFlightDialog(self, checks).present()
+        PreFlightDialog(
+            self, checks, on_close=self.app.controller.dismiss_board
+        ).present()
 
     # ---------- first run ----------
 
