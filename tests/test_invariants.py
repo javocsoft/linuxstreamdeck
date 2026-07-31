@@ -45,6 +45,9 @@ def _render_everything() -> None:
     renderer.compose((72, 72), label="Live", icon_path="mdi:play", badge="RUN")
     renderer.compose((72, 72), label="Timer", center_text="00:12")
     renderer.compose((72, 72), label="Live", image=_preview_frame(), active=True)
+    # A value over a picture, which draws its text with an outline.
+    renderer.compose((72, 72), label="Chat", center_text="15s",
+                     image=_preview_frame(), border="#5aa0e8", pulse=True)
     # The two states that mark a key rather than its action: both draw, and the
     # faded one also composites the finished image.
     renderer.compose((72, 72), label="Rec", icon_path="mdi:play", failed=True,
@@ -332,6 +335,7 @@ class ShutdownOrderTests(unittest.TestCase):
             ),
             deck=SimpleNamespace(stop=lambda: calls.append("deck")),
             obs=SimpleNamespace(stop=lambda: calls.append("obs")),
+            events=SimpleNamespace(stop=lambda: calls.append("events")),
             twitch=SimpleNamespace(stop=lambda: calls.append("twitch")),
         )
         return LinuxStreamDeckApp._on_shutdown, app
@@ -343,7 +347,7 @@ class ShutdownOrderTests(unittest.TestCase):
         shutdown(app, None)
 
         self.assertEqual(
-            calls, ["tray", "controller", "deck", "obs", "twitch"]
+            calls, ["tray", "controller", "deck", "obs", "events", "twitch"]
         )
 
     def test_shutdown_marks_the_application_as_stopping_first(self) -> None:
@@ -365,7 +369,9 @@ class ShutdownOrderTests(unittest.TestCase):
 
         shutdown(app, None)
 
-        self.assertEqual(calls, ["controller", "deck", "obs", "twitch"])
+        self.assertEqual(
+            calls, ["controller", "deck", "obs", "events", "twitch"]
+        )
 
     def test_the_status_icon_is_dropped_so_it_cannot_be_stopped_twice(
         self,

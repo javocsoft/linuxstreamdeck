@@ -60,6 +60,13 @@ class Param:
     # far easier to type one that actually exists. Use this rather than
     # `choices_source` whenever the full list cannot reasonably be enumerated.
     completion_source: str = ""
+    # Only shown while another parameter holds one of these values. A field
+    # that cannot apply is noise, and worse than noise when it looks settable:
+    # `twitch.alert`'s chat filter changes nothing while the key is watching
+    # raids. The value is still kept and still saved, so switching away and
+    # back does not lose what was chosen.
+    depends_on: str = ""
+    depends_values: list[str] = field(default_factory=list)
 
 
 # --- duration parameters (kind == "duration") ---

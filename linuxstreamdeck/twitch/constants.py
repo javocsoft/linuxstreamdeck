@@ -38,6 +38,8 @@ SCOPES = (
     "channel:edit:commercial",        # start an ad break
     "channel:manage:raids",           # start or cancel a raid
     "moderator:manage:announcements",  # post an announcement in chat
+    "user:read:chat",                 # see chat messages as they arrive
+    "channel:read:subscriptions",     # see new and renewed subscriptions
 )
 
 # Twitch reports the device flow's outcome as an RFC 8628 error **code** in the

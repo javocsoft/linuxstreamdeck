@@ -31,6 +31,7 @@ from .core.starter import is_first_run  # noqa: E402
 from .device.manager import DeckManager  # noqa: E402
 from .obs.client import OBSClient  # noqa: E402
 from .twitch.client import TwitchClient  # noqa: E402
+from .twitch.eventsub import EventSubSession  # noqa: E402
 
 # register the action catalogs (the @register decorators run on import)
 from . import basic_actions  # noqa: E402,F401
@@ -89,6 +90,11 @@ class LinuxStreamDeckApp:
         self.controller = DeckController(
             self.config, self.bus, self.obs, self.deck, twitch=self.twitch
         )
+        # The live event feed. It only reaches the deck through the
+        # controller's attention runtime, so nothing here knows about keys.
+        self.events = EventSubSession(
+            self.twitch, self.bus, self.controller.attention.add
+        )
 
     def run(self, argv) -> int:
         return self.gtk_app.run(argv)
@@ -105,6 +111,7 @@ class LinuxStreamDeckApp:
             # Reads the keyring on its own worker, so a locked collection
             # cannot delay the window appearing.
             self.twitch.start()
+            self.events.start()
             # Only a session-login start may stay hidden, and only when the
             # status icon is really there to bring the window back.
             if self._start_hidden and self.tray is not None:
@@ -140,8 +147,10 @@ class LinuxStreamDeckApp:
         self.controller.shutdown()
         self.deck.stop()
         self.obs.stop()
-        # Last, and for the same reason OBS is late: an action worker must
-        # never be left waiting on a request to a client that has already gone.
+        # The event session before the client it makes requests through, for
+        # the same reason the deck stops before OBS: nothing may be left
+        # waiting on something that has already gone.
+        self.events.stop()
         self.twitch.stop()
         log.info("Shutdown complete")
 

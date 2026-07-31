@@ -507,17 +507,38 @@ class AccountTests(ClientCase):
         self.assertEqual(self.store.cleared, 1)
         self.assertEqual(len(self.pool.jobs), 1)
 
-    def test_unlinking_revokes_both_tokens(self) -> None:
-        """The refresh token survives an access-token revoke on its own."""
+    def test_unlinking_revokes_only_the_access_token(self) -> None:
+        """Revoking the refresh token as well tore down the authorization.
+
+        Twitch invalidates every token from the same grant, so disconnecting
+        killed the app's permission outright: anyone who reconnected got
+        EventSub subscriptions revoked with `authorization_revoked` seconds
+        later. An access token expires on its own in about four hours.
+        """
         client = self.build(tokens=self.tokens())
         client._tokens = self.tokens()
         client.unlink()
-        self.answers = [{}, {}]
+        self.answers = [{}]
 
         self.pool.run_all()
 
         sent = [call["form"]["token"] for call in self.requests]
-        self.assertEqual(sent, ["access-1", "refresh-1"])
+        self.assertEqual(sent, ["access-1"])
+
+    def test_a_revoke_that_lands_after_a_relink_is_dropped(self) -> None:
+        """It runs off the calling thread, so it can arrive after somebody has
+        already reconnected — and revoking then tore down the authorization
+        they had just granted."""
+        client = self.build(tokens=self.tokens())
+        client._tokens = self.tokens()
+        client.unlink()
+        # Reconnected before the queued revoke ran.
+        client._tokens = self.tokens(access="access-2")
+
+        self.pool.run_all()
+
+        self.assertEqual(self.requests, [])
+        self.assertTrue(client.linked)
 
     def test_the_account_is_gone_locally_even_if_twitch_cannot_be_told(
         self,

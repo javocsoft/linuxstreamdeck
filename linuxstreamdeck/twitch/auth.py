@@ -271,31 +271,32 @@ def identify(tokens: Tokens) -> Tokens:
     )
 
 
-def revoke(client_id: str, access_token: str, refresh_token: str = "") -> None:
-    """Invalidate the tokens this application was given.
+def revoke(client_id: str, access_token: str) -> None:
+    """Invalidate the access token this application was given.
 
-    Two things this deliberately does **not** promise. It does not remove the
-    application from the user's Twitch connections page: Twitch has no API for
-    that, revoking only kills the token, and the app-to-user link is undone
-    solely by the user at `CONNECTIONS_URL`. And it is best effort — unlinking
-    has already removed the stored tokens, so a network failure here must never
-    stop somebody disconnecting their account.
+    **The access token only, deliberately.** Revoking the refresh token beside
+    it was tried and had to be undone: RFC 7009 says an authorization server
+    should invalidate every token issued from the same grant, and Twitch does
+    — so disconnecting an account tore down the whole authorization. Someone
+    who then reconnected got a session whose EventSub subscriptions were
+    revoked with `authorization_revoked` seconds later, which is exactly as
+    baffling as it sounds. An access token expires in about four hours by
+    itself; a torn-down grant does not repair.
 
-    Both tokens are offered because revoking an access token does not revoke
-    the refresh token beside it. Twitch may well refuse the second call, which
-    is why the failure of either is only logged.
+    It also does not remove the application from the user's Twitch connections
+    page: Twitch has no API for that, and only the user can, at
+    `CONNECTIONS_URL`. And it is best effort — unlinking has already removed
+    the stored tokens, so a network failure here must never stop somebody
+    disconnecting.
     """
-    if not client_id:
+    if not client_id or not access_token:
         return
-    for token in (access_token, refresh_token):
-        if not token:
-            continue
-        try:
-            http.request_json(
-                "POST", REVOKE_URL, form={"client_id": client_id, "token": token}
-            )
-        except http.TwitchError:
-            log.debug("Could not revoke a Twitch token", exc_info=True)
+    try:
+        http.request_json(
+            "POST", REVOKE_URL, form={"client_id": client_id, "token": access_token}
+        )
+    except http.TwitchError:
+        log.debug("Could not revoke the Twitch token", exc_info=True)
 
 
 def missing_scopes(tokens: Tokens, wanted: tuple[str, ...]) -> tuple[str, ...]:

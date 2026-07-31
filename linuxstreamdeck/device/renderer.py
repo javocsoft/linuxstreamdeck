@@ -33,6 +33,12 @@ ACTIVE_ACCENT = 0.12
 # deliberately low so the effect is visible without competing with the key art.
 BUSY_BG_BLEND = (0.035, 0.07)
 BUSY_HALO_BLEND = (0.24, 0.38)
+# The same breathing for a key whose background already means something. It
+# lightens rather than tinting, so the colour keeps saying what it said; the
+# amounts are larger because lightening reads as less of a change than a hue
+# shift does.
+PULSE_TOWARDS = "#ffffff"
+PULSE_BG_BLEND = (0.06, 0.16)
 
 # Label font size. Each named scale is a divisor of the key height, so a chosen
 # size keeps its proportion on any key geometry. "Medium" matches the automatic
@@ -66,6 +72,12 @@ SCRIM_STRENGTH = 0.82
 # Curve of that gradient. Below 1 it darkens early and flattens, so the top of
 # the glyphs is already on a dark background; a linear ramp is not.
 SCRIM_RAMP = 0.35
+
+# How thick the outline around a value drawn over a picture is, as a fraction
+# of the text size. The label gets a gradient instead, because it sits along an
+# edge; a value sits in the middle of the subject, where a band would cover the
+# very thing the picture is there to show.
+OUTLINE_DIVISOR = 7.0
 
 
 def _rgb(color) -> tuple[int, int, int]:
@@ -109,6 +121,38 @@ def _blend(color, towards, amount: float) -> tuple[int, int, int]:
 def _accent_blend(color, amount: float) -> tuple[int, int, int]:
     """Blend a color gently towards the application accent."""
     return _blend(color, ACCENT, amount)
+
+
+def _outline_width(font) -> int:
+    """How thick an outline the value needs to survive any picture behind it.
+
+    Proportional to the text, so it reads the same on a Mini and on an XL, and
+    at least one pixel or it does nothing at all.
+    """
+    return max(1, round(getattr(font, "size", 12) / OUTLINE_DIVISOR))
+
+
+def _contrasting(color) -> tuple[int, int, int]:
+    """Black or white, whichever the given colour is not.
+
+    The outline exists to separate the value from whatever is behind it, so it
+    has to be the opposite of the value rather than a fixed colour: a key whose
+    text colour was set to something dark needs a light one.
+    """
+    r, g, b = _rgb(color)
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return (0, 0, 0) if luminance > 0.5 else (255, 255, 255)
+
+
+def _pulse_blend(color, amount: float) -> tuple[int, int, int]:
+    """Breathe a color by lightening it, without changing what colour it is.
+
+    The running-key pulse blends towards the accent, which is right when the
+    background carries no meaning of its own. It is wrong when it does: an
+    alert key whose red says "somebody has been waiting five minutes" rendered
+    blue once the accent was mixed in, which is precisely the message lost.
+    """
+    return _blend(color, PULSE_TOWARDS, amount)
 
 
 _FONT_CANDIDATES = [
@@ -226,6 +270,7 @@ def compose(
     active: bool = False,
     busy: bool = False,
     busy_phase: bool = False,
+    pulse: bool = False,
     badge: str = "",
     center_text: str = "",
     icon_color: str = "#ffffff",
@@ -233,6 +278,7 @@ def compose(
     text_color: str = "",
     image: bytes | None = None,
     failed: bool = False,
+    border: str = "",
     unavailable: bool = False,
 ) -> Image.Image:
     w, h = size
@@ -245,6 +291,8 @@ def compose(
     base_bg = _active_bg(bg or EMPTY_BG) if active else (bg or EMPTY_BG)
     if busy:
         base_bg = _accent_blend(base_bg, BUSY_BG_BLEND[int(busy_phase)])
+    if pulse:
+        base_bg = _pulse_blend(base_bg, PULSE_BG_BLEND[int(busy_phase)])
     if failed:
         base_bg = _blend(base_bg, ERROR_BORDER, ERROR_BG_BLEND)
     # all text drawing runs under the shared lock (FreeType is not thread-safe);
@@ -283,11 +331,19 @@ def compose(
             available_height = h - label_height
             x = (w - value_width) // 2 - left
             y = (available_height - value_height) // 2 - top
+            # Over a picture the value needs an outline of its own. The label
+            # has `_scrim()` because it sits along one edge, where a gradient
+            # is invisible; this one sits in the middle of the subject, where a
+            # band would cover the very thing the picture is there to show. A
+            # bright avatar left "15s" white on yellow, over the face.
+            outline = _outline_width(value_font) if photo is not None else 0
             draw.text(
                 (x, max(2, y)),
                 center_text,
                 font=value_font,
                 fill=ink,
+                stroke_width=outline,
+                stroke_fill=_contrasting(ink),
             )
         elif icon_path:
             # Icons accept both a library reference ("mdi:name") and a path to
@@ -337,14 +393,18 @@ def compose(
                 width=max(1, min(w, h) // 36),
             )
 
-        if failed:
-            # Drawn last so it sits over artwork, a live preview and any halo:
-            # the point is that it cannot be missed on a glance at the deck.
+        # Both of these are drawn last, so they sit over artwork, a live
+        # preview and any halo: the point of each is that it cannot be missed
+        # on a glance at the deck, and a background change is invisible on a
+        # key carrying a picture. A failure outranks any other border, because
+        # "this did not work" is the more urgent of the two messages.
+        outline = ERROR_BORDER if failed else (border or "")
+        if outline:
             inset = max(1, min(w, h) // 48)
             draw.rounded_rectangle(
                 (inset, inset, w - inset - 1, h - inset - 1),
                 radius=max(5, min(w, h) // 9),
-                outline=ERROR_BORDER,
+                outline=outline,
                 width=max(2, min(w, h) // 22),
             )
 

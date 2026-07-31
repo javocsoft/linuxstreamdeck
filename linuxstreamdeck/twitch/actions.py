@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 
 from ..core.actions import REGISTRY, Action, Param, apply_default_icons, register
+from ..core.audio import SUPPORTED_AUDIO_EXTENSIONS
+from . import attention, events
 from .client import ANNOUNCEMENT_COLORS, COMMERCIAL_LENGTHS, uptime_seconds
 from .http import TwitchError
 
@@ -460,6 +462,184 @@ class Announce(Action):
         ctx.bus.emit("status", text="Announcement posted in Twitch chat")
 
 
+# How a waiting key escalates, drawn as a border. Quiet has none; the rest
+# climb from "somebody is there" to "this is now rude". They are bright rather
+# than dark because a border is thin and sits over a photograph.
+ALERT_COLORS = ("", "#5aa0e8", "#e8a33a", "#e8564f")
+
+# Which sources each choice watches. "Everything" exists because most people
+# want one key, not four.
+ALERT_SOURCES = {
+    "chat": (events.CHAT,),
+    "followers": (events.FOLLOW,),
+    "subscriptions": (events.SUBSCRIBE,),
+    "raids": (events.RAID,),
+    "everything": events.SOURCES,
+}
+ALERT_SOURCE_LABELS = {
+    "chat": "Chat messages",
+    "followers": "New followers",
+    "subscriptions": "Subscriptions",
+    "raids": "Raids",
+    "everything": "Everything",
+}
+
+
+def alert_sources(params: dict) -> tuple:
+    return ALERT_SOURCES.get(str((params or {}).get("source") or "chat"), ())
+
+
+def alert_filter(params: dict) -> str:
+    value = str((params or {}).get("chat_filter") or events.FILTER_ALL)
+    return value if value in events.CHAT_FILTERS else events.FILTER_ALL
+
+
+def alert_matches(params: dict, alert) -> bool:
+    """Whether a key configured this way cares about this alert.
+
+    Public because the controller asks it when an alert arrives, to decide
+    whether that key should make a noise — the same question the key answers
+    when it draws itself.
+    """
+    return events.matches(alert, alert_sources(params), alert_filter(params))
+
+
+@register
+class AlertKey(Action):
+    id = "twitch.alert"
+    name = "Chat and event alerts"
+    category = CAT_TWITCH
+    description = (
+        "Light up when somebody is waiting on you: a chat message, a new "
+        "follower, a subscription or a raid. Shows who it was, how long they "
+        "have waited and how many are unread, with an optional sound. Press "
+        "it to mark them seen."
+    )
+    params = [
+        Param(
+            "source",
+            "Watch for",
+            kind="choice",
+            default="chat",
+            choices=list(ALERT_SOURCES),
+            choice_labels=dict(ALERT_SOURCE_LABELS),
+        ),
+        Param(
+            "chat_filter",
+            "Which chat messages",
+            kind="choice",
+            default=events.FILTER_ALL,
+            choices=list(events.CHAT_FILTERS),
+            choice_labels=dict(events.CHAT_FILTER_LABELS),
+            # It answers a question only chat has, so it is hidden while the
+            # key is watching anything else.
+            depends_on="source",
+            depends_values=["chat", "everything"],
+        ),
+        Param(
+            "sound",
+            "Sound",
+            kind="file",
+            default="",
+            file_filter_name="Audio files",
+            extensions=list(SUPPORTED_AUDIO_EXTENSIONS),
+            placeholder="No sound",
+        ),
+        Param("volume", "Volume", kind="int", default=70,
+              minimum=0, maximum=100, step=5),
+        Param(
+            "remind_after",
+            "Remind again after",
+            kind="optional_duration",
+            default="",
+            placeholder="Only once, when the first one arrives",
+        ),
+        Param(
+            "avatar",
+            "Show who it was",
+            kind="choice",
+            default="yes",
+            choices=["yes", "no"],
+            choice_labels={"yes": "Yes", "no": "No"},
+        ),
+    ]
+
+    def execute(self, ctx, p):
+        """Pressing it means "I have seen them"."""
+        attention = _attention(ctx)
+        pending = self._pending(ctx, p)
+        if attention is not None and ctx.key is not None:
+            attention.acknowledge(ctx.key)
+        if not pending:
+            ctx.bus.emit("status", text="Nothing is waiting on Twitch")
+            return
+        newest = pending[-1]
+        ctx.bus.emit(
+            "status",
+            text=(
+                f"{events.describe(newest)}"
+                + (f" (+{len(pending) - 1} more)" if len(pending) > 1 else "")
+            ),
+        )
+
+    def feedback(self, ctx, p):
+        pending = self._pending(ctx, p)
+        if not pending:
+            return {}
+        waited = attention.waiting(pending)
+        level = attention.urgency(waited)
+        state = {
+            "display": attention.clock(waited),
+            "badge": str(len(pending)) if len(pending) > 1 else "",
+            # Breathing is what catches the eye from the corner of it. It
+            # lightens rather than tinting, because this key's colour is the
+            # message: tinting it towards the accent turned "waiting five
+            # minutes" red into a calm blue.
+            "pulse": level >= 1,
+        }
+        # A border rather than a background: this key usually carries the
+        # waiting person's picture, and a background change behind a photograph
+        # is invisible — the same reason the failure mark is a border.
+        color = ALERT_COLORS[min(level, len(ALERT_COLORS) - 1)]
+        if color:
+            state["border"] = color
+        if str(p.get("avatar", "yes")) != "no":
+            picture = self._avatar(ctx, pending[0])
+            if picture:
+                state["image"] = picture
+        return state
+
+    @staticmethod
+    def _pending(ctx, p):
+        runtime = _attention(ctx)
+        if runtime is None or ctx.key is None:
+            return []
+        return runtime.pending(ctx.key, alert_sources(p), alert_filter(p))
+
+    @staticmethod
+    def _avatar(ctx, alert):
+        """The waiting person's picture, from the cache only.
+
+        This runs on a render worker while the key image is being composed, so
+        it must never reach for the network; the fetch was started when the
+        alert arrived.
+        """
+        twitch = getattr(ctx, "twitch", None)
+        if twitch is None or not alert.user_id:
+            return None
+        try:
+            return twitch.cached_avatar(alert.user_id)
+        except Exception:
+            log.debug("Could not read a cached avatar", exc_info=True)
+            return None
+
+
+def _attention(ctx):
+    """The shared alert history, or None when nothing is listening."""
+    controller = getattr(ctx, "controller", None)
+    return getattr(controller, "attention", None)
+
+
 def _client(ctx):
     """The Twitch connection, or a refusal that says what is missing.
 
@@ -482,6 +662,7 @@ apply_default_icons({
     "twitch.commercial": "mdi:currency-usd",
     "twitch.raid": "mdi:rocket-launch-outline",
     "twitch.announce": "mdi:bullhorn-outline",
+    "twitch.alert": "mdi:message-alert",
 })
 
 

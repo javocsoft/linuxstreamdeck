@@ -68,6 +68,9 @@ ANNOUNCEMENT_COLORS = ("primary", "blue", "green", "orange", "purple")
 # broadcaster type, and Twitch refuses its ad requests in ways that do not say
 # so — see `can_run_ads`.
 ADS_BROADCASTER_TYPES = ("affiliate", "partner")
+# Profile pictures, keyed by account id. A chat key shows whoever is waiting,
+# and the same handful of people write again and again during one stream.
+AVATAR_CACHE_LIMIT = 128
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,7 @@ class TwitchClient:
         # None until established: "not looked up" must stay distinct from "an
         # ordinary account", or a failed lookup would disable a working key.
         self._broadcaster_type: str | None = None
+        self._avatars: dict[str, bytes | None] = {}
         self._stopping = threading.Event()
         # One worker: every background refresh here is a Twitch request, and
         # serializing them keeps a slow answer from multiplying into a burst.
@@ -200,6 +204,12 @@ class TwitchClient:
             self._channel = {}
             self._channel_at = 0.0
             self._broadcaster_type = None
+        missing = self.missing_scopes()
+        log.info(
+            "Twitch account linked as %s; granted %d of %d permissions%s",
+            identified.login or "?", len(SCOPES) - len(missing), len(SCOPES),
+            f" (missing {', '.join(missing)})" if missing else "",
+        )
         self._announce()
 
     def unlink(self) -> None:
@@ -220,10 +230,21 @@ class TwitchClient:
         if self._store is not None:
             self._store.clear()
         if tokens is not None:
-            self._submit(
-                lambda: auth.revoke(client_id, tokens.access, tokens.refresh)
-            )
+            self._submit(lambda: self._revoke_if_still_gone(client_id, tokens))
         self._announce()
+
+    def _revoke_if_still_gone(self, client_id: str, tokens: auth.Tokens) -> None:
+        """Give back the old token, unless an account was linked meanwhile.
+
+        Revoking runs off the calling thread so the dialog does not wait on the
+        network, which means it can land after somebody has already reconnected
+        — and a revocation arriving then tore down the authorization they had
+        just granted. The account they now hold is the one that matters.
+        """
+        if self.linked:
+            log.debug("Not revoking: an account was linked in the meantime")
+            return
+        auth.revoke(client_id, tokens.access)
 
     def _drop_account(self, reason: str) -> None:
         with self._lock:
@@ -477,6 +498,77 @@ class TwitchClient:
             params={"broadcaster_id": user_id, "moderator_id": user_id},
             body={"message": text[:MAX_ANNOUNCEMENT_CHARS], "color": color},
         )
+
+    def user_id(self) -> str:
+        """The linked account's numeric id, or empty when there is none.
+
+        The public form of `_user_id`, which raises: the event session wants to
+        ask without being interrupted when no account is linked yet.
+        """
+        try:
+            return self._user_id()
+        except TwitchError:
+            return ""
+
+    def create_subscription(
+        self, name: str, version: str, condition: dict, session_id: str
+    ) -> None:
+        """Ask Twitch to send one kind of event to an open session."""
+        from .eventsub import subscription_body
+
+        self._post(
+            "/eventsub/subscriptions",
+            body=subscription_body(name, version, condition, session_id),
+        )
+
+    def avatar(self, user_id: str) -> bytes | None:
+        """One person's profile picture, cached by account.
+
+        Fetched only where blocking is allowed. Key feedback reads
+        `cached_avatar()` instead, because it runs on a render worker.
+        """
+        key = (user_id or "").strip()
+        if not key:
+            return None
+        with self._lock:
+            if key in self._avatars:
+                return self._avatars[key]
+        url = ""
+        try:
+            answer = self._get("/users", {"id": key})
+            entries = answer.get("data")
+            if isinstance(entries, list) and entries and isinstance(entries[0], dict):
+                url = str(entries[0].get("profile_image_url") or "")
+        except TwitchError:
+            log.debug("Could not read a Twitch profile", exc_info=True)
+        data = None
+        if url:
+            try:
+                data = request_bytes(url)
+            except TwitchError:
+                log.debug("Could not fetch a Twitch avatar", exc_info=True)
+        with self._lock:
+            if len(self._avatars) >= AVATAR_CACHE_LIMIT:
+                self._avatars.clear()
+            # Stored even when it failed, so a private or missing picture is
+            # not re-requested on every repaint of the key showing it.
+            self._avatars[key] = data
+        return data
+
+    def cached_avatar(self, user_id: str) -> bytes | None:
+        """What is already known, without ever reaching for the network."""
+        with self._lock:
+            return self._avatars.get((user_id or "").strip())
+
+    def prefetch_avatar(self, user_id: str) -> None:
+        """Fetch a picture off the calling thread, for a key to find later."""
+        key = (user_id or "").strip()
+        if not key:
+            return
+        with self._lock:
+            if key in self._avatars:
+                return
+        self._submit(lambda: self.avatar(key))
 
     def find_user(self, login: str) -> str:
         """A channel's numeric id from its name, cached.

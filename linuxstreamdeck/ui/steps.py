@@ -815,6 +815,46 @@ class StepEditor(Gtk.Box):
             self._param_widgets[param.name] = (param, widget)
             self._param_rows[param.name] = row
             self.params_box.append(row)
+        self._watch_dependencies(action)
+        self._refresh_dependent_rows()
+
+    def _watch_dependencies(self, action) -> None:
+        """Follow every parameter that decides whether another one applies."""
+        parents = {
+            param.depends_on for param in action.params if param.depends_on
+        }
+        for name in parents:
+            pair = self._param_widgets.get(name)
+            if pair is None:
+                continue
+            widget = pair[1]
+            if isinstance(widget, Gtk.DropDown):
+                widget.connect(
+                    "notify::selected", lambda *_a: self._refresh_dependent_rows()
+                )
+
+    def _refresh_dependent_rows(self) -> None:
+        """Hide the parameters that cannot apply to the current selection.
+
+        Hidden rather than dropped: the widget keeps its value, so switching a
+        key from chat to raids and back does not silently reset the filter that
+        was chosen for it.
+        """
+        for name, (param, _widget) in self._param_widgets.items():
+            if not param.depends_on:
+                continue
+            row = self._param_rows.get(name)
+            if row is None:
+                continue
+            row.set_visible(self._dependency_met(param))
+
+    def _dependency_met(self, param: Param) -> bool:
+        pair = self._param_widgets.get(param.depends_on)
+        if pair is None:
+            # Nothing to depend on, so nothing to hide for.
+            return True
+        current = str(self._widget_value(*pair) or "")
+        return not param.depends_values or current in param.depends_values
 
     def _param_widget(
         self, param: Param, value, keep_unknown: bool = True

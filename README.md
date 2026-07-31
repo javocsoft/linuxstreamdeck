@@ -144,6 +144,19 @@ on the same hardware as the scene switches.
   that needs an account you have not connected is faded rather than silently
   dead. Pair the Twitch marker with the OBS chapter marker on one key and a
   single press marks both the broadcast and the recording.
+- 🔔 **Never miss somebody talking to you** — a key that stays dark while chat
+  is quiet and, the moment somebody writes, shows **their picture, how long
+  they have been waiting and how many are unread**. The border climbs from blue
+  to amber to red as the wait grows, and the key breathes so you catch it from
+  the corner of your eye. Press it to mark them seen.
+  It counts **waiting**, not messages, because "3 messages" says nothing about
+  whether you are ignoring somebody and "four minutes" says exactly that. The
+  sound follows the same idea: one when the key goes from quiet to
+  somebody-waiting, and an optional reminder — never one per message, which is
+  what makes people turn the sound off and go back to missing everything.
+  Filter it to **questions and mentions** or to **first-time chatters** and it
+  keeps working on a busy channel. The same key also watches **new followers,
+  subscriptions and raids**, together or one per key.
 - 🔴 **The deck tells you when something went wrong** — a key whose action fails
   is outlined in red with an exclamation mark for a few seconds, so you find out
   from the hardware you were already looking at rather than from a message in a
@@ -205,6 +218,7 @@ on the same hardware as the scene switches.
 | **Your stream** | Set the stream title · set the category, picked from live Twitch suggestions with box art |
 | **Moments** | Create a clip · create a stream marker |
 | **On air** | Start an ad break of a chosen length (Affiliates and Partners only) · raid another channel (or cancel it) · post a highlighted announcement in your chat |
+| **Do not miss it** | A key that lights up, shows who is waiting and for how long, and plays a sound: chat messages, new followers, subscriptions and raids |
 | **Before going live** | The pre-flight checks your Twitch account, title, category and whether you are already live |
 
 Connecting asks for no password. The dialog shows a short code, you enter it at

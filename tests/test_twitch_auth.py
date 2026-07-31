@@ -301,27 +301,26 @@ class ScopeTests(unittest.TestCase):
 
 class RevokeTests(TransportCase):
     def test_a_failed_revoke_never_stops_someone_disconnecting(self) -> None:
-        self.use(http.TwitchError("network down"), http.TwitchError("network down"))
+        self.use(http.TwitchError("network down"))
 
-        auth.revoke("client-abc", "access-1", "refresh-1")  # must not raise
+        auth.revoke("client-abc", "access-1")  # must not raise
 
-    def test_both_tokens_are_offered(self) -> None:
-        """Revoking an access token does not revoke the refresh token beside
-        it, so leaving that one alive would keep a usable credential."""
-        transport = self.use({}, {})
+    def test_only_the_access_token_is_revoked(self) -> None:
+        """The refresh token was revoked too, once, and it had to be undone.
 
-        auth.revoke("client-abc", "access-1", "refresh-1")
+        RFC 7009 has an authorization server invalidate every token issued
+        from the same grant, and Twitch does: disconnecting tore down the whole
+        authorization, so anyone who reconnected got EventSub subscriptions
+        revoked with `authorization_revoked` seconds later. An access token
+        expires by itself in about four hours; a torn-down grant does not
+        repair.
+        """
+        transport = self.use({})
+
+        auth.revoke("client-abc", "access-1")
 
         sent = [call["form"]["token"] for call in transport.calls]
-        self.assertEqual(sent, ["access-1", "refresh-1"])
-
-    def test_a_refused_refresh_revoke_does_not_undo_the_first(self) -> None:
-        """Twitch may well reject the second call; that is not a failure."""
-        transport = self.use({}, http.TwitchHTTPError(400, "invalid token"))
-
-        auth.revoke("client-abc", "access-1", "refresh-1")
-
-        self.assertEqual(len(transport.calls), 2)
+        self.assertEqual(sent, ["access-1"])
 
     def test_nothing_is_sent_when_there_is_nothing_to_revoke(self) -> None:
         transport = self.use()
@@ -333,7 +332,7 @@ class RevokeTests(TransportCase):
     def test_a_missing_client_id_sends_nothing(self) -> None:
         transport = self.use()
 
-        auth.revoke("", "access-1", "refresh-1")
+        auth.revoke("", "access-1")
 
         self.assertEqual(transport.calls, [])
 

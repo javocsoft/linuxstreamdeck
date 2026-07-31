@@ -124,7 +124,9 @@ thread-safe **pub/sub `EventBus`**; UI never talks to the device or OBS directly
 controller workers, HID manager, OBS client. Controller workers must stop before
 the HID manager so no render is submitted to a closed device, and the deck must
 stop before OBS so nothing is left waiting on a request that can no longer be
-answered. `_on_shutdown` also sets `_shutting_down` *before* stopping the icon,
+answered. The EventSub session stops after the deck and before the Twitch client whose
+requests it makes, for the same reason the deck stops before OBS.
+`_on_shutdown` also sets `_shutting_down` *before* stopping the icon,
 so `hides_on_close()` cannot intercept a quit already in progress. It reads like
 tidy-uppable boilerplate, so it is pinned by `ShutdownOrderTests` in
 `tests/test_invariants.py`. `DeckManager.stop()` joins the screen-saver thread,
@@ -184,6 +186,9 @@ linuxstreamdeck/
 │                      audio, sources/filters, media, advanced + raw request).
 ├── twitch/
 │   ├── constants.py   Client ID, endpoints, the scopes this application asks for.
+│   ├── eventsub.py    One live WebSocket: chat, follows, subs, gifts, raids.
+│   ├── events.py      Six payload shapes reduced to one Alert.
+│   ├── attention.py   What is still waiting, per key, and when to make a noise.
 │   ├── http.py        The one place this integration touches the network.
 │   ├── auth.py        Device code flow, token refresh, validate and revoke.
 │   ├── client.py      TwitchClient: Helix requests plus one cached channel
@@ -229,6 +234,7 @@ linuxstreamdeck/
 | `deck.screensaver` | `active:bool, preview:bool, style:str` | Screen saver started/stopped; controller restores keys on stop. |
 | `obs.connected` / `obs.disconnected` | — | OBS websocket state. |
 | `twitch.state` | `linked:bool, login:str` | A Twitch account was linked, dropped or confirmed. |
+| `twitch.live` | `connected:bool` | The EventSub session came up or went away. |
 | `obs.state` | `what:str` | Any OBS state change (drives key feedback). |
 | `page.changed` | `index:int, name:str` | Active page changed. |
 | `folder.changed` | `path:tuple[int, ...], trail:list` | A folder was opened, left or reset to the page root. |
@@ -591,6 +597,11 @@ Actions are declarative and self-registering:
   entry storing free text and gains live suggestions searched as it is typed.
   Reach for it whenever a dropdown would have to omit the very value the action
   exists to set.
+  A parameter that only applies to some settings of another one declares
+  `depends_on` and `depends_values`; the editor then **hides** its row rather
+  than dropping it, so the widget keeps its value and switching away and back
+  does not silently reset what was chosen. `twitch.alert`'s chat filter is the
+  case: it answers a question only chat has.
   `sources_in_scene`, `audio_sources_in_scene` and `filters_of_source` **depend
   on another parameter** (`scene`, `scene` and `source`, read with
   `_sibling_value()`), so changing the parent rebuilds them through
@@ -1634,16 +1645,28 @@ Three things about that flow are easy to get wrong and are pinned by tests:
   permission that was never granted would spend a single-use refresh token on
   every repaint.
 
-**Disconnecting cannot be completed from here, and the dialog says so.**
-`/oauth2/revoke` kills the token it is given and nothing else: it does not
-revoke the refresh token beside it, and it deliberately leaves the app-to-user
-link in place. Twitch has **no API** to remove an application from the user's
-Connections page — only the user can, at `CONNECTIONS_URL`. So `revoke()` offers
-both tokens (Twitch may refuse the second, which is why either failure is only
-logged), and the dialog reports what actually happened plus a button to finish
-it on Twitch. Saying "disconnected" full stop would be exactly the unearned
-reassurance the pre-flight board exists to avoid — and it is checkable, because
-the application stays visible in Twitch's own list.
+**Disconnecting revokes the access token, and nothing else, and the dialog says
+so.** Twitch has **no API** to remove an application from the user's Connections
+page — only the user can, at `CONNECTIONS_URL` — so the dialog reports what
+actually happened plus a button to finish it there. Saying "disconnected" full
+stop would be exactly the unearned reassurance the pre-flight board exists to
+avoid, and it is checkable, because the application stays visible in Twitch's
+own list.
+
+**`revoke()` must never be given the refresh token.** It was, once, on the
+reasoning that revoking an access token leaves the refresh token usable. RFC
+7009 has an authorization server invalidate every token issued from the same
+grant, and Twitch does: disconnecting tore down the whole authorization, so
+someone who reconnected got a session whose EventSub subscriptions were revoked
+with `authorization_revoked` twelve seconds later and whose new scopes were
+refused with a flat 403. An access token expires by itself in about four hours;
+a torn-down grant does not repair.
+
+For the same reason the revoke is guarded by `_revoke_if_still_gone()`. It runs
+off the calling thread so the dialog does not wait on the network, which means
+it can land **after** somebody has reconnected — and revoking then destroys the
+authorization they just granted. The account currently held is the one that
+matters.
 
 **The Client ID is public and is meant to be distributed.** The device flow
 exists for clients that cannot keep a secret, and Twitch counts its rate limit
@@ -1849,6 +1872,84 @@ read, so `can_run_ads()` establishes it from `broadcaster_type` on
 and `start_commercial()` refuses before sending. A lookup that failed must never
 disable a key that would have worked, so only a definite `False` blocks
 anything, and only the ad key: nothing else depends on it.
+
+### Live events: EventSub, and what is still waiting
+
+`twitch/eventsub.py` holds one WebSocket subscribed to chat messages, follows,
+subscriptions, gifts, resubs and raids. It is the first persistent socket here
+other than OBS, and three of its rules are the kind that fail silently:
+
+- **Silence is a failure.** Twitch sends a keepalive whenever nothing else has,
+  so going quiet past the session's own interval means the connection is gone
+  while the socket still looks open. Only the watchdog notices; without it the
+  deck reports nothing and looks perfectly healthy.
+- **Subscriptions belong to a session, not to a connection.** They are created
+  against the welcome message's `session_id` — except across a
+  `session_reconnect`, where Twitch carries them over and recreating them would
+  deliver every event twice.
+- **One refused subscription costs only itself.** Somebody who never granted
+  subscription reading must still get their chat and their raids, so a scope
+  failure is logged per type; only a session that could subscribe to nothing at
+  all is an error. Each entry of `SUBSCRIPTIONS` carries the permission it
+  needs, because Twitch refuses one the token cannot have with a flat
+  "subscription missing proper authorization" that names nothing anyone can act
+  on. The log names the scope and one status message says how to grant it —
+  otherwise the keys watching those events are simply silent, which is
+  indistinguishable from nothing having happened yet.
+
+`channel.follow` is **version 2** — version 1 was withdrawn — and a raid
+condition may name only one side.
+
+**`twitch/attention.py` is deliberately not a counter.** "3 messages" says
+nothing about whether somebody is being ignored; "somebody has been waiting
+four minutes" says exactly that, and it is the number that corresponds to the
+viewer who writes once, gets nothing back and does not return. So the wait is
+measured from the **oldest** unacknowledged alert, and `urgency()` turns it
+into the escalation the key draws.
+
+One history is kept and each key reads it through **its own acknowledgement**,
+so two keys watching different things forget independently and pressing one
+never silences another. `FORGET_SECONDS` matters as much: a key that never goes
+quiet again is one nobody looks at.
+
+**`should_sound()` is the mailbox rule, not the keystroke one.** A sound per
+message is unbearable the moment a chat wakes up, and the first thing anyone
+does about that is turn it off — which puts them straight back to missing
+messages. So it sounds when a key goes from quiet to somebody-waiting, and
+again only after an optional reminder interval. The sound goes on the
+notification executor, never an action worker, exactly like a timer's.
+
+`events.py` normalizes six payload shapes into one `Alert`. Note that a
+channel's first-ever message from someone is marked by Twitch with its own
+**message type** (`user_intro`) rather than a flag, and that is the one nobody
+can afford to miss — it is what the `first` filter is for. The filters are what
+let one key work on a channel of three viewers and one of three hundred:
+unfiltered, "somebody said something" stops meaning anything the moment the
+room is busy.
+
+**The alert key draws its urgency as a border, and breathes in its own colour.**
+Both were arrived at by rendering it. A background colour is invisible behind
+the waiting person's avatar — the same lesson the failure mark already carries
+— so `feedback()` returns `border` and `compose()` draws it last, with a
+failure still outranking it. And the running-key pulse blends towards the
+accent, which turned a red "waiting five minutes" key into a calm blue; the
+`pulse` flag lightens instead, so the colour keeps saying what it said. Its
+phase comes from the clock rather than from the activity thread, whose own
+phase only advances while something is running.
+
+`feedback()` reads `cached_avatar()` and never fetches: it runs on a render
+worker, and the picture was fetched when the alert arrived.
+
+**A value drawn over a picture is outlined, not scrimmed.** The label gets
+`_scrim()` because it sits along an edge, where a gradient is invisible; the
+waiting clock sits in the middle of the subject, where a band would cover the
+very thing the picture is there to show. Twitch's default avatars are flat
+bright fields, and a white "15s" on a white one is not dim — it is gone.
+`_outline_width()` scales the stroke with the text so it reads the same on a
+Mini and an XL, and `_contrasting()` picks black or white against the ink
+rather than a fixed colour, because a key whose text colour was set to
+something dark needs a light outline. The outline is added only when there is a
+picture; a plain key needs none and looks heavy-handed with one.
 
 ### Twitch in the pre-flight
 

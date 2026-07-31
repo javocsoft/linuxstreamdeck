@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import actions as action_registry
-from .actions import ActionContext
+from .actions import ActionContext, parse_duration
 from .audio import play_audio
 from .clocks import ClockRuntime, ClockSnapshot, TimerCompletion
 from .config import (
@@ -41,6 +41,8 @@ from .config import (
     folder_depth,
 )
 from .events import EventBus
+from ..twitch import events as twitch_events
+from ..twitch.attention import Attention
 from ..device.manager import DeckManager
 from ..device import renderer
 
@@ -127,6 +129,14 @@ STATS_ACTION_ID = "obs.stats"
 # requests without ever showing a different value.
 TWITCH_REFRESH_SECONDS = 2.0
 TWITCH_STATS_ACTION_ID = "twitch.stats"
+# Alert keys repaint on the clock too: the number they show is how long
+# somebody has been waiting, which changes with nothing happening.
+ALERT_ACTION_ID = "twitch.alert"
+ALERT_REFRESH_SECONDS = 1.0
+# How long each half of an alert key's breath lasts. The activity thread's own
+# phase only advances while something is running, so a key that breathes
+# without running needs one derived from the clock instead.
+ALERT_PULSE_SECONDS = 1.0
 
 # Actions that can draw a live thumbnail of an OBS scene. The tick has to be at
 # least as fast as the quickest rate any of them offers, or a key asking for two
@@ -260,6 +270,13 @@ class DeckController:
             self._refresh_runtime_keys,
             self._on_timer_finished,
         )
+        # What Twitch has reported and nobody has acknowledged yet. Owned here
+        # for the same reason ClockRuntime is: it is transient key state, and
+        # the sound it may trigger belongs on the notification executor.
+        self.attention = Attention(self._on_alert)
+        # Which alert keys were already showing somebody waiting, so a sound
+        # marks the change from quiet rather than every message that follows.
+        self._alerting: dict[RuntimeKey, float] = {}
         # ON/OFF state of toggle keys, keyed by RuntimeKey
         self._toggle: dict[RuntimeKey, bool] = {}
         # Number of queued/running feedback-enabled invocations for each key.
@@ -1570,6 +1587,8 @@ class DeckController:
             if self.obs.connected or not stat_needs_obs(kc.params.get("metric")):
                 return STATS_REFRESH_SECONDS
             return 0.0
+        if kc.action == ALERT_ACTION_ID:
+            return ALERT_REFRESH_SECONDS if self._twitch_linked() else 0.0
         if kc.action == TWITCH_STATS_ACTION_ID:
             # Repainting is what makes the key ask for a fresh snapshot; the
             # client's own cache decides when that becomes a request, so this
@@ -1636,6 +1655,79 @@ class DeckController:
         key: RuntimeKey | None,
     ) -> ClockSnapshot:
         return self._clocks.stopwatch_snapshot(key)
+
+    def _on_alert(self, alert) -> None:
+        """Something arrived from Twitch: repaint, and maybe make a noise.
+
+        The sound is decided per key rather than per alert, because two keys
+        can be watching different things with different sounds, and because
+        the rule is the mailbox one: a noise when a key goes from quiet to
+        somebody-waiting, never one per message.
+        """
+        if self._stopping.is_set():
+            return
+        from ..twitch import actions as twitch_actions
+        from ..twitch.attention import should_sound
+
+        self.bus.emit("status", text=twitch_events.describe(alert))
+        # Fetched now, off the render path, so the key finds it in the cache.
+        if self.twitch is not None and alert.user_id:
+            try:
+                self.twitch.prefetch_avatar(alert.user_id)
+            except Exception:
+                log.debug("Could not prefetch a Twitch avatar", exc_info=True)
+        for runtime_key, kc in self._alert_keys().items():
+            if not twitch_actions.alert_matches(kc.params, alert):
+                continue
+            pending = self.attention.pending(
+                runtime_key,
+                twitch_actions.alert_sources(kc.params),
+                twitch_actions.alert_filter(kc.params),
+            )
+            reminded = self._alerting.get(runtime_key, 0.0)
+            remind_after = float(parse_duration(kc.params.get("remind_after")))
+            if should_sound(bool(reminded), pending, reminded, remind_after):
+                self._alerting[runtime_key] = time.monotonic()
+                self._play_alert_sound(kc.params)
+            elif pending:
+                self._alerting.setdefault(runtime_key, time.monotonic())
+        self._refresh_runtime_keys(tuple(self._alert_keys()))
+
+    def _alert_keys(self) -> dict[RuntimeKey, KeyConfig]:
+        """The visible alert keys. Only these can make a noise or repaint."""
+        try:
+            grid = self.container
+        except Exception:
+            return {}
+        found: dict[RuntimeKey, KeyConfig] = {}
+        for raw, kc in list(grid.keys.items()):
+            if kc is None or kc.kind != KIND_SINGLE or kc.action != ALERT_ACTION_ID:
+                continue
+            try:
+                found[self._tkey(int(raw))] = kc
+            except (TypeError, ValueError):
+                continue
+        return found
+
+    def _play_alert_sound(self, params: dict) -> None:
+        sound = str(params.get("sound") or "")
+        if not sound or self._stopping.is_set():
+            return
+        try:
+            volume = max(0, min(100, int(params.get("volume", 70))))
+        except (TypeError, ValueError):
+            volume = 70
+        try:
+            self._notification_executor.submit(
+                play_audio, sound, volume / 100.0, 0, self._stopping
+            )
+        except RuntimeError:
+            # Submitted during shutdown; nothing left to announce.
+            log.debug("Alert sound submitted after shutdown")
+
+    def acknowledge_alerts(self, runtime_key: RuntimeKey) -> None:
+        """Forget that this key was already sounding, so the next one does."""
+        self._alerting.pop(runtime_key, None)
 
     def _on_timer_finished(self, completion: TimerCompletion) -> None:
         control = None
@@ -1971,6 +2063,16 @@ class DeckController:
                 return action.default_icon
         return ""
 
+    @staticmethod
+    def _pulse_phase() -> bool:
+        """Which half of the breath it is, from the clock.
+
+        Derived from time rather than from the activity thread's phase, which
+        only advances while something is actually running: an alert key
+        breathes because somebody is waiting, not because work is in flight.
+        """
+        return bool(int(time.monotonic() / ALERT_PULSE_SECONDS) % 2)
+
     def _single_spec(self, index: int, kc: KeyConfig, size) -> dict:
         fb = None
         action = action_registry.get(kc.action)
@@ -1988,6 +2090,7 @@ class DeckController:
         # action name is not used, which used to push the icon upwards).
         icon = kc.icon or (action.default_icon if action else "")
         busy, phase = self._busy_state(index)
+        pulse = bool(fb.get("pulse", False))
         return {
             "size": size,
             "label": kc.label,
@@ -1995,12 +2098,18 @@ class DeckController:
             "bg": fb.get("color") or kc.bg_color,
             "active": fb.get("active", False),
             "busy": busy,
-            "busy_phase": phase,
+            "busy_phase": phase if busy else (pulse and self._pulse_phase()),
             "badge": "RUN" if busy else fb.get("badge", ""),
             "center_text": fb.get("display", ""),
             "font_size": kc.font_size,
             "text_color": kc.text_color,
             "image": fb.get("image"),
+            # An action may ask to breathe in its own colour rather than the
+            # accent one `busy` uses.
+            "pulse": pulse,
+            # And it may mark itself with a border, which is the only signal
+            # that survives a key showing a picture.
+            "border": fb.get("border", ""),
         }
 
     def _toggle_spec(self, index: int, kc: KeyConfig, size) -> dict:
