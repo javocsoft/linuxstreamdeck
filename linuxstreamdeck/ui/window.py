@@ -72,6 +72,33 @@ _CSS = b"""
 }
 .step-remove { color: @error_color; }
 .step-remove:hover { background-color: alpha(@error_color, 0.15); }
+/* The editor's "connect a service" banner (ui/editor.py). Adw.Banner gives its
+   button the same muted tone as the banner itself, which is nearly invisible
+   against it; this is the one thing on that strip meant to be pressed, so it
+   gets the accent it would have had as a suggested action. The button is
+   built by Adw.Banner and never exposed, hence the descendant selector. */
+.service-banner button {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+    font-weight: bold;
+}
+.service-banner button:hover { background-color: shade(@accent_bg_color, 1.15); }
+/* Live suggestions under a text field (ui/steps.py). Kept narrow enough to
+   read as a list attached to the entry rather than a floating window. */
+.completion-popup > contents { padding: 2px; }
+.completion-list > row { padding: 4px 8px; }
+.completion-list > row:hover { background-color: alpha(@accent_bg_color, 0.18); }
+/* The box art keeps its slot whether or not the picture ever arrives, so a
+   late or missing one cannot make the rows jump as the list fills. */
+.completion-art {
+    border-radius: 3px;
+    background-color: alpha(currentColor, 0.10);
+}
+/* Text in a suggestion field that the service does not recognise. Saving it
+   would store nothing, so this says as much before the key is saved rather
+   than leaving it to be discovered on air. */
+entry.unsettled { box-shadow: inset 0 0 0 1px @warning_color; }
+entry.unsettled text { color: @warning_color; }
 /* Right-click copy/paste menu of an action list (ui/steps.py). */
 .step-menu button { padding: 4px 12px; min-height: 26px; }
 /* Connection dot in the header. The state used to live only in the status bar
@@ -215,6 +242,9 @@ class MainWindow(Adw.ApplicationWindow):
         find_menu = Gio.Menu()
         find_menu.append("Find a key…", "win.key-find")
         profile_menu.append_section(None, find_menu)
+        service_menu = Gio.Menu()
+        service_menu.append("Twitch account…", "win.twitch-account")
+        profile_menu.append_section(None, service_menu)
         application_menu = Gio.Menu()
         application_menu.append("Preferences…", "win.app-preferences")
         # The log is the only place an action failure survives once its status
@@ -697,6 +727,7 @@ class MainWindow(Adw.ApplicationWindow):
                          ("config-import", self._import_configuration),
                          ("config-backups", self._open_backups),
                          ("app-log", self._open_log_file),
+                         ("twitch-account", self._open_twitch_settings),
                          ("app-preferences", self._open_preferences)):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda a, p, cb=cb: cb())
@@ -1784,6 +1815,11 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_screensaver_settings(self, _btn) -> None:
         self.app.deck.record_activity()
         ScreenSaverSettingsDialog(self, self.app).present()
+
+    def _open_twitch_settings(self) -> None:
+        from .twitch_settings import TwitchSettingsDialog
+
+        TwitchSettingsDialog(self, self.app).present()
 
     def _open_preferences(self) -> None:
         from .preferences import PreferencesDialog

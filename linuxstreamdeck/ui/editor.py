@@ -12,11 +12,13 @@ in `steps.py`; here they are only composed according to the chosen type.
 from __future__ import annotations
 
 import logging
+from functools import partial
 
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk  # noqa: E402
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gtk  # noqa: E402
 
 from ..core import actions as action_registry  # noqa: E402
 from ..core.controller import (  # noqa: E402
@@ -34,6 +36,7 @@ from ..core.config import (  # noqa: E402
     KIND_TOGGLE,
     ON_ERROR_CHOICES,
     ON_ERROR_CONTINUE,
+    STEP_FIELDS,
     ActionStep,
     Folder,
     KeyConfig,
@@ -90,6 +93,19 @@ class EditorPanel(Gtk.Box):
         self.append(self.kind_row)
         self.kind_dd.connect("notify::selected", self._on_kind_changed)
 
+        # Sits above the body rather than inside it, so rebuilding the body for
+        # a new key type cannot destroy it mid-edit.
+        self.twitch_banner = Adw.Banner(
+            title="This key needs a Twitch account",
+            button_label="Connect",
+            revealed=False,
+        )
+        self.twitch_banner.add_css_class("service-banner")
+        self.twitch_banner.connect("button-clicked", self._open_twitch_settings)
+        self.append(self.twitch_banner)
+        # Linking from anywhere has to take the banner down again.
+        self.app.bus.subscribe("twitch.state", self._on_twitch_state)
+
         # scrollable body: grows to fill the available space and scrolls its
         # content when steps are added, without enlarging the window
         self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -135,6 +151,7 @@ class EditorPanel(Gtk.Box):
         self._container = None
         self._baseline = None
         self._folder = None
+        self.twitch_banner.set_revealed(False)
 
     def load(self, index: int) -> None:
         self.index = index
@@ -341,7 +358,9 @@ class EditorPanel(Gtk.Box):
         elif kind == KIND_SINGLE:
             self.single_editor = StepEditor(
                 self.app,
-                on_change=self._update_single_icon_preview,
+                on_change=partial(
+                    self._on_step_changed, self._update_single_icon_preview
+                ),
             )
             self.single_editor.load(ActionStep(action=kc.action, params=kc.params))
             # No list row to right-click, so the editor itself carries the menu.
@@ -371,7 +390,9 @@ class EditorPanel(Gtk.Box):
             ))
             self.multi_list = StepList(
                 self.app,
-                on_change=self._update_multi_icon_preview,
+                on_change=partial(
+                    self._on_step_changed, self._update_multi_icon_preview
+                ),
             )
             self.multi_list.load(kc.steps)
             self.body.append(self.multi_list)
@@ -393,7 +414,9 @@ class EditorPanel(Gtk.Box):
             ))
             self.multi_list = StepList(
                 self.app,
-                on_change=self._update_multi_icon_preview,
+                on_change=partial(
+                    self._on_step_changed, self._update_multi_icon_preview
+                ),
             )
             self.multi_list.load(kc.steps)
             self.body.append(self.multi_list)
@@ -418,21 +441,27 @@ class EditorPanel(Gtk.Box):
             ))
             self.single_press_list = StepList(
                 self.app,
-                on_change=self._update_press_icon_preview,
+                on_change=partial(
+                    self._on_step_changed, self._update_press_icon_preview
+                ),
             )
             self.single_press_list.load(kc.steps_single)
             self.body.append(self._frame("• Single press", [self.single_press_list]))
 
             self.double_press_list = StepList(
                 self.app,
-                on_change=self._update_press_icon_preview,
+                on_change=partial(
+                    self._on_step_changed, self._update_press_icon_preview
+                ),
             )
             self.double_press_list.load(kc.steps_double)
             self.body.append(self._frame("•• Double press", [self.double_press_list]))
 
             self.long_press_list = StepList(
                 self.app,
-                on_change=self._update_press_icon_preview,
+                on_change=partial(
+                    self._on_step_changed, self._update_press_icon_preview
+                ),
             )
             self.long_press_list.load(kc.steps_long)
             self.body.append(self._frame("— Long press", [self.long_press_list]))
@@ -458,7 +487,9 @@ class EditorPanel(Gtk.Box):
             ))
             self.on_list = StepList(
                 self.app,
-                on_change=self._update_on_icon_preview,
+                on_change=partial(
+                    self._on_step_changed, self._update_on_icon_preview
+                ),
             )
             self.on_list.load(kc.steps_on)
             self.app_main = AppearanceBox("ON state appearance")
@@ -474,7 +505,9 @@ class EditorPanel(Gtk.Box):
 
             self.off_list = StepList(
                 self.app,
-                on_change=self._update_off_icon_preview,
+                on_change=partial(
+                    self._on_step_changed, self._update_off_icon_preview
+                ),
             )
             self.off_list.load(kc.steps_off)
             self.app_off = AppearanceBox("OFF state appearance")
@@ -494,6 +527,11 @@ class EditorPanel(Gtk.Box):
 
         if kind in ERROR_POLICY_KINDS:
             self._append_error_policy(kc)
+
+        # The one place every rebuild passes through — selecting a key,
+        # switching key type and loading an AI proposal all land here — so the
+        # banner cannot be left showing for a key that no longer needs it.
+        self._refresh_twitch_banner()
 
     def _append_error_policy(self, kc: KeyConfig) -> None:
         """What a failing action does to the rest of the key.
@@ -533,6 +571,73 @@ class EditorPanel(Gtk.Box):
             if icon := cls._action_icon(step.action):
                 return icon
         return fallback if steps else ""
+
+    # ---------- offering the connection a key needs ----------
+
+    def _on_twitch_state(self, _topic, _data) -> None:
+        from gi.repository import GLib
+
+        GLib.idle_add(self._refresh_twitch_banner)
+
+    def _on_step_changed(self, update_preview) -> None:
+        """Everything that reacts to a step being edited, in one place.
+
+        The icon preview and the banner both follow the chosen action, so they
+        are refreshed together rather than each hooking the change separately.
+        """
+        update_preview()
+        self._refresh_twitch_banner()
+
+    def _refresh_twitch_banner(self) -> bool:
+        """Offer to connect Twitch while editing a key that needs it.
+
+        Without this the only way in is a dialog in the profile menu, which is
+        the last place someone configuring a key would look: the key renders
+        faded on the deck, does nothing when pressed, and nothing anywhere says
+        what is missing. The banner appears exactly where the choice was made.
+        """
+        twitch = getattr(self.app, "twitch", None)
+        linked = bool(twitch is not None and twitch.linked)
+        wanted = (
+            self.index is not None
+            and not linked
+            and self._draft_needs_twitch()
+        )
+        self.twitch_banner.set_revealed(wanted)
+        return False
+
+    def _draft_needs_twitch(self) -> bool:
+        """Whether the key as it currently stands would need an account.
+
+        Asked of the draft rather than of the stored key, so picking a Twitch
+        action offers the connection immediately instead of after a save. Any
+        one action is enough: a key that is half local still cannot do that
+        half.
+        """
+        try:
+            kc = self.current_key_config()
+        except Exception:
+            log.debug("Could not inspect the draft for Twitch actions", exc_info=True)
+            return False
+        pairs = [(kc.action, kc.params)] if kc.kind == KIND_SINGLE else [
+            (step.action, step.params)
+            for field in STEP_FIELDS
+            for step in getattr(kc, field, [])
+        ]
+        for action_id, params in pairs:
+            if not action_id:
+                continue
+            action = action_registry.get(action_id)
+            if action is not None and action.requires_twitch(params or {}):
+                return True
+        return False
+
+    def _open_twitch_settings(self, _banner) -> None:
+        from .twitch_settings import TwitchSettingsDialog
+
+        window = self.get_root()
+        if window is not None:
+            TwitchSettingsDialog(window, self.app).present()
 
     def _update_single_icon_preview(self) -> None:
         if self.single_editor is not None and self.app_main is not None:

@@ -47,6 +47,17 @@ sync_version() {
 # way an issue template or a document silently goes stale after a release.
 # Exempt: dependency constraints (">=1.2.3"), which are somebody else's version,
 # and any line marked "version-check: ignore".
+#
+# An IP address is not a version, and the naive three-number pattern reads the
+# first three octets of one as though it were: 127.0.0.1 and 192.168.1.40 were
+# both reported as stale versions once the pre-flight put addresses in the
+# tree. Marking those lines as ignored would paper over it and cost an edit on
+# every release, so the match instead refuses to start or end in the middle of
+# a longer dotted run. A version at the end of a sentence still matches,
+# because only a dot *followed by a digit* disqualifies one.
+#
+# Note the rule this comment obeys: write examples as X.Y.Z rather than as a
+# plausible number, or the scan trips over the file explaining it.
 check_hardcoded_versions() {
     local target="$1" stale=0 entry file line content found
     if ! command -v git >/dev/null 2>&1 || ! git rev-parse --git-dir >/dev/null 2>&1; then
@@ -66,7 +77,10 @@ check_hardcoded_versions() {
             err "$file:$line hardcodes version $found (building $target)"
             err "    $(printf '%s' "$content" | sed 's/^[[:space:]]*//')"
             stale=1
-        done < <(printf '%s' "$content" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+        done < <(
+            printf '%s' "$content" \
+                | grep -oP '(?<![\d.])\d+\.\d+\.\d+(?!\.?\d)' || true
+        )
     done < <(
         git ls-files -z \
             | xargs -0 grep -IHnE '[0-9]+\.[0-9]+\.[0-9]+' 2>/dev/null || true

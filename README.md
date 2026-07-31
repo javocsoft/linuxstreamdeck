@@ -35,6 +35,10 @@ So this is my take on the problem: something that **just works out of the box**,
 escape hatch that exposes 100% of the obs-websocket protocol when you need it. No half-
 implemented actions, no guessing. It runs, and it's useful.
 
+It also talks to **Twitch**, because a deck built for OBS is built for people who
+stream, and the title, the category, your viewer count and a clip button belong
+on the same hardware as the scene switches.
+
 ## 🚀 Features
 
 - 🎬 **Deep OBS integration** — covering nearly all of OBS’s features (see below).
@@ -130,6 +134,15 @@ implemented actions, no guessing. It runs, and it's useful.
   faded key with a question mark, never as a tick, and the window lists what
   each answer does **not** cover. There is no "all good" — a board you read is
   honest, a green light would be a promise it cannot keep.
+- 💜 **Twitch on the deck** — see your viewer count, followers or stream uptime
+  without alt-tabbing, set the stream title and the category from a key, clip
+  the last few seconds, and drop a stream marker so you can find the good bit
+  later. Connecting is a six-character code you type at `twitch.tv/activate`:
+  no password, no browser plugin, nothing secret stored. Your tokens go in your
+  desktop keyring, never into the configuration file or an export, and a key
+  that needs an account you have not connected is faded rather than silently
+  dead. Pair the Twitch marker with the OBS chapter marker on one key and a
+  single press marks both the broadcast and the recording.
 - 🔴 **The deck tells you when something went wrong** — a key whose action fails
   is outlined in red with an exclamation mark for a few seconds, so you find out
   from the hardware you were already looking at rather than from a message in a
@@ -182,6 +195,31 @@ implemented actions, no guessing. It runs, and it's useful.
 | **Sources & filters** | Show/hide sources per scene (including sources inside groups) · enable/disable filters · **set a text source** · **refresh a browser source** · move/scale/rotate a source |
 | **Media** | Play / pause / restart / stop / next / previous |
 | **Advanced** | Scene collections & profiles · internal hotkeys · **live statistics on a key** · **raw request** (100% of the API) |
+
+### 💜 What you can do with Twitch
+
+| Area | Actions |
+| --- | --- |
+| **On the key** | Viewers · followers · stream uptime · live/offline, refreshed while you work |
+| **Your stream** | Set the stream title · set the category, picked from live Twitch suggestions with box art |
+| **Moments** | Create a clip · create a stream marker |
+
+Connecting asks for no password. The dialog shows a short code, you enter it at
+`twitch.tv/activate`, and that is the whole setup. The access and refresh tokens
+are kept in your desktop keyring and never reach `config.json`, its backup or an
+exported configuration, so sharing a configuration never shares your account.
+You can disconnect at any time from **Twitch account…**, which also tells Twitch
+to forget the authorization.
+
+The follower count and the title answer while you are offline; the viewer count
+does not, because there is no audience to count when you are off air, and
+showing zero would be a claim rather than an absence.
+
+**The category has to be a real one.** Start typing and Twitch's own categories
+appear with their box art; pick one. Text Twitch does not recognise is marked
+as you type and is saved as *no category at all*, so the key is plainly
+unconfigured rather than one that looks right and fails the first time you
+press it on air. A category set before this existed is left alone.
 
 ### 🖥️ System and navigation actions
 
@@ -580,6 +618,53 @@ If secure storage is unavailable, any plaintext password is still removed. The
 password then lasts only for the current session, so enter it again after restarting
 the app.
 
+### 💜 Connecting your Twitch account
+
+Pick any Twitch action in the key editor and a **Connect** banner appears right
+there, so you never have to go looking. You can also open it at any time from
+the menu next to the profile selector, under **Twitch account…**.
+
+1. Press **Connect a Twitch account**.
+2. A short code appears. Press **Open Twitch** — it opens the activation page
+   with the code already filled in, and the code stays on screen in case you
+   would rather finish on your phone.
+3. Approve the permissions. The dialog notices by itself and says who is
+   connected.
+
+Nothing secret is ever sent from your machine, and there is no password, no
+browser extension and no local server. LinuxStreamDeck asks for exactly three
+permissions, which is everything the Twitch keys use and nothing more:
+
+| Permission | Used by |
+| --- | --- |
+| `channel:manage:broadcast` | Set the title, set the category, create a stream marker |
+| `clips:edit` | Create a clip |
+| `moderator:read:followers` | Show the follower count |
+
+**About the Client ID.** You do not need one — LinuxStreamDeck ships its own, so
+the **Client ID** field in the dialog is there only if you would rather use an
+application registered under your own Twitch account. To do that, register one
+at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) with the
+OAuth Redirect URL `http://localhost` and the client type **Public**, then paste
+its Client ID in.
+
+A Client ID is a public identifier, not a secret — this is the authorization
+flow designed for applications that cannot keep secrets, which is why there is
+no client secret anywhere in the setup. Twitch counts its rate limit per Client
+ID **per user**, so a shared one costs you nothing.
+
+Your access and refresh tokens are stored in the desktop keyring under their own
+entry, never in `config.json`, its backup or an exported configuration. Moving a
+configuration to another computer therefore never carries your Twitch account
+with it; connect again there, exactly as you re-enter the OBS password.
+
+**Disconnecting takes two steps, and that is Twitch's rule rather than ours.**
+**Disconnect** removes the tokens from your keyring and revokes them, so this
+application can no longer do anything with your account. Twitch, however, keeps
+the authorization listed under **Settings → Connections** until you remove it
+there, and offers no way for an application to do that for you — so the dialog
+gives you a button that opens that page.
+
 ### Sending keyboard shortcuts
 
 Wayland deliberately blocks applications from injecting key events, so the
@@ -746,7 +831,8 @@ linuxstreamdeck/
 ├── core/          # events, config, actions, controller, clocks, audio, secrets, icons
 ├── device/        # physical deck, startup/saver/exit displays and key rendering
 ├── obs/           # obs-websocket v5 client + full catalogue of OBS actions
-├── ui/            # GTK4/Libadwaita: window, editor, AI, OBS/deck-display settings
+├── twitch/        # device-code authorization, Helix client and Twitch actions
+├── ui/            # GTK4/Libadwaita: window, editor, AI, OBS/Twitch/deck settings
 └── assets/icons/  # icon library (Material Design Icons font + index)
 data/udev/         # udev rule for device access
 ```

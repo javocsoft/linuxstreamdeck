@@ -53,6 +53,13 @@ class Param:
     #   pages | deck_profiles | applications
     # The last three are LOCAL_CHOICE_SOURCES: they fill without OBS.
     choices_source: str = ""
+    # A list too large to offer as a dropdown, searched live as the value is
+    # typed:  twitch_categories
+    # The field stays a text entry and keeps storing free text, so a value set
+    # before the suggestions existed still loads; the suggestions only make it
+    # far easier to type one that actually exists. Use this rather than
+    # `choices_source` whenever the full list cannot reasonably be enumerated.
+    completion_source: str = ""
 
 
 # --- duration parameters (kind == "duration") ---
@@ -96,21 +103,43 @@ class ActionContext:
         bus,
         cancellation: Event | None = None,
         key: tuple[int, int, int] | None = None,
+        twitch=None,
     ):
         self.obs = obs                # linuxstreamdeck.obs.client.OBSClient
         self.controller = controller  # linuxstreamdeck.core.controller.DeckController
         self.bus = bus
         self.key = key                # (profile, page, key), when key-specific
+        self.twitch = twitch          # linuxstreamdeck.twitch.client.TwitchClient
         self._cancellation = cancellation
 
+    def derive(self, **overrides) -> "ActionContext":
+        """A copy of this context with some parts replaced.
+
+        The only place that knows what a context is made of. Enumerating those
+        fields at each call site is how the Twitch client came to be missing
+        from the execution path while feedback still had it: every Twitch key
+        rendered correctly and then reported "no account is linked" the moment
+        it was pressed. Anything added here reaches every caller for free.
+        """
+        parts = {
+            "obs": self.obs,
+            "controller": self.controller,
+            "bus": self.bus,
+            "cancellation": self._cancellation,
+            "key": self.key,
+            "twitch": self.twitch,
+        }
+        parts.update(overrides)
+        return ActionContext(**parts)
+
     def for_key(self, key: tuple[int, int, int]) -> "ActionContext":
-        return ActionContext(
-            obs=self.obs,
-            controller=self.controller,
-            bus=self.bus,
-            cancellation=self._cancellation,
-            key=key,
-        )
+        return self.derive(key=key)
+
+    def for_run(
+        self, key: tuple[int, int, int] | None, cancellation: Event | None
+    ) -> "ActionContext":
+        """The context one invocation of a key runs under."""
+        return self.derive(key=key, cancellation=cancellation)
 
     def stop_requested(self) -> bool:
         """Whether app shutdown or a replacement execution cancelled this run."""
@@ -149,6 +178,10 @@ class Action:
     # renders identically to one that is simply idle, and the only way to tell
     # them apart was to press it and watch nothing happen.
     needs_obs: bool = False
+    # The same idea for the Twitch connection: an action that can do nothing
+    # without a linked account fades while none is connected, so "not set up
+    # yet" stops looking like "idle".
+    needs_twitch: bool = False
 
     def requires_obs(self, params: dict) -> bool:
         """Whether this key, as configured, needs OBS to be reachable.
@@ -157,6 +190,10 @@ class Action:
         its measurements come from the kernel and keep working regardless.
         """
         return self.needs_obs
+
+    def requires_twitch(self, params: dict) -> bool:
+        """Whether this key, as configured, needs a linked Twitch account."""
+        return self.needs_twitch
 
     def execute(self, ctx: ActionContext, params: dict) -> None:
         raise NotImplementedError

@@ -48,6 +48,324 @@ LOCAL_CHOICE_SOURCES = frozenset({"pages", "deck_profiles", "applications"})
 # Internal drag payload used to reorder the steps of one list.
 _STEP_DRAG_PREFIX = "linuxstreamdeck-step:"
 
+# Live suggestions under a text field (Param.completion_source).
+# The pause after a keystroke before anything is asked: every search past it is
+# a request over the network, and asking per character would spend a rate limit
+# on prefixes nobody meant to search for.
+COMPLETION_DEBOUNCE_MS = 320
+# Below this, a query matches most of the catalogue and suggests nothing useful.
+COMPLETION_MIN_CHARS = 2
+COMPLETION_LIMIT = 8
+# Twitch box art is 3:4. Big enough to recognise a game at a glance, which is
+# the whole point: "Detroit", "Detroit: Become Human" and "The Detroit After"
+# are hard to tell apart as words and immediate as pictures.
+COMPLETION_ART_SIZE = (40, 53)
+
+
+class _CompletionPopup:
+    """Suggestions under a text entry, fetched off the GTK main thread.
+
+    Built by hand rather than with `Gtk.EntryCompletion`, which is deprecated
+    and drags in the whole `Gtk.TreeModel` stack, and which assumes the options
+    are already known. These are not: each one is a request to Twitch, so the
+    interesting parts of this are the debounce, the worker and the guard that
+    throws away an answer to a query the field has already moved past.
+
+    The popover is deliberately **not** autohiding. An autohiding one takes the
+    focus when it opens, which stops the typing that opened it.
+    """
+
+    def __init__(self, entry: Gtk.Entry, search, artwork=None) -> None:
+        self.entry = entry
+        self._search = search               # (query) -> suggestions, blocking
+        self._artwork = artwork             # (url) -> bytes | None, blocking
+        self._timer = 0
+        # Two counters, because they answer two different questions. `_search`
+        # says which query is current and is bumped by `close()`, since an
+        # answer arriving for a field that has stopped asking must not reopen
+        # it. `_fill` says which set of rows is on screen; closing does not
+        # replace those rows, so sharing one counter meant every close threw
+        # away artwork belonging to rows that were still there.
+        self._generation = 0
+        self._fill_generation = 0
+        # Everything the service has confirmed exists, as {casefolded: real
+        # name}. The value the field opens with is seeded in: it was either
+        # chosen from this list when it was set or it predates the list, and
+        # discarding it because nobody happened to search for it again would
+        # empty a working key just for being opened.
+        initial = entry.get_text().strip()
+        self._known: dict[str, str] = {initial.casefold(): initial} if initial else {}
+        self._list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self._list.add_css_class("completion-list")
+        self._popover = Gtk.Popover(
+            child=self._list,
+            autohide=False,
+            has_arrow=False,
+            position=Gtk.PositionType.BOTTOM,
+            # With no arrow, a popover aligns itself inside the rectangle it
+            # points at according to this. Left by default it is centered on
+            # the field, which reads as a floating window rather than as a list
+            # belonging to the line being typed in.
+            halign=Gtk.Align.START,
+        )
+        self._popover.set_parent(entry)
+        self._popover.add_css_class("completion-popup")
+        entry.connect("changed", self._on_changed)
+        entry.connect("notify::has-focus", self._on_focus_changed)
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_key)
+        entry.add_controller(keys)
+        # A popover parented to a widget is not destroyed with it.
+        entry.connect("destroy", lambda *_a: self.close())
+
+    # ---------- typing ----------
+
+    def _on_changed(self, _entry) -> None:
+        self._cancel_timer()
+        text = self.entry.get_text().strip()
+        if len(text) < COMPLETION_MIN_CHARS:
+            self.close()
+            # An empty or barely started field is unfinished, not wrong.
+            self._mark_unsettled()
+            return
+        if self.settled_value():
+            # Typing back onto a name the service already confirmed, so the
+            # warning comes off without waiting for another search.
+            self._mark_unsettled()
+        self._timer = GLib.timeout_add(COMPLETION_DEBOUNCE_MS, self._start, text)
+
+    def _start(self, text: str) -> bool:
+        self._timer = 0
+        self._generation += 1
+        generation = self._generation
+        import threading
+
+        threading.Thread(
+            target=self._work,
+            args=(text, generation),
+            daemon=True,
+            name="completion",
+        ).start()
+        return False
+
+    def _work(self, text: str, generation: int) -> None:
+        try:
+            names = self._search(text)
+        except Exception:
+            log.debug("Could not fetch suggestions", exc_info=True)
+            names = []
+        GLib.idle_add(self._show, names, generation, text)
+
+    def _show(self, names: list[str], generation: int, text: str) -> bool:
+        # An answer to a query the field has already moved past would replace
+        # the current suggestions with older ones, which is worse than none.
+        if generation != self._generation or self.entry.get_text().strip() != text:
+            return False
+        self._fill(names)
+        return False
+
+    def _fill(self, suggestions: list) -> None:
+        # These rows replace whatever was there, so any artwork still in flight
+        # belongs to a list nobody is looking at.
+        self._fill_generation += 1
+        while (row := self._list.get_first_child()) is not None:
+            self._list.remove(row)
+        if not suggestions or not self.entry.get_root():
+            # A search that matched nothing is itself an answer: what is in the
+            # field is not a real value, so it is worth saying now.
+            self.close()
+            self._mark_unsettled()
+            return
+        shown = suggestions[:COMPLETION_LIMIT]
+        pictures: list[tuple[str, Gtk.Picture]] = []
+        for suggestion in shown:
+            row, picture = self._row(suggestion)
+            self._list.append(row)
+            name = getattr(suggestion, "name", str(suggestion))
+            # Anything the service offered exists, whether it is clicked or
+            # typed out in full, so seeing it is enough to confirm it.
+            self._known[name.strip().casefold()] = name
+            url = getattr(suggestion, "box_art_url", "")
+            if url and picture is not None:
+                pictures.append((url, picture))
+        self._mark_unsettled()
+        self._place()
+        self._popover.popup()
+        if pictures and self._artwork is not None:
+            self._load_artwork(pictures, self._fill_generation)
+
+    def _row(self, suggestion) -> tuple[Gtk.Widget, Gtk.Picture | None]:
+        """One suggestion, chosen on the press rather than on the click.
+
+        A `clicked` signal needs the press and the release to reach the same
+        widget while it is still mapped, and pressing here moves the focus off
+        the entry, which closes this popover — so the release landed on a
+        widget that had already gone and the suggestion was never applied. A
+        CAPTURE-phase gesture acts on the press, before any of that.
+        """
+        name = getattr(suggestion, "name", str(suggestion))
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        picture: Gtk.Picture | None = None
+        if self._artwork is not None:
+            # Reserved whether or not the picture ever arrives, so a late or
+            # missing one cannot make the rows jump as the list fills.
+            picture = Gtk.Picture(
+                can_shrink=True,
+                content_fit=Gtk.ContentFit.COVER,
+                width_request=COMPLETION_ART_SIZE[0],
+                height_request=COMPLETION_ART_SIZE[1],
+            )
+            picture.add_css_class("completion-art")
+            box.append(picture)
+        label = Gtk.Label(
+            label=name, xalign=0, hexpand=True,
+            ellipsize=Pango.EllipsizeMode.END,
+        )
+        box.append(label)
+        row = Gtk.ListBoxRow(child=box, activatable=True)
+        gesture = Gtk.GestureClick()
+        gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        gesture.connect("pressed", lambda *_a, value=name: self._choose(value))
+        row.add_controller(gesture)
+        return row, picture
+
+    # ---------- artwork ----------
+
+    def _load_artwork(self, wanted, generation: int) -> None:
+        """Fetch the row pictures on a worker, in the order they are shown.
+
+        One thread rather than one per row: these are downloads, the first rows
+        are the ones being looked at, and a burst of eight parallel requests
+        buys nothing anybody would notice.
+        """
+        import threading
+
+        threading.Thread(
+            target=self._artwork_work,
+            args=(list(wanted), generation),
+            daemon=True,
+            name="completion-art",
+        ).start()
+
+    def _artwork_work(self, wanted, generation: int) -> None:
+        for url, picture in wanted:
+            if generation != self._fill_generation:
+                return
+            try:
+                data = self._artwork(url)
+            except Exception:
+                log.debug("Could not fetch category art", exc_info=True)
+                data = None
+            if data:
+                GLib.idle_add(self._apply_artwork, picture, data, generation)
+
+    def _apply_artwork(self, picture: Gtk.Picture, data: bytes, generation: int):
+        # The list may have been replaced while this was in flight, in which
+        # case these rows are gone. Closing is deliberately not a reason to
+        # drop it: the rows are still there and reopening shows them again.
+        if generation != self._fill_generation or picture.get_parent() is None:
+            return False
+        try:
+            texture = Gdk.Texture.new_from_bytes(GLib.Bytes.new(data))
+        except GLib.Error:
+            log.debug("Unreadable category art", exc_info=True)
+            return False
+        picture.set_paintable(texture)
+        return False
+
+    def _place(self) -> None:
+        """Put the list directly under the field, matching its width.
+
+        Without an explicit rectangle the popover points at the whole entry
+        including its shadow, which is wider than the visible field and starts
+        slightly to its left.
+        """
+        width = self.entry.get_width()
+        if width <= 0:
+            return
+        self._list.set_size_request(width, -1)
+        rect = Gdk.Rectangle()
+        rect.x = 0
+        rect.y = self.entry.get_height()
+        rect.width = width
+        rect.height = 1
+        self._popover.set_pointing_to(rect)
+
+    def settled_value(self) -> str:
+        """The typed text, but only when the service recognises it.
+
+        Answers the name as the service spells it rather than as it was typed,
+        so what gets stored is a real category rather than a near miss that
+        happens to resolve. Anything unrecognised answers empty: the key is
+        then plainly unconfigured instead of one that fails the first time it
+        is pressed on air.
+        """
+        return self._known.get(self.entry.get_text().strip().casefold(), "")
+
+    def _mark_unsettled(self) -> None:
+        """Show, while typing, that what is in the field is not a real value.
+
+        Done once a search has answered rather than on every keystroke: half a
+        word is not yet wrong, and marking it as it is typed would be noise.
+        """
+        if self.settled_value() or not self.entry.get_text().strip():
+            self.entry.remove_css_class("unsettled")
+        else:
+            self.entry.add_css_class("unsettled")
+
+    def _choose(self, name: str) -> None:
+        self._known[name.strip().casefold()] = name
+        self.entry.set_text(name)
+        self.entry.set_position(-1)
+        # Setting the text fires `changed`, which would schedule a search for
+        # the name just chosen and reopen the list under it. Closing after that
+        # is what makes picking a suggestion final.
+        self.close()
+        self._mark_unsettled()
+        self.entry.grab_focus()
+        self.entry.set_position(-1)
+
+    # ---------- lifetime ----------
+
+    def _on_key(self, _controller, keyval, _code, _state) -> bool:
+        if keyval == Gdk.KEY_Escape and self._popover.get_visible():
+            self.close()
+            return True
+        return False
+
+    def _on_focus_changed(self, *_a) -> None:
+        """Close when the field is left, unless it was left *for* this list.
+
+        Clicking a suggestion moves the focus off the entry, so closing on any
+        focus loss takes the list away from under the pointer mid-click.
+        """
+        if self.entry.has_focus() or self._focus_is_inside():
+            return
+        self.close()
+
+    def _focus_is_inside(self) -> bool:
+        root = self.entry.get_root()
+        focus = root.get_focus() if root is not None else None
+        while focus is not None:
+            if focus is self._popover:
+                return True
+            focus = focus.get_parent()
+        return False
+
+    def _cancel_timer(self) -> None:
+        if self._timer:
+            GLib.source_remove(self._timer)
+            self._timer = 0
+
+    def close(self) -> None:
+        """Idempotent: focus loss, Escape and a rebuild can all reach it."""
+        self._cancel_timer()
+        # Any answer still in flight belongs to a field that is no longer
+        # asking, so it must not reopen this.
+        self._generation += 1
+        if self._popover.get_visible():
+            self._popover.popdown()
+
 
 class _StepClipboard:
     """The one copied step, shared by every action editor on screen.
@@ -550,7 +868,46 @@ class StepEditor(Gtk.Box):
                 elif param.name == "source":
                     dd.connect("notify::selected", self._on_source_changed)
                 return dd
-        return Gtk.Entry(text=str(value if value is not None else param.default or ""))
+        entry = Gtk.Entry(
+            text=str(value if value is not None else param.default or "")
+        )
+        if param.completion_source:
+            self._attach_completion(entry, param.completion_source)
+        return entry
+
+    def _attach_completion(self, entry: Gtk.Entry, source: str) -> None:
+        """Give a text field live suggestions, when its source can answer.
+
+        Held on the entry so it lives exactly as long as the widget does: the
+        popover is parented to it, and a rebuild of the parameter widgets has
+        to take the suggestions with it.
+        """
+        search = self._completion_search(source)
+        if search is None:
+            return
+        entry._completion = _CompletionPopup(
+            entry, search, self._completion_artwork(source)
+        )
+
+    def _completion_search(self, source: str):
+        """The blocking search behind a suggestion list, or None when there is
+        no way to answer it right now."""
+        if source == "twitch_categories":
+            twitch = getattr(self.app, "twitch", None)
+            if twitch is None or not twitch.linked:
+                # Without an account there is nothing to search; the field
+                # stays a plain text box rather than one that never suggests.
+                return None
+            return lambda text: twitch.search_categories(text, COMPLETION_LIMIT)
+        return None
+
+    def _completion_artwork(self, source: str):
+        """How a suggestion's picture is fetched, when it has one."""
+        if source == "twitch_categories":
+            twitch = getattr(self.app, "twitch", None)
+            fetch = getattr(twitch, "box_art", None)
+            return fetch if callable(fetch) else None
+        return None
 
     def _choices_known(self, source: str) -> bool:
         """Whether an empty option list is an answer or just missing data.
@@ -698,6 +1055,13 @@ class StepEditor(Gtk.Box):
             # Sources with readable labels store the underlying value instead.
             return getattr(widget, "_value_map", {}).get(label, label)
         if isinstance(widget, Gtk.Entry):
+            completion = getattr(widget, "_completion", None)
+            if completion is not None:
+                # A field with suggestions stores only a value the service
+                # recognises. Text that was typed and never matched is saved
+                # as nothing, so the key plainly has no category rather than
+                # one that will fail the first time it is pressed on air.
+                return completion.settled_value()
             return widget.get_text()
         return ""
 

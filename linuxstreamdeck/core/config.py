@@ -730,6 +730,19 @@ class AISettings:
 
 
 @dataclass
+class TwitchSettings:
+    """What is worth persisting about the Twitch link.
+
+    Deliberately only the Client ID. The tokens themselves live in Secret
+    Service, exactly like the OBS password and the AI provider keys, so they
+    never reach `config.json`, its backup or a `.lsdconfig` export. A Client ID
+    is a public identifier and travels harmlessly.
+    """
+
+    client_id: str = ""
+
+
+@dataclass
 class ScreenSaverSettings:
     enabled: bool = False
     style: str = DEFAULT_SCREENSAVER
@@ -749,6 +762,7 @@ class Config:
     current_profile: int = 0
     obs: ObsSettings = field(default_factory=ObsSettings)
     ai: AISettings = field(default_factory=AISettings)
+    twitch: TwitchSettings = field(default_factory=TwitchSettings)
     screensaver: ScreenSaverSettings = field(default_factory=ScreenSaverSettings)
     exit_display: ExitDisplaySettings = field(default_factory=ExitDisplaySettings)
     brightness: int = 80
@@ -824,6 +838,9 @@ class Config:
         raw_ai = raw.get("ai", {})
         if not isinstance(raw_ai, dict):
             raise ValueError("The AI settings must be a JSON object")
+        raw_twitch = raw.get("twitch", {})
+        if not isinstance(raw_twitch, dict):
+            raise ValueError("The Twitch settings must be a JSON object")
         raw_screensaver = raw.get("screensaver", {})
         if not isinstance(raw_screensaver, dict):
             raise ValueError("The screen saver settings must be a JSON object")
@@ -853,6 +870,9 @@ class Config:
                     if isinstance(raw_ai.get("include_obs_context", False), bool)
                     else False
                 ),
+            )
+            twitch = TwitchSettings(
+                client_id=str(raw_twitch.get("client_id", "") or "").strip()
             )
             screen_style = str(
                 raw_screensaver.get("style", DEFAULT_SCREENSAVER)
@@ -895,6 +915,7 @@ class Config:
             current_profile=current,
             obs=obs,
             ai=ai,
+            twitch=twitch,
             screensaver=screensaver,
             exit_display=exit_display,
             brightness=brightness,
@@ -1065,6 +1086,7 @@ class Config:
         self.current_profile = replacement.current_profile
         self.obs = replacement.obs
         self.ai = replacement.ai
+        self.twitch = replacement.twitch
         self.screensaver = replacement.screensaver
         self.exit_display = replacement.exit_display
         self.brightness = replacement.brightness
@@ -1376,6 +1398,10 @@ class Config:
         self.current_profile = replacement.current_profile
         self.obs = replacement.obs
         self.ai = replacement.ai
+        # The Client ID travels, the tokens never do: they live in this
+        # computer's keyring, so an imported configuration always has to link
+        # its own account, exactly as it has to enter its own OBS password.
+        self.twitch = replacement.twitch
         self.screensaver = replacement.screensaver
         self.exit_display = replacement.exit_display
         self.brightness = replacement.brightness

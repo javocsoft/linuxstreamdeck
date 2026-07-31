@@ -311,9 +311,9 @@ class ShutdownOrderTests(unittest.TestCase):
 
     The order is not arbitrary. Controller workers must stop before the HID
     manager so no render is submitted to a closed device, and the deck must be
-    stopped before OBS so nothing is waiting on a request that can no longer be
-    answered. It reads like tidy-uppable boilerplate, which is exactly why it
-    needs pinning.
+    stopped before the network clients so nothing is waiting on a request that
+    can no longer be answered. It reads like tidy-uppable boilerplate, which is
+    exactly why it needs pinning.
     """
 
     @staticmethod
@@ -332,6 +332,7 @@ class ShutdownOrderTests(unittest.TestCase):
             ),
             deck=SimpleNamespace(stop=lambda: calls.append("deck")),
             obs=SimpleNamespace(stop=lambda: calls.append("obs")),
+            twitch=SimpleNamespace(stop=lambda: calls.append("twitch")),
         )
         return LinuxStreamDeckApp._on_shutdown, app
 
@@ -341,7 +342,9 @@ class ShutdownOrderTests(unittest.TestCase):
 
         shutdown(app, None)
 
-        self.assertEqual(calls, ["tray", "controller", "deck", "obs"])
+        self.assertEqual(
+            calls, ["tray", "controller", "deck", "obs", "twitch"]
+        )
 
     def test_shutdown_marks_the_application_as_stopping_first(self) -> None:
         """`hides_on_close()` must not intercept a quit already in progress."""
@@ -362,7 +365,7 @@ class ShutdownOrderTests(unittest.TestCase):
 
         shutdown(app, None)
 
-        self.assertEqual(calls, ["controller", "deck", "obs"])
+        self.assertEqual(calls, ["controller", "deck", "obs", "twitch"])
 
     def test_the_status_icon_is_dropped_so_it_cannot_be_stopped_twice(
         self,
@@ -374,6 +377,111 @@ class ShutdownOrderTests(unittest.TestCase):
         shutdown(app, None)
 
         self.assertEqual(calls.count("tray"), 1)
+
+
+class ActionContextCompletenessTests(unittest.TestCase):
+    """Every service an action can reach has to survive into the run context.
+
+    This is not a feature test. A service present when a key is *rendered* and
+    missing when it is *pressed* produces the worst possible symptom: the key
+    looks perfectly configured, its live value updates, and the action fails
+    with a message saying the thing is not connected. That is exactly what
+    happened to the Twitch client, because three separate places each built an
+    `ActionContext` by listing its fields and one of them was never updated.
+
+    `ActionContext.derive()` is now the single place that knows those fields,
+    and this fails loudly if a caller goes back to enumerating them.
+    """
+
+    @staticmethod
+    def _services(ctx) -> dict:
+        """Everything on a context that an action could reach out through."""
+        return {
+            name: getattr(ctx, name)
+            for name in vars(ctx)
+            if not name.startswith("_") and name != "key"
+        }
+
+    def _controller(self):
+        from linuxstreamdeck.core.config import Config
+        from linuxstreamdeck.core.controller import DeckController
+        from linuxstreamdeck.core.events import EventBus
+
+        deck = SimpleNamespace(
+            key_count=15,
+            image_size=(72, 72),
+            columns=5,
+            dial_count=0,
+            screensaver_active=False,
+            set_key_image=lambda *a: None,
+            record_activity=lambda: False,
+            set_brightness=lambda *a: None,
+            configure_screensaver=lambda *a: None,
+        )
+        controller = DeckController(
+            Config(),
+            EventBus(),
+            SimpleNamespace(connected=False),
+            deck,
+            twitch=SimpleNamespace(linked=True),
+        )
+        self.addCleanup(controller.shutdown)
+        return controller
+
+    def test_a_run_context_carries_every_service_the_base_one_has(self) -> None:
+        controller = self._controller()
+
+        run_ctx = controller.ctx.for_run((0, 0, 0), None)
+
+        self.assertEqual(
+            self._services(run_ctx), self._services(controller.ctx)
+        )
+
+    def test_a_key_scoped_context_carries_them_too(self) -> None:
+        controller = self._controller()
+
+        self.assertEqual(
+            self._services(controller.ctx.for_key((0, 0, 0))),
+            self._services(controller.ctx),
+        )
+
+    def test_what_actually_executes_can_reach_them(self) -> None:
+        """The end-to-end version: capture the context an action is handed."""
+        from linuxstreamdeck.core import actions as registry
+        from linuxstreamdeck.core.config import ActionStep
+
+        controller = self._controller()
+        seen: list = []
+
+        class Spy(registry.Action):
+            id = "test.context_spy"
+            name = "Context spy"
+            category = "Testing"
+
+            def execute(self, ctx, params):
+                seen.append(ctx)
+
+        registry.REGISTRY[Spy.id] = Spy()
+        self.addCleanup(registry.REGISTRY.pop, Spy.id, None)
+
+        controller._run_steps([ActionStep(action=Spy.id, params={})], 0)
+
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(
+            self._services(seen[0]), self._services(controller.ctx)
+        )
+
+    def test_derive_replaces_only_what_it_is_given(self) -> None:
+        controller = self._controller()
+        cancellation = threading.Event()
+
+        derived = controller.ctx.derive(cancellation=cancellation)
+
+        self.assertIs(derived.twitch, controller.ctx.twitch)
+        self.assertIs(derived.obs, controller.ctx.obs)
+        self.assertTrue(derived.derive().stop_requested() is False)
+        cancellation.set()
+        self.assertTrue(derived.stop_requested())
 
 
 if __name__ == "__main__":

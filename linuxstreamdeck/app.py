@@ -26,14 +26,16 @@ from .core.config import (  # noqa: E402
 )
 from .core.controller import DeckController  # noqa: E402
 from .core.events import EventBus  # noqa: E402
-from .core.secrets import ApiKeyStore, SecretStore  # noqa: E402
+from .core.secrets import ApiKeyStore, SecretStore, TwitchTokenStore  # noqa: E402
 from .core.starter import is_first_run  # noqa: E402
 from .device.manager import DeckManager  # noqa: E402
 from .obs.client import OBSClient  # noqa: E402
+from .twitch.client import TwitchClient  # noqa: E402
 
 # register the action catalogs (the @register decorators run on import)
 from . import basic_actions  # noqa: E402,F401
 from .obs import actions as _obs_actions  # noqa: E402,F401
+from .twitch import actions as _twitch_actions  # noqa: E402,F401
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +69,11 @@ class LinuxStreamDeckApp:
         self.bus = EventBus()
         self.bus.dispatcher = GLib.idle_add
         self.obs = OBSClient(self.bus)
+        self.twitch = TwitchClient(
+            self.bus,
+            store=TwitchTokenStore(),
+            client_id=self.config.twitch.client_id,
+        )
         screen = self.config.screensaver
         exit_display = self.config.exit_display
         self.deck = DeckManager(
@@ -79,7 +86,9 @@ class LinuxStreamDeckApp:
             exit_display_mode=exit_display.mode,
             exit_display_image=exit_display.image_path,
         )
-        self.controller = DeckController(self.config, self.bus, self.obs, self.deck)
+        self.controller = DeckController(
+            self.config, self.bus, self.obs, self.deck, twitch=self.twitch
+        )
 
     def run(self, argv) -> int:
         return self.gtk_app.run(argv)
@@ -93,6 +102,9 @@ class LinuxStreamDeckApp:
             self.deck.start()
             self.controller.refresh()
             self._load_obs_password()
+            # Reads the keyring on its own worker, so a locked collection
+            # cannot delay the window appearing.
+            self.twitch.start()
             # Only a session-login start may stay hidden, and only when the
             # status icon is really there to bring the window back.
             if self._start_hidden and self.tray is not None:
@@ -128,6 +140,9 @@ class LinuxStreamDeckApp:
         self.controller.shutdown()
         self.deck.stop()
         self.obs.stop()
+        # Last, and for the same reason OBS is late: an action worker must
+        # never be left waiting on a request to a client that has already gone.
+        self.twitch.stop()
         log.info("Shutdown complete")
 
     # ---------- status icon and window lifetime ----------

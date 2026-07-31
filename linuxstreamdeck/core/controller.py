@@ -122,6 +122,12 @@ MAX_DIAL_TICKS = 8
 STATS_REFRESH_SECONDS = 1.0
 STATS_ACTION_ID = "obs.stats"
 
+# The same for Twitch, but slower: its numbers come over the network and Twitch
+# aggregates them on its own side, so repainting faster would only spend
+# requests without ever showing a different value.
+TWITCH_REFRESH_SECONDS = 2.0
+TWITCH_STATS_ACTION_ID = "twitch.stats"
+
 # Actions that can draw a live thumbnail of an OBS scene. The tick has to be at
 # least as fast as the quickest rate any of them offers, or a key asking for two
 # frames a second would silently get one.
@@ -208,12 +214,22 @@ class _UndoEntry:
 
 
 class DeckController:
-    def __init__(self, config: Config, bus: EventBus, obs, deck: DeckManager) -> None:
+    def __init__(
+        self,
+        config: Config,
+        bus: EventBus,
+        obs,
+        deck: DeckManager,
+        twitch=None,
+    ) -> None:
         self.config = config
         self.bus = bus
         self.obs = obs
         self.deck = deck
-        self.ctx = ActionContext(obs=obs, controller=self, bus=bus)
+        self.twitch = twitch
+        self.ctx = ActionContext(
+            obs=obs, controller=self, bus=bus, twitch=twitch
+        )
         # Which folder of the active page is open. View state only: it is never
         # persisted, so the deck always starts at the page root.
         self._folder_path: tuple[int, ...] = ()
@@ -289,6 +305,9 @@ class DeckController:
         bus.subscribe("deck.connected", lambda t, d: self.refresh())
         bus.subscribe("deck.screensaver", self._on_screensaver)
         bus.subscribe("obs.state", lambda t, d: self.refresh())
+        # Linking or losing a Twitch account changes which keys can work, and
+        # therefore which of them are faded.
+        bus.subscribe("twitch.state", lambda t, d: self.refresh())
 
     # ---------- pages ----------
 
@@ -1317,12 +1336,12 @@ class DeckController:
         execution_key: RuntimeKey | None = None,
         stop_on_error: bool = False,
     ) -> None:
-        run_ctx = ActionContext(
-            obs=self.obs,
-            controller=self,
-            bus=self.bus,
-            cancellation=control.cancel if control is not None else None,
-            key=execution_key,
+        # Derived rather than built, so this path cannot fall behind what a
+        # context carries. Enumerating the fields here is what once left the
+        # Twitch client out of every execution: the keys rendered fine and
+        # failed on the press.
+        run_ctx = self.ctx.for_run(
+            execution_key, control.cancel if control is not None else None
         )
         try:
             if control is not None and control.predecessor is not None:
@@ -1551,6 +1570,11 @@ class DeckController:
             if self.obs.connected or not stat_needs_obs(kc.params.get("metric")):
                 return STATS_REFRESH_SECONDS
             return 0.0
+        if kc.action == TWITCH_STATS_ACTION_ID:
+            # Repainting is what makes the key ask for a fresh snapshot; the
+            # client's own cache decides when that becomes a request, so this
+            # interval costs nothing but a recompose.
+            return TWITCH_REFRESH_SECONDS if self._twitch_linked() else 0.0
         if kc.action in PREVIEW_ACTION_IDS and self.obs.connected:
             from ..obs.actions import preview_interval
 
@@ -1814,21 +1838,49 @@ class DeckController:
                 # A run that is still going keeps saying so; the mark outlives
                 # it and takes the badge back when it ends.
                 spec["badge"] = renderer.ERROR_BADGE
-        if not self.obs.connected and self._needs_obs(kc):
+        if self._unavailable(kc):
             spec["unavailable"] = True
         return spec
 
-    @staticmethod
-    def _needs_obs(kc: KeyConfig) -> bool:
-        """Whether this key can do nothing whatsoever without OBS.
+    def _unavailable(self, kc: KeyConfig) -> bool:
+        """Whether this key can do nothing whatsoever right now.
 
-        Every action of the key has to need it. One that mixes an OBS action
-        with a local one still does half its job, and fading it would overstate
-        the problem; an action that is not registered at all is unknowable, and
-        unknown is not the same as unavailable.
+        Every action of the key has to be blocked, and by something that is
+        actually missing. One that mixes an OBS action with a local one still
+        does half its job, and fading it would overstate the problem; an action
+        that is not registered at all is unknowable, and unknown is not the
+        same as unavailable.
+
+        A single action may be blocked by either connection, which is why this
+        asks per action rather than per key: a key that sets the Twitch title
+        fades with no account linked, while OBS being closed says nothing
+        about it.
+        """
+        actions = self._key_actions(kc)
+        if not actions:
+            return False
+        return all(
+            self._action_blocked(action, params or {}) for action, params in actions
+        )
+
+    def _action_blocked(self, action, params: dict) -> bool:
+        obs_blocked = action.requires_obs(params) and not self.obs.connected
+        twitch_blocked = action.requires_twitch(params) and not self._twitch_linked()
+        return obs_blocked or twitch_blocked
+
+    def _twitch_linked(self) -> bool:
+        return bool(self.twitch is not None and self.twitch.linked)
+
+    @staticmethod
+    def _key_actions(kc: KeyConfig) -> list[tuple]:
+        """Every registered action this key would run, with its parameters.
+
+        Empty when the key runs nothing, or when any one of its actions is
+        unregistered: a key holding something this build does not know about
+        cannot be judged at all.
         """
         if kc.kind == KIND_FOLDER:
-            return False
+            return []
         if kc.kind == KIND_SINGLE:
             pairs = [(kc.action, kc.params)]
         else:
@@ -1839,11 +1891,11 @@ class DeckController:
             ]
         pairs = [(action_id, params) for action_id, params in pairs if action_id]
         if not pairs:
-            return False
+            return []
         actions = [(action_registry.get(a), p) for a, p in pairs]
         if any(action is None for action, _ in actions):
-            return False
-        return all(action.requires_obs(params or {}) for action, params in actions)
+            return []
+        return actions
 
     def _back_spec(self, size) -> dict:
         """The reserved key that leaves the open folder.

@@ -182,6 +182,14 @@ linuxstreamdeck/
 │   │                  thread-safe requests, re-emits OBS events onto the bus.
 │   └── actions.py     Catalogue of OBS actions (scenes, recording/streaming,
 │                      audio, sources/filters, media, advanced + raw request).
+├── twitch/
+│   ├── constants.py   Client ID, endpoints, the scopes this application asks for.
+│   ├── http.py        The one place this integration touches the network.
+│   ├── auth.py        Device code flow, token refresh, validate and revoke.
+│   ├── client.py      TwitchClient: Helix requests plus one cached channel
+│   │                  snapshot that `feedback()` reads without ever blocking.
+│   └── actions.py     Viewers/followers/uptime on a key, title, category,
+│                      clip and stream marker.
 ├── ui/
 │   ├── window.py      MainWindow: key grid (virtual deck), header (profiles,
 │   │                  import/export, pages, deck display, brightness, OBS, About),
@@ -203,6 +211,7 @@ linuxstreamdeck/
 │   ├── reference_check.py Report and repoint keys OBS no longer resolves.
 │   ├── preflight.py   The pre-flight report in full sentences.
 │   ├── obs_settings.py OBS connection dialog (host/port/password).
+│   ├── twitch_settings.py Twitch account dialog: device code, link, unlink.
 │   ├── screensaver_settings.py Screen saver and clean-exit display settings.
 │   └── profile_dialog.py New/edit profile dialog (name + description).
 └── assets/icons/      MDI font (TTF) + icons.json index (bundled, Apache-2.0).
@@ -219,6 +228,7 @@ linuxstreamdeck/
 | `deck.disconnected` | — | Device removed. |
 | `deck.screensaver` | `active:bool, preview:bool, style:str` | Screen saver started/stopped; controller restores keys on stop. |
 | `obs.connected` / `obs.disconnected` | — | OBS websocket state. |
+| `twitch.state` | `linked:bool, login:str` | A Twitch account was linked, dropped or confirmed. |
 | `obs.state` | `what:str` | Any OBS state change (drives key feedback). |
 | `page.changed` | `index:int, name:str` | Active page changed. |
 | `folder.changed` | `path:tuple[int, ...], trail:list` | A folder was opened, left or reset to the page root. |
@@ -576,6 +586,11 @@ Actions are declarative and self-registering:
   are the `LOCAL_CHOICE_SOURCES` and must stay **above** the `obs.connected`
   guard in `_fetch_choices`, so they still fill when OBS is not running. Note
   that `profiles` means OBS profiles; LinuxStreamDeck's own are `deck_profiles`.
+  A parameter whose full list cannot reasonably be enumerated uses
+  `completion_source` instead (`twitch_categories`): the field stays a text
+  entry storing free text and gains live suggestions searched as it is typed.
+  Reach for it whenever a dropdown would have to omit the very value the action
+  exists to set.
   `sources_in_scene`, `audio_sources_in_scene` and `filters_of_source` **depend
   on another parameter** (`scene`, `scene` and `source`, read with
   `_sibling_value()`), so changing the parent rebuilds them through
@@ -1579,6 +1594,239 @@ it in a `finally` — a report left up hides every real key.
 CPU only exists as a difference between two readings, and the two seconds the
 meters take is exactly the gap it needs.
 
+### Twitch
+
+The second service this application talks to, and the only other one. It is in
+the tree rather than behind some extension mechanism because a deck built
+around OBS is built for people who stream, and Twitch is where most of them
+stream: it is the other half of the core use case, not a peripheral
+integration.
+
+**The authorization is the device code flow, and that choice decides the rest.**
+Twitch offers it for clients that cannot keep a secret, which is exactly a
+desktop application. There is no client secret to ship, no redirect URI and no
+local web server listening on a port; the user reads a code off the dialog,
+types it at `twitch.tv/activate`, and `auth.poll_for_tokens()` waits.
+
+Three things about that flow are easy to get wrong and are pinned by tests:
+
+- **Twitch reports every device-flow outcome as an RFC 8628 error code in the
+  `message` field of a 400**, never through the status code. `_is_pending()`
+  matches after `_normalize()` flattens separators and case, because the first
+  build compared against the literal `"authorization pending"` while Twitch
+  sends `authorization_pending`: the very first poll read a normal "not yet" as
+  a refusal and abandoned the flow while the user was still typing the code.
+  `slow_down` arrives the same way and means back off, not stop. Treating every
+  400 as pending loops forever on a revoked code; treating every 400 as fatal
+  ends the flow the instant it starts.
+- **An error code must never reach the user.** `describe_error()` maps the known
+  ones to sentences and answers `GENERIC_DEVICE_ERROR` for anything that still
+  looks like an identifier, so a code Twitch adds later cannot leak either. Real
+  prose — Helix answers in words, such as "Missing scope: clips:edit" — passes
+  through untouched, because that text is worth showing.
+- **Refresh tokens are single use.** The one spent on a renewal is dead the
+  moment the answer arrives, and that answer carries its replacement. `_persist()`
+  therefore stores the new pair *before* it is adopted, and `_renew_lock`
+  serializes renewals so two workers cannot spend the same token twice — the
+  second would get a refusal that unlinks a perfectly good account.
+- **A missing scope is also a 401, and renewing can never fix it.**
+  `_is_scope_error()` keeps that case out of the retry path, or a key needing a
+  permission that was never granted would spend a single-use refresh token on
+  every repaint.
+
+**Disconnecting cannot be completed from here, and the dialog says so.**
+`/oauth2/revoke` kills the token it is given and nothing else: it does not
+revoke the refresh token beside it, and it deliberately leaves the app-to-user
+link in place. Twitch has **no API** to remove an application from the user's
+Connections page — only the user can, at `CONNECTIONS_URL`. So `revoke()` offers
+both tokens (Twitch may refuse the second, which is why either failure is only
+logged), and the dialog reports what actually happened plus a button to finish
+it on Twitch. Saying "disconnected" full stop would be exactly the unearned
+reassurance the pre-flight board exists to avoid — and it is checkable, because
+the application stays visible in Twitch's own list.
+
+**The Client ID is public and is meant to be distributed.** The device flow
+exists for clients that cannot keep a secret, and Twitch counts its rate limit
+per Client ID **per user**, so one shared identifier cannot let one person
+exhaust anyone else's budget. `DEFAULT_CLIENT_ID` holds this project's own
+registered application; a user who prefers their own overrides it from the
+dialog, and emptying it puts the dialog back into asking for one — which
+`_client_id_help()` already switches its wording for. Tokens live in Secret
+Service through `TwitchTokenStore`,
+never in `Config`, `config.json`, its backup or a `.lsdconfig` export.
+`TwitchSettings` holds the Client ID and nothing else.
+
+**`TwitchTokenStore` is synchronous, unlike the other two secret stores.** Its
+caller is not the GTK thread: the client reads and rewrites tokens from its own
+worker while renewing them, and a callback-based lookup there would need a main
+loop it does not have. It stores the pair as one JSON item so a refresh
+replaces both together.
+
+**`channel()` never performs a request.** It is called from `feedback()` while
+a key image is being composed, on a render worker, so a Helix round trip there
+would hold that worker for the latency of the internet on every repaint — far
+worse than the OBS captures that already had to be cached. It returns what is
+already known and schedules its own refresh on the client's single worker;
+`_channel_pending` stops a render burst from starting the same refresh twice.
+With no Twitch key on screen nothing calls it, so an unused integration costs
+nothing at all.
+
+Two staleness bounds do different jobs. `CHANNEL_TTL` (20 s) is when a snapshot
+is worth replacing — Twitch aggregates viewer counts on its own side and does
+not move faster. `CHANNEL_STALE` (90 s) is when it stops being shown at all: a
+brief network failure keeps the last value, which is what makes a key feel
+steady, while a sustained one blanks it, because a number that stopped being
+true is worse than no number.
+
+**The category is a text field with live suggestions, resolved when the key is
+pressed.** A dropdown was the obvious choice and cannot work: Twitch has tens of
+thousands of categories and the one a person streams is very often not in any
+list short enough to offer, so a list would fail at exactly the case the action
+exists for. Free text alone was not enough either — a typo was only discovered
+when the key was pressed, live. `Param.completion_source` is the answer, and it
+is a different thing from `choices_source`: the field stays a text entry and
+still stores free text, so a key configured before the suggestions existed still
+loads, while `TwitchClient.search_categories()` makes a real name easy to type.
+
+`_resolve_category()` still runs at press time, and **an exact name beats the
+search ranking** — searching "Doom" also matches "Doom Eternal", and taking the
+first ranked result would quietly set the wrong game for anyone who typed the
+exact one. What Twitch matched is reported back in the status message, so a
+wrong guess is visible.
+
+`ui/steps.py::_CompletionPopup` drives it, and none of it is about suggestions:
+
+- **The search never touches the GTK thread.** Each one is a request over the
+  network, so it runs on its own worker and returns through `GLib.idle_add`.
+- **`COMPLETION_DEBOUNCE_MS` is what keeps a rate limit from being spent** on
+  prefixes nobody meant to search for, and `COMPLETION_MIN_CHARS` drops the
+  queries that would match most of the catalogue anyway.
+- **A stale answer is discarded**, by generation counter and by comparing
+  against the field's current text. A slow reply arriving after the typing
+  moved on would replace the current suggestions with older ones, which is
+  worse than showing none. `close()` bumps the same counter, so work in flight
+  cannot reopen a popup the field has finished with.
+- **The popover does not autohide.** An autohiding one takes the focus when it
+  opens, which stops the typing that opened it.
+- **A suggestion is taken on the press, through a CAPTURE-phase
+  `Gtk.GestureClick`, never through a button's `clicked`.** That signal needs
+  the press and the release to reach the same widget while it is still mapped,
+  and pressing moves the focus off the entry — which closed this popover, so
+  the release landed on a widget that had gone and the suggestion was silently
+  never applied. For the same reason `_on_focus_changed()` ignores a focus that
+  landed inside the popover.
+- **`_place()` sets the pointing rectangle explicitly** and the popover is
+  `halign=START`. Left alone, a popover points at the entry's whole allocation
+  — shadow included, so wider than the visible field and starting a few pixels
+  to its left — and centres itself in it, which reads as a floating window
+  rather than as a list belonging to the line being typed in.
+- **`_choose()` closes after setting the text.** Filling the field fires
+  `changed`, which would schedule a search for the very name just chosen and
+  reopen the list under it.
+- **Each row shows the category's box art**, which is the point rather than
+  decoration: a search for "detroit" answers "Detroit", "Detroit: Become
+  Human" and "The Detroit After", hard to tell apart as words and immediate as
+  pictures. The slot is reserved whether or not the picture arrives, so a slow
+  or missing one cannot make the rows jump.
+- **There are two counters, and conflating them is a bug that happened.**
+  `_generation` says which *query* is current and `close()` bumps it, so an
+  answer for a field that stopped asking cannot reopen it. `_fill_generation`
+  says which *rows* are on screen, and closing does not replace rows — sharing
+  one counter meant every close threw away artwork for rows that were still
+  there, and since a close fires on focus loss the list showed empty
+  placeholders that never filled in. In `_artwork_work` that counter stops the
+  **downloads** rather than the display: rejecting a picture on arrival is too
+  late, it has already been fetched for a row that is gone.
+
+**Only a value the service recognises is stored.** `settled_value()` is what
+`_widget_value()` reads for a field with suggestions, and it answers empty for
+text Twitch never offered. Free text that merely looks like a category is the
+worst case there is for this action: the key saves cleanly, looks configured,
+and fails the first time it is pressed — which here means live, on air. Saving
+nothing makes the key plainly unconfigured instead, and `SetCategory.execute()`
+turns that into a message naming the fix rather than an internal complaint.
+
+Three details keep it from being destructive:
+
+- **The value the field opened with is seeded into `_known`.** It was either
+  chosen from this list when it was set or it predates the list, so opening a
+  working key and saving it must not empty it. Only what someone types now has
+  to be recognised.
+- **A name that was merely displayed counts**, not just one that was clicked.
+  Typing a category out in full is not a mistake, and the list showed it.
+- **A field with no suggestions passes its text through untouched.** With no
+  account there is nothing to check against, and unknown is not the same as
+  wrong — the same rule the pre-flight board follows.
+
+`settled_value()` returns the name as Twitch spells it, so the configuration
+holds a real category rather than a near miss that only happens to resolve, and
+`_mark_unsettled()` warns in the field itself once a search has answered — half
+a typed word is not yet wrong, so it is not marked as it is typed.
+
+**Box art is fetched with `http.request_bytes`, which refuses any host that is
+not Twitch's.** That address arrives inside an API response, making it data from
+outside rather than a URL this application chose, so `ASSET_HOSTS` is checked
+before anything is opened and the match is on whole labels — `jtvnw.net.evil`
+must not pass. `MAX_IMAGE_BYTES` bounds what a wrong or redirected address can
+stream into memory.
+
+**Twitch's own search shows a viewer and follower count per category; this
+cannot.** Helix exposes neither, and the only source is Twitch's private
+GraphQL API — undocumented, outside the terms for third-party clients and free
+to change without notice. Showing the name and the artwork is what this can
+stand behind, and inventing the rest would be the same overclaiming the
+pre-flight board exists to avoid.
+- Without a linked account `_completion_search()` answers None and the field
+  stays a plain entry, rather than one that never suggests anything.
+
+Actions report failure by **raising**. The controller turns that into the key's
+own red border and a status message, which is where someone pressing a key is
+looking; catching the error and emitting a status instead would leave the key
+looking like it had worked.
+
+**The editor offers the connection the key needs.** `EditorPanel` carries an
+`Adw.Banner` that appears while the draft holds any action whose
+`requires_twitch()` is true and no account is linked. It exists because the
+deck's own answer — a faded key that does nothing — is only half a message: the
+fix lived in a dialog under the profile menu, which is the last place someone
+configuring a key would look.
+
+Three details keep it honest. It sits **above** `scroller`, not inside `body`,
+so rebuilding the body for a new key type cannot destroy it mid-edit. It is
+decided from the **draft** rather than the stored key, so picking a Twitch
+action offers the connection immediately instead of after a save. And **any one
+action is enough**, unlike the fade, which needs all of them: a key that is half
+local still cannot do the Twitch half, and the person editing it is the one who
+can fix that.
+
+`_on_step_changed()` is the single handler behind every `on_change=` in the
+editor, so the icon preview and the banner follow the chosen action together.
+Note that `_build_body()` also refreshes explicitly: today the step widgets
+happen to report a change while being built, which covers it, but that is a
+signal from a child widget rather than a decision by this panel, and a build
+that produced no step widgets would otherwise leave the previous key's banner
+on screen.
+
+### The unavailable fade covers both services
+
+`DeckController._unavailable()` replaced `_needs_obs()`. The documented rule is
+unchanged — a key fades only when **every** one of its actions is blocked, and
+an unregistered action is unknowable rather than unavailable — but the question
+is now asked per action rather than per connection, because a single key can
+mix the two. `_action_blocked()` combines `Action.requires_obs(params)` against
+the OBS connection with `Action.requires_twitch(params)` against the linked
+account.
+
+The consequence worth knowing: a key holding a Twitch marker and an OBS chapter
+marker does **not** fade when OBS is closed, because it still places the Twitch
+marker. It fades only when neither service is there. Conflating the two
+conditions would fade Twitch keys whenever OBS happened to be closed.
+
+`twitch.stats` repaints on the same `_live_loop()` that drives `obs.stats` and
+the scene previews, at `TWITCH_REFRESH_SECONDS`, and asks for nothing while no
+account is linked — repainting is what makes the key ask for a fresh snapshot,
+so with no account there is nothing to ask.
+
 ### First run
 
 `Config.load()` on a clean machine yields one profile, one page and no keys, so
@@ -1654,7 +1902,9 @@ either JSON file. On first run, legacy plaintext password fields are migrated an
 removed from both files; if Secret Service is unavailable, they are still removed
 and the password is session-only. OpenAI and Claude API keys are also stored only
 in Secret Service, under separate provider identities; AI preferences in config
-never contain either key.
+never contain either key. The Twitch access and refresh tokens follow the same
+rule under their own schema, as one JSON item so a renewal replaces both
+together; `TwitchSettings` in config holds only the public Client ID.
 
 The profiles menu exports `.lsdconfig` ZIP format v4 with the full JSON
 configuration, including screen-saver and clean-exit display settings, available
@@ -1991,6 +2241,29 @@ ignored and you will chase a ghost.
    `ON_ERROR_CONTINUE` as the default and normalize unknown values to it, so no
    stored key changes behaviour by being loaded. Keep the log file optional:
    failing to open it must never stop the application.
+
+27. **A Twitch refresh token is spent exactly once, and key feedback must never
+   wait on the network.** Keep `_persist()` storing a renewed pair **before**
+   adopting it and keep `_renew_lock` serializing renewals, or two workers spend
+   the same single-use token and the second refusal unlinks a good account. Keep
+   `_is_scope_error()` out of the retry path: a missing scope is also a 401 and
+   no renewal can grant it, so retrying spends a token on every repaint. Keep
+   `channel()` free of any request — it runs on a render worker inside
+   `feedback()` — and keep both staleness bounds, so a blip keeps the last value
+   while an outage blanks the key rather than showing a number that stopped
+   being true. Keep tokens in Secret Service and out of `Config`, `config.json`,
+   its backup and every export; only the public Client ID may travel. Keep the
+   poll loop matching Twitch's device-flow **code** through `_normalize()`, since
+   the status code alone cannot tell "not yet" from "no" and the exact spelling
+   already broke the flow once; keep `slow_down` a back-off rather than a
+   refusal. Keep `describe_error()` between Twitch and the user, so no
+   identifier is ever displayed. Keep the category a text field resolved at
+   press time with an exact name beating the search ranking, and keep its
+   suggestions debounced, off the GTK thread and guarded against a stale answer
+   overwriting a newer one. Never let the account
+   dialog claim a completed disconnection: Twitch has no API to remove the
+   authorization, so revoking is all this can do and the user has to finish it
+   on Twitch's own Connections page.
 
 ---
 
