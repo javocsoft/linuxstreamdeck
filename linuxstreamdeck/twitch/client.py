@@ -24,7 +24,13 @@ from .constants import (
     HELIX_BASE,
     SCOPES,
 )
-from .http import TwitchError, TwitchHTTPError, request_bytes, request_json
+from .http import (
+    TwitchError,
+    TwitchHTTPError,
+    TwitchScopeError,
+    request_bytes,
+    request_json,
+)
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +54,20 @@ ART_CACHE_LIMIT = 128
 # Twitch box art is 3:4. Small enough to sit in a suggestion row without
 # turning each keystroke into a meaningful download.
 BOX_ART_SIZE = (40, 53)
+# Channel ids resolved from names, for raids. The same few channels get raided
+# again and again, so the lookup is worth remembering between presses.
+USER_CACHE_LIMIT = 64
+# Twitch's own limit; a longer announcement is refused outright, and losing the
+# message over its tail would be a poor trade.
+MAX_ANNOUNCEMENT_CHARS = 500
+# What Twitch accepts for an ad break, in seconds.
+COMMERCIAL_LENGTHS = (30, 60, 90, 120, 150, 180)
+# How an announcement can be highlighted.
+ANNOUNCEMENT_COLORS = ("primary", "blue", "green", "orange", "purple")
+# Who Twitch lets run commercials. An ordinary account reports an empty
+# broadcaster type, and Twitch refuses its ad requests in ways that do not say
+# so — see `can_run_ads`.
+ADS_BROADCASTER_TYPES = ("affiliate", "partner")
 
 
 @dataclass(frozen=True)
@@ -83,6 +103,10 @@ class TwitchClient:
         self._categories: dict[str, str] = {}
         self._searches: dict[str, list[CategorySuggestion]] = {}
         self._art: dict[str, bytes | None] = {}
+        self._users: dict[str, str] = {}
+        # None until established: "not looked up" must stay distinct from "an
+        # ordinary account", or a failed lookup would disable a working key.
+        self._broadcaster_type: str | None = None
         self._stopping = threading.Event()
         # One worker: every background refresh here is a Twitch request, and
         # serializing them keeps a slow answer from multiplying into a burst.
@@ -175,6 +199,7 @@ class TwitchClient:
         with self._lock:
             self._channel = {}
             self._channel_at = 0.0
+            self._broadcaster_type = None
         self._announce()
 
     def unlink(self) -> None:
@@ -191,6 +216,7 @@ class TwitchClient:
             self._tokens = None
             self._channel = {}
             self._channel_at = 0.0
+            self._broadcaster_type = None
         if self._store is not None:
             self._store.clear()
         if tokens is not None:
@@ -348,6 +374,177 @@ class TwitchClient:
                 return edit_url
         return ""
 
+    def broadcaster_type(self, refresh: bool = False) -> str | None:
+        """"partner", "affiliate", or "" for an ordinary account.
+
+        None means it has not been established, which is deliberately distinct
+        from "ordinary": nothing should be refused because a lookup failed.
+        """
+        with self._lock:
+            known = self._broadcaster_type
+        if known is not None and not refresh:
+            return known
+        try:
+            answer = self._get("/users")
+        except TwitchError:
+            log.debug("Could not read the Twitch broadcaster type", exc_info=True)
+            return None
+        entries = answer.get("data")
+        if not (isinstance(entries, list) and entries
+                and isinstance(entries[0], dict)):
+            return None
+        found = str(entries[0].get("broadcaster_type") or "")
+        with self._lock:
+            self._broadcaster_type = found
+        return found
+
+    def can_run_ads(self, refresh: bool = False) -> bool | None:
+        """Whether this account is allowed to run commercials at all.
+
+        Twitch will not say so usefully. Its own issue tracker has this
+        endpoint returning a misleading 429 to an ordinary account, and
+        sometimes a plain success — a key that reported "ad break started" and
+        did nothing. So eligibility is established here instead, from the one
+        field that states it.
+        """
+        kind = self.broadcaster_type(refresh)
+        return None if kind is None else kind in ADS_BROADCASTER_TYPES
+
+    def start_commercial(self, seconds: int) -> tuple[int, int]:
+        """Start an ad break, answering how long it runs and the cooldown.
+
+        The cooldown matters more than the confirmation: Twitch refuses another
+        break until it passes, so a key that only said "started" would leave
+        someone pressing it again into a refusal.
+        """
+        # Asked before sending, because Twitch's own answer cannot be trusted
+        # to say it: an ordinary account gets a cooldown refusal it can never
+        # wait out, or a success for an ad that never ran.
+        if self.can_run_ads() is False:
+            raise TwitchError(
+                "This Twitch account cannot run ads. Only Affiliates and "
+                "Partners can, and this one is neither."
+            )
+        answer = self._post(
+            "/channels/commercial",
+            body={"broadcaster_id": self._user_id(), "length": int(seconds)},
+        )
+        entries = answer.get("data")
+        first = entries[0] if isinstance(entries, list) and entries else {}
+        if not isinstance(first, dict):
+            first = {}
+        return (
+            _as_int(first.get("length")) or int(seconds),
+            _as_int(first.get("retry_after")) or 0,
+        )
+
+    def start_raid(self, channel: str) -> str:
+        """Offer a raid to another channel; answers the name it resolved.
+
+        Twitch does not move anyone here: it opens the countdown on the
+        broadcaster's own chat, which they then confirm. Saying so is the
+        difference between a key someone trusts and one they are afraid of.
+        """
+        login = (channel or "").strip().lstrip("@")
+        if not login:
+            raise TwitchError("No channel to raid was given")
+        target = self.find_user(login)
+        if not target:
+            raise TwitchError(f"Twitch has no channel called {login!r}")
+        self._post(
+            "/raids",
+            params={
+                "from_broadcaster_id": self._user_id(),
+                "to_broadcaster_id": target,
+            },
+        )
+        return login
+
+    def cancel_raid(self) -> None:
+        self._request(
+            "DELETE", "/raids", params={"broadcaster_id": self._user_id()}
+        )
+
+    def announce(self, message: str, color: str = "primary") -> None:
+        text = (message or "").strip()
+        if not text:
+            raise TwitchError("The announcement is empty")
+        user_id = self._user_id()
+        self._post(
+            "/chat/announcements",
+            # The moderator is this account acting on its own channel, which is
+            # what the scope authorizes; both ids are required all the same.
+            params={"broadcaster_id": user_id, "moderator_id": user_id},
+            body={"message": text[:MAX_ANNOUNCEMENT_CHARS], "color": color},
+        )
+
+    def find_user(self, login: str) -> str:
+        """A channel's numeric id from its name, cached.
+
+        Every raid needs one, and the same handful of channels get raided
+        repeatedly, so this is worth remembering between presses.
+        """
+        key = (login or "").strip().casefold()
+        if not key:
+            return ""
+        with self._lock:
+            cached = self._users.get(key)
+        if cached is not None:
+            return cached
+        answer = self._get("/users", {"login": key})
+        entries = answer.get("data")
+        found = ""
+        if isinstance(entries, list) and entries and isinstance(entries[0], dict):
+            found = str(entries[0].get("id") or "")
+        with self._lock:
+            if len(self._users) >= USER_CACHE_LIMIT:
+                self._users.clear()
+            self._users[key] = found
+        return found
+
+    def search_channels(self, query: str, limit: int = 8) -> list[str]:
+        """Channel names matching what has been typed, for the raid target.
+
+        Live channels first, because a raid goes to somebody who is streaming;
+        Twitch returns both and the order is the only thing that says which.
+        """
+        text = (query or "").strip().lstrip("@")
+        if not text:
+            return []
+        try:
+            answer = self._get(
+                "/search/channels", {"query": text, "first": 20, "live_only": False}
+            )
+        except TwitchError:
+            log.debug("Could not search Twitch channels", exc_info=True)
+            return []
+        entries = answer.get("data")
+        rows = [e for e in (entries if isinstance(entries, list) else [])
+                if isinstance(e, dict) and e.get("broadcaster_login")]
+        rows.sort(key=lambda e: not e.get("is_live"))
+        names = [str(e["broadcaster_login"]) for e in rows]
+        with self._lock:
+            for entry in rows:
+                if entry.get("id"):
+                    self._users[str(entry["broadcaster_login"]).casefold()] = str(
+                        entry["id"]
+                    )
+        return names[:limit]
+
+    def refresh_channel(self) -> dict[str, Any]:
+        """Read the channel state now, blocking until it answers.
+
+        The opposite of `channel()`, and only for a caller that can afford to
+        wait: the pre-flight runs on an action worker and is asked once, so a
+        cached answer from up to twenty seconds ago would be exactly the wrong
+        thing to make a going-live decision on.
+        """
+        snapshot = self._read_channel()
+        with self._lock:
+            self._channel = snapshot
+            self._channel_at = time.monotonic()
+        return dict(snapshot)
+
     def create_marker(self, description: str = "") -> None:
         body: dict[str, Any] = {"user_id": self._user_id()}
         text = (description or "").strip()
@@ -501,7 +698,16 @@ class TwitchClient:
                 method, f"{HELIX_BASE}{path}", params=params, headers=headers, body=body
             )
         except TwitchHTTPError as error:
-            if error.status == 401 and not _is_scope_error(error.message):
+            if error.status == 401 and _is_scope_error(error.message):
+                # The account was linked before this action existed, so its
+                # token was never granted what the action needs. Twitch names
+                # the permission and stops there; what someone pressing a key
+                # needs is the sentence that follows.
+                raise TwitchScopeError(
+                    error.status, error.message,
+                    missing_scope_message(error.message),
+                ) from error
+            if error.status == 401:
                 # The token was accepted a moment ago and is not any more.
                 # Renewing once and retrying turns the common case — an
                 # expiry this client had not noticed — into no visible failure.
@@ -601,6 +807,32 @@ def _box_art_url(template: Any) -> str:
         return ""
     width, height = BOX_ART_SIZE
     return template.replace("{width}", str(width)).replace("{height}", str(height))
+
+
+def missing_scope_message(message: str) -> str:
+    """Turn Twitch's refusal into something the person pressing can act on.
+
+    It says "User access token requires the X scope." and stops, which states
+    the fact and leaves the fix unsaid. The account only has to be connected
+    again — the authorization simply predates the action.
+    """
+    scope = _named_scope(message)
+    named = f" ({scope})" if scope else ""
+    return (
+        f"Your Twitch account has not granted this permission{named}. It was "
+        "connected before this action existed: open «Twitch account…» and "
+        "connect again."
+    )
+
+
+def _named_scope(message: str) -> str:
+    """The scope Twitch named, if it named one."""
+    for word in (message or "").replace(",", " ").split():
+        # Every Twitch scope is colon-separated, and nothing else in that
+        # sentence is, so this needs no pattern to keep in step with them.
+        if ":" in word:
+            return word.strip(".'\"")
+    return ""
 
 
 def _is_scope_error(message: str) -> bool:

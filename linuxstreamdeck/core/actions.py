@@ -182,6 +182,16 @@ class Action:
     # without a linked account fades while none is connected, so "not set up
     # yet" stops looking like "idle".
     needs_twitch: bool = False
+    # The one Twitch permission this action cannot work without, when it needs
+    # a specific one. An account linked before the action existed holds a token
+    # that was never granted it, and the deck fades the key rather than letting
+    # the refusal arrive on the press — which, for these actions, means live.
+    twitch_scope: str = ""
+    # Set when the action needs the account to be a Twitch Affiliate or
+    # Partner. Only running ads does. Twitch refuses an ordinary account in
+    # ways that do not say so — sometimes with a success — so the deck decides
+    # this itself rather than waiting for an answer it cannot read.
+    twitch_needs_affiliate: bool = False
 
     def requires_obs(self, params: dict) -> bool:
         """Whether this key, as configured, needs OBS to be reachable.

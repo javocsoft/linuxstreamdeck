@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 
 from ..core.actions import REGISTRY, Action, Param, apply_default_icons, register
-from .client import uptime_seconds
+from .client import ANNOUNCEMENT_COLORS, COMMERCIAL_LENGTHS, uptime_seconds
 from .http import TwitchError
 
 log = logging.getLogger(__name__)
@@ -222,6 +222,7 @@ class Stats(Action):
 @register
 class SetTitle(Action):
     id = "twitch.set_title"
+    twitch_scope = "channel:manage:broadcast"
     name = "Set stream title"
     category = CAT_TWITCH
     description = "Change the title of the Twitch stream."
@@ -239,6 +240,7 @@ class SetTitle(Action):
 @register
 class SetCategory(Action):
     id = "twitch.set_category"
+    twitch_scope = "channel:manage:broadcast"
     name = "Set stream category"
     category = CAT_TWITCH
     description = (
@@ -280,6 +282,7 @@ class SetCategory(Action):
 @register
 class CreateClip(Action):
     id = "twitch.clip"
+    twitch_scope = "clips:edit"
     name = "Create clip"
     category = CAT_TWITCH
     description = (
@@ -303,6 +306,7 @@ class CreateClip(Action):
 @register
 class CreateMarker(Action):
     id = "twitch.marker"
+    twitch_scope = "channel:manage:broadcast"
     name = "Create stream marker"
     category = CAT_TWITCH
     description = (
@@ -325,6 +329,137 @@ class CreateMarker(Action):
         ctx.bus.emit("status", text="Twitch stream marker created")
 
 
+@register
+class Commercial(Action):
+    id = "twitch.commercial"
+    twitch_scope = "channel:edit:commercial"
+    twitch_needs_affiliate = True
+    name = "Start ad break"
+    category = CAT_TWITCH
+    description = (
+        "Run an ad break of the chosen length. Only Twitch Affiliates and "
+        "Partners can run ads; the key is faded for an account that cannot. "
+        "The channel also has to be live, and Twitch enforces its own gap "
+        "between breaks."
+    )
+    running_feedback = True
+    params = [
+        Param(
+            "length",
+            "Length",
+            kind="choice",
+            default="60",
+            choices=[str(n) for n in COMMERCIAL_LENGTHS],
+            choice_labels={
+                str(n): (f"{n} seconds" if n < 60 else f"{n // 60} min {n % 60:02d} s")
+                for n in COMMERCIAL_LENGTHS
+            },
+        ),
+    ]
+
+    def execute(self, ctx, p):
+        try:
+            seconds = int(p.get("length") or 60)
+        except (TypeError, ValueError):
+            seconds = 60
+        length, retry_after = _client(ctx).start_commercial(seconds)
+        # The cooldown is the useful half. Without it the next press is a
+        # refusal nobody saw coming.
+        wait = (
+            f"; the next one can start in {retry_after // 60}m {retry_after % 60:02d}s"
+            if retry_after
+            else ""
+        )
+        ctx.bus.emit("status", text=f"Twitch ad break started ({length}s){wait}")
+
+
+@register
+class Raid(Action):
+    id = "twitch.raid"
+    twitch_scope = "channel:manage:raids"
+    name = "Raid a channel"
+    category = CAT_TWITCH
+    description = (
+        "Offer a raid to another channel, or cancel one already offered. "
+        "Twitch opens the countdown on your chat; it never moves anyone by "
+        "itself."
+    )
+    running_feedback = True
+    params = [
+        Param(
+            "mode",
+            "Action",
+            kind="choice",
+            default="start",
+            choices=["start", "cancel"],
+            choice_labels={"start": "Start a raid", "cancel": "Cancel the raid"},
+        ),
+        Param(
+            "channel",
+            "Channel to raid",
+            kind="string",
+            default="",
+            placeholder="Start typing a channel name",
+            completion_source="twitch_channels",
+        ),
+    ]
+
+    def execute(self, ctx, p):
+        client = _client(ctx)
+        if str(p.get("mode") or "start") == "cancel":
+            client.cancel_raid()
+            ctx.bus.emit("status", text="Twitch raid cancelled")
+            return
+        channel = str(p.get("channel", "") or "").strip()
+        if not channel:
+            raise TwitchError(
+                "This key has no channel to raid. Open it and pick one from "
+                "the suggestions."
+            )
+        raided = client.start_raid(channel)
+        ctx.bus.emit(
+            "status",
+            text=(
+                f"Raid to «{raided}» offered; confirm it in your Twitch chat "
+                "within 90 seconds"
+            ),
+        )
+
+
+@register
+class Announce(Action):
+    id = "twitch.announce"
+    twitch_scope = "moderator:manage:announcements"
+    name = "Announce in chat"
+    category = CAT_TWITCH
+    description = "Post a highlighted announcement in your own Twitch chat."
+    running_feedback = True
+    params = [
+        Param("message", "Message", kind="string", default=""),
+        Param(
+            "color",
+            "Highlight",
+            kind="choice",
+            default="primary",
+            choices=list(ANNOUNCEMENT_COLORS),
+            choice_labels={
+                "primary": "Channel colour",
+                "blue": "Blue",
+                "green": "Green",
+                "orange": "Orange",
+                "purple": "Purple",
+            },
+        ),
+    ]
+
+    def execute(self, ctx, p):
+        message = str(p.get("message", "") or "").strip()
+        if not message:
+            raise TwitchError("This key has no announcement to post.")
+        _client(ctx).announce(message, str(p.get("color") or "primary"))
+        ctx.bus.emit("status", text="Announcement posted in Twitch chat")
+
+
 def _client(ctx):
     """The Twitch connection, or a refusal that says what is missing.
 
@@ -344,6 +479,9 @@ apply_default_icons({
     "twitch.set_category": "mdi:gamepad-variant",
     "twitch.clip": "mdi:movie-open-play",
     "twitch.marker": "mdi:bookmark-outline",
+    "twitch.commercial": "mdi:currency-usd",
+    "twitch.raid": "mdi:rocket-launch-outline",
+    "twitch.announce": "mdi:bullhorn-outline",
 })
 
 

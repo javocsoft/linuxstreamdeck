@@ -431,6 +431,89 @@ def check_collection(name: str, total: int = 0) -> Check:
     )
 
 
+def check_twitch_account(linked: bool, login: str, missing: tuple) -> Check:
+    """Whether the account these keys act through is still usable.
+
+    A token that expired since the last session is the failure this exists to
+    catch: every Twitch key still looks configured, and the first press of one
+    is the moment it turns out otherwise.
+    """
+    if not linked:
+        # Not a failure. Someone who does not use Twitch has nothing wrong with
+        # their setup, and the board must not tell them they have.
+        return Check(id="twitch", label="Twitch", state=UNCHECKED,
+                     detail="No Twitch account is connected, so nothing about "
+                            "it was checked.",
+                     icon="mdi:twitch")
+    if missing:
+        return Check(
+            id="twitch", label="Twitch", state=WARN,
+            detail=(
+                f"Connected as {login}, but this authorization predates some "
+                f"of the keys: {', '.join(missing)} was never granted. "
+                "Connect the account again to allow it."
+            ),
+            icon="mdi:twitch",
+        )
+    return Check(id="twitch", label="Twitch", state=OK,
+                 detail=f"Connected as {login}, and Twitch still accepts it.",
+                 icon="mdi:twitch")
+
+
+def check_twitch_title(title: str, linked: bool) -> Check:
+    if not linked:
+        return Check(id="twitch_title", label="Title", state=UNCHECKED,
+                     detail="No Twitch account is connected.",
+                     icon="mdi:format-title")
+    if not (title or "").strip():
+        return Check(id="twitch_title", label="Title", state=FAIL,
+                     detail="The Twitch stream has no title.",
+                     icon="mdi:format-title")
+    return Check(
+        id="twitch_title", label="Title", state=OK,
+        detail=(
+            f"The Twitch title is «{title}». This only checks there is one; "
+            "whether it is the right one for today is your call."
+        ),
+        icon="mdi:format-title",
+    )
+
+
+def check_twitch_category(category: str, linked: bool) -> Check:
+    """Left on yesterday's game is the classic one, and it cannot be caught
+    here: only that a category is set at all can be established."""
+    if not linked:
+        return Check(id="twitch_category", label="Category", state=UNCHECKED,
+                     detail="No Twitch account is connected.",
+                     icon="mdi:gamepad-variant")
+    if not (category or "").strip():
+        return Check(id="twitch_category", label="Category", state=FAIL,
+                     detail="The Twitch channel has no category set.",
+                     icon="mdi:gamepad-variant")
+    return Check(
+        id="twitch_category", label="Category", state=OK,
+        detail=(
+            f"The Twitch category is «{category}». This only checks there is "
+            "one; it cannot know whether it is still yesterday's."
+        ),
+        icon="mdi:gamepad-variant",
+    )
+
+
+def check_twitch_live(live: bool, linked: bool) -> Check:
+    if not linked:
+        return Check(id="twitch_live", label="On air", state=UNCHECKED,
+                     detail="No Twitch account is connected.",
+                     icon="mdi:broadcast")
+    if live:
+        return Check(id="twitch_live", label="On air", state=WARN,
+                     detail="Twitch already shows this channel as live.",
+                     icon="mdi:broadcast")
+    return Check(id="twitch_live", label="On air", state=OK,
+                 detail="Twitch does not show this channel as live yet.",
+                 icon="mdi:broadcast-off")
+
+
 # --------------------------------------------------------------------------
 # local facts the checks need
 # --------------------------------------------------------------------------
@@ -489,7 +572,7 @@ def free_space_mb(folder: str) -> float | None:
 # running them
 # --------------------------------------------------------------------------
 
-def run(obs, controller=None):
+def run(obs, controller=None, twitch=None):
     """Yield each check as it completes, in the order they are worth reading.
 
     A generator rather than a list on purpose. The audio check listens for two
@@ -502,9 +585,14 @@ def run(obs, controller=None):
     connected = bool(getattr(obs, "connected", False))
     yield check_connection(connected)
     if not connected:
-        # Everything else asks OBS something. Reporting them as failures would
-        # blame the setup for a connection problem already reported above.
+        # Everything OBS-facing asks OBS something. Reporting those as failures
+        # would blame the setup for a connection problem already reported
+        # above. Twitch is a different service and still has real answers, so
+        # it deliberately runs anyway: "is my title set" does not stop being
+        # worth knowing because OBS happens to be closed.
         for check in _all_unchecked("OBS is not connected."):
+            yield check
+        for check in _twitch_checks(twitch):
             yield check
         return
 
@@ -539,6 +627,49 @@ def run(obs, controller=None):
         bool(getattr(state, "streaming", False)),
         bool(getattr(state, "recording", False)),
     )
+
+    # Last, because not everybody streams to Twitch, and a deck too small to
+    # hold every check should spend its keys on the ones that apply to all.
+    for check in _twitch_checks(twitch):
+        yield check
+
+
+def _twitch_checks(twitch):
+    """The Twitch half, or four honest blanks when it cannot be asked.
+
+    Reads the channel **now** rather than through `channel()`. That one answers
+    from a cache up to twenty seconds old, which is the right trade for a key
+    repainting itself and exactly the wrong one for a decision about going
+    live.
+    """
+    linked = bool(twitch is not None and getattr(twitch, "linked", False))
+    login = getattr(twitch, "account", "") if linked else ""
+    missing = tuple(twitch.missing_scopes()) if linked else ()
+    yield check_twitch_account(linked, login, missing)
+    if not linked:
+        yield check_twitch_title("", False)
+        yield check_twitch_category("", False)
+        yield check_twitch_live(False, False)
+        return
+    try:
+        snapshot = twitch.refresh_channel()
+    except Exception:
+        # Unreachable is not misconfigured. Reporting an empty title because
+        # the network dropped would send somebody hunting for a problem they
+        # do not have.
+        log.debug("Could not read the Twitch channel for the pre-flight",
+                  exc_info=True)
+        for check_id, label, icon in (
+            ("twitch_title", "Title", "mdi:format-title"),
+            ("twitch_category", "Category", "mdi:gamepad-variant"),
+            ("twitch_live", "On air", "mdi:broadcast"),
+        ):
+            yield Check(check_id, label, UNCHECKED,
+                        "Twitch could not be reached just now.", icon)
+        return
+    yield check_twitch_title(str(snapshot.get("title") or ""), True)
+    yield check_twitch_category(str(snapshot.get("category") or ""), True)
+    yield check_twitch_live(bool(snapshot.get("live")), True)
 
 
 def _all_unchecked(reason: str):

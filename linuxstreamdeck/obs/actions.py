@@ -873,9 +873,9 @@ class PreFlight(Action):
     name = "Pre-flight check"
     category = CAT_ADVANCED
     description = (
-        "Check audio, cameras, disk, CPU, keys and the stream destination, "
-        "and show the results across the whole deck. Reports only; changes "
-        "nothing."
+        "Check audio, cameras, disk, CPU, the stream destination and your "
+        "Twitch title and category, and show the results across the whole "
+        "deck. Reports only; changes nothing."
     )
     running_feedback = True
 
@@ -887,7 +887,9 @@ class PreFlight(Action):
         specs: dict[int, dict] = {}
         results = []
         try:
-            for check in preflight.run(ctx.obs, controller):
+            for check in preflight.run(
+                ctx.obs, controller, getattr(ctx, "twitch", None)
+            ):
                 results.append(check)
                 if len(specs) < count:
                     specs[len(specs)] = preflight_spec(check)

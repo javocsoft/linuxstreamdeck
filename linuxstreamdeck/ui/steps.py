@@ -892,13 +892,15 @@ class StepEditor(Gtk.Box):
     def _completion_search(self, source: str):
         """The blocking search behind a suggestion list, or None when there is
         no way to answer it right now."""
+        twitch = getattr(self.app, "twitch", None)
+        if twitch is None or not twitch.linked:
+            # Without an account there is nothing to search; the field stays a
+            # plain text box rather than one that never suggests.
+            return None
         if source == "twitch_categories":
-            twitch = getattr(self.app, "twitch", None)
-            if twitch is None or not twitch.linked:
-                # Without an account there is nothing to search; the field
-                # stays a plain text box rather than one that never suggests.
-                return None
             return lambda text: twitch.search_categories(text, COMPLETION_LIMIT)
+        if source == "twitch_channels":
+            return lambda text: twitch.search_channels(text, COMPLETION_LIMIT)
         return None
 
     def _completion_artwork(self, source: str):

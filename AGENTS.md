@@ -1807,6 +1807,77 @@ signal from a child widget rather than a decision by this panel, and a build
 that produced no step widgets would otherwise leave the previous key's banner
 on screen.
 
+**Ad breaks, raids and announcements** are the rest of the catalogue.
+`start_commercial()` answers the cooldown as well as the length, because Twitch
+refuses another break until it passes and a key that only said "started" would
+leave someone pressing it into a refusal. `start_raid()` resolves the channel
+name through `find_user()` (cached: the same few channels get raided again and
+again) and its status message says the raid still has to be **confirmed in
+chat** — Twitch opens a 90-second countdown rather than moving anyone, and a key
+that implied otherwise would be frightening to press. `search_channels()` sorts
+live channels first, since a raid goes to somebody who is streaming, and primes
+the same id cache so the raid itself costs no second lookup.
+
+**Each of those brought a scope, and an account linked before them holds a token
+that cannot perform them.** That is not an error case, it is the ordinary
+upgrade path, and it is answered in three places:
+
+- **The key fades.** `Action.twitch_scope` names the one permission an action
+  cannot work without, and `DeckController._twitch_allows()` checks it against
+  `missing_scopes()`. A connection is not enough — without this the refusal
+  arrives on the press, which for these actions means live. Only the affected
+  keys fade; an authorization whose scopes were never recorded answers empty
+  and is treated as unknown rather than blocked.
+- **The refusal says what to do.** Twitch answers "User access token requires
+  the X scope." and stops. `missing_scope_message()` turns that into the
+  sentence that follows it, and `TwitchScopeError` carries it. That type stays
+  a **`TwitchHTTPError` with its status**, because `_read_channel()` tolerates a
+  401 from the optional follower scope and keeps the rest of the snapshot —
+  raising a plain error there lost the viewer count along with it, which is a
+  regression a test caught and now pins.
+- **The pre-flight reports it**, as a warning naming the missing scope.
+
+**Running ads also needs the account to be an Affiliate or Partner, and Twitch
+cannot be asked about it usefully.** Its own issue tracker has
+`/channels/commercial` answering an ordinary account with a **429 cooldown it
+can never wait out** — which is what someone hit while testing — and, worse,
+sometimes with a plain **success** for an ad that never ran. Neither can be
+read, so `can_run_ads()` establishes it from `broadcaster_type` on
+`GET /helix/users` instead: `partner` or `affiliate` yes, empty no, and
+**None when it was never established**, which is deliberately a third answer.
+`Action.twitch_needs_affiliate` carries it to the same fade as a missing scope,
+and `start_commercial()` refuses before sending. A lookup that failed must never
+disable a key that would have worked, so only a definite `False` blocks
+anything, and only the ad key: nothing else depends on it.
+
+### Twitch in the pre-flight
+
+Four checks: the account and its scopes, the title, the category, and whether
+Twitch already shows the channel as live. Three things about them are
+deliberate.
+
+**They run even when OBS is closed.** Everything else in `run()` asks OBS
+something, so a disconnected OBS reports the rest as unchecked and returns —
+but Twitch is a different service, and "is my title set" does not stop being
+worth knowing because OBS happens not to be running.
+
+**They read the channel with `refresh_channel()`, not `channel()`.** The cached
+one answers from up to twenty seconds ago, which is the right trade for a key
+repainting itself and exactly the wrong one for a decision about going live.
+This runs on an action worker and is asked once, so it can afford to block.
+
+**No account is `UNCHECKED`, never `FAIL`.** Somebody who does not stream to
+Twitch has nothing wrong with their setup and the board must not tell them they
+have; the four rows still appear, because a check that is quietly absent looks
+exactly like one that passed. An unreachable Twitch is likewise unchecked
+rather than reported as a missing title — that would send somebody hunting for
+a problem they do not have.
+
+Both `check_twitch_title()` and `check_twitch_category()` state their own limit
+in the detail, as every check here does: they establish that something is set,
+never that it is the right thing for today. Left on yesterday's game is the
+classic mistake and it is not decidable from here.
+
 ### The unavailable fade covers both services
 
 `DeckController._unavailable()` replaced `_needs_obs()`. The documented rule is

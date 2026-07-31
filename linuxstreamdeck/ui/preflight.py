@@ -135,6 +135,13 @@ class PreFlightDialog(Adw.Window):
                 "or logged, and whether the service accepts it is unknown until "
                 "you go live.",
             ),
+            (
+                "Twitch: that a title and category exist, not that they are right",
+                "Left on yesterday's game is the classic mistake and this "
+                "cannot catch it — only that something is set. With no Twitch "
+                "account connected the four Twitch rows are reported as not "
+                "checked rather than left out.",
+            ),
         ):
             row = Adw.ActionRow(title=title, subtitle=subtitle, subtitle_lines=0)
             row.add_css_class("dim-label")

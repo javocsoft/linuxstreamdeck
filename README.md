@@ -127,8 +127,9 @@ on the same hardware as the scene switches.
   The whole deck turns into a board: is anything actually being *heard*, does
   OBS really hold each of your capture devices, is there room on disk, is the
   recording folder writable, is the machine already busy, which scene
-  collection is loaded, is a stream key set. Results appear one at a time and
-  the deck goes back to normal on any press.
+  collection is loaded, is a stream key set — and, if you have connected an
+  account, is your Twitch title and category set and are you already live.
+  Results appear one at a time and the deck goes back to normal on any press.
   It reports; it never switches a scene, activates a source or changes a
   setting. And it does not pretend: anything it could not establish shows as a
   faded key with a question mark, never as a tick, and the window lists what
@@ -188,7 +189,7 @@ on the same hardware as the scene switches.
 | Area | Actions |
 | --- | --- |
 | **Scenes** | Switch program / preview · **live scene preview on the key** · studio mode · transitions (type & duration) |
-| **Before going live** | Pre-flight check: nothing muted and audio arriving, capture devices held by OBS, disk space, recording folder, machine load, which scene collection is loaded, stream key set |
+| **Before going live** | Pre-flight check: nothing muted and audio arriving, capture devices held by OBS, disk space, recording folder, machine load, which scene collection is loaded, stream key set, and your Twitch title, category and account |
 | **Recording & streaming** | Record (start, stop or toggle) · pause recording · add a chapter marker · split the recording file · stream start/stop · virtual camera |
 | **Replay & capture** | Enable & save replay buffer · source screenshots to PNG |
 | **Audio** | Mute (with feedback) · raise/lower volume · set volume in dB. Pick a scene and the list narrows to its audio inputs, plus Desktop Audio and Mic/Aux |
@@ -203,6 +204,8 @@ on the same hardware as the scene switches.
 | **On the key** | Viewers · followers · stream uptime · live/offline, refreshed while you work |
 | **Your stream** | Set the stream title · set the category, picked from live Twitch suggestions with box art |
 | **Moments** | Create a clip · create a stream marker |
+| **On air** | Start an ad break of a chosen length (Affiliates and Partners only) · raid another channel (or cancel it) · post a highlighted announcement in your chat |
+| **Before going live** | The pre-flight checks your Twitch account, title, category and whether you are already live |
 
 Connecting asks for no password. The dialog shows a short code, you enter it at
 `twitch.tv/activate`, and that is the whole setup. The access and refresh tokens
@@ -657,6 +660,17 @@ Your access and refresh tokens are stored in the desktop keyring under their own
 entry, never in `config.json`, its backup or an exported configuration. Moving a
 configuration to another computer therefore never carries your Twitch account
 with it; connect again there, exactly as you re-enter the OBS password.
+
+**Ad breaks need a Twitch Affiliate or Partner account.** If yours is neither,
+that key is faded and pressing it says so — Twitch's own answer is a cooldown
+that never expires, and sometimes a success for an ad that never ran, so
+LinuxStreamDeck checks your account type instead of trusting it. The Twitch
+account dialog tells you which you are.
+
+**Ad breaks, raids and announcements need permissions the earlier release did
+not ask for.** If you connected your account before this version, the Twitch
+account dialog says which ones are missing — connect again to grant them. The
+pre-flight reports it too.
 
 **Disconnecting takes two steps, and that is Twitch's rule rather than ours.**
 **Disconnect** removes the tokens from your keyring and revokes them, so this

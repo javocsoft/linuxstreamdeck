@@ -32,9 +32,12 @@ DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 # needs is what makes an authorization screen frightening, and every extra scope
 # is one the user has to be talked into.
 SCOPES = (
-    "channel:manage:broadcast",   # set the title and category, create a marker
-    "clips:edit",                 # create a clip
-    "moderator:read:followers",   # read the follower count
+    "channel:manage:broadcast",       # set the title and category, add a marker
+    "clips:edit",                     # create a clip
+    "moderator:read:followers",       # read the follower count
+    "channel:edit:commercial",        # start an ad break
+    "channel:manage:raids",           # start or cancel a raid
+    "moderator:manage:announcements",  # post an announcement in chat
 )
 
 # Twitch reports the device flow's outcome as an RFC 8628 error **code** in the

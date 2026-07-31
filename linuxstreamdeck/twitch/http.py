@@ -47,6 +47,22 @@ class TwitchHTTPError(TwitchError):
         super().__init__(f"Twitch returned HTTP {status}{detail}")
 
 
+class TwitchScopeError(TwitchHTTPError):
+    """Refused because this authorization was never granted the permission.
+
+    Deliberately still an HTTP error carrying its status. A caller that
+    degrades gracefully on a 401 — the follower count, whose scope is optional
+    — has to keep doing so; making this a plain error broke exactly that and
+    lost the whole channel snapshot along with the follower count. Only the
+    text differs, and it is the one someone pressing a key can act on rather
+    than the identifier Twitch names.
+    """
+
+    def __init__(self, status: int, message: str, advice: str) -> None:
+        super().__init__(status, message)
+        self.args = (advice,)
+
+
 def request_json(
     method: str,
     url: str,

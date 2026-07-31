@@ -1865,11 +1865,48 @@ class DeckController:
 
     def _action_blocked(self, action, params: dict) -> bool:
         obs_blocked = action.requires_obs(params) and not self.obs.connected
-        twitch_blocked = action.requires_twitch(params) and not self._twitch_linked()
+        twitch_blocked = action.requires_twitch(params) and not self._twitch_allows(
+            action
+        )
         return obs_blocked or twitch_blocked
 
     def _twitch_linked(self) -> bool:
         return bool(self.twitch is not None and self.twitch.linked)
+
+    def _twitch_allows(self, action) -> bool:
+        """Whether the linked account can actually perform this action.
+
+        A connection is not enough. An account linked before an action existed
+        holds a token that was never granted what it needs, and Twitch only
+        says so on the press — which for these actions means finding out live.
+        Fading the key says it beforehand, the same way an OBS key says OBS is
+        closed.
+        """
+        if not self._twitch_linked():
+            return False
+        scope = getattr(action, "twitch_scope", "")
+        if scope:
+            try:
+                missing = self.twitch.missing_scopes()
+            except Exception:
+                log.debug("Could not read the Twitch scopes", exc_info=True)
+                missing = ()
+            # An authorization whose scopes were never recorded answers empty,
+            # so this stays unknown rather than blocked: unknown is not
+            # unavailable.
+            if scope in missing:
+                return False
+        if getattr(action, "twitch_needs_affiliate", False):
+            try:
+                allowed = self.twitch.can_run_ads()
+            except Exception:
+                log.debug("Could not read the Twitch account type", exc_info=True)
+                allowed = None
+            # None means it was never established, and a lookup that failed
+            # must not disable a key that would have worked.
+            if allowed is False:
+                return False
+        return True
 
     @staticmethod
     def _key_actions(kc: KeyConfig) -> list[tuple]:

@@ -134,6 +134,26 @@ class TwitchSettingsDialog(Adw.Window):
             "identifier, not a secret."
         )
 
+    def _capability_note(self) -> str:
+        """What this account can and cannot do, in one line.
+
+        Only ad breaks depend on it. Reading the type may need a request, so it
+        is asked for here — a dialog can wait — and never from the key grid.
+        """
+        try:
+            kind = self.app.twitch.broadcaster_type()
+        except Exception:
+            log.debug("Could not read the Twitch account type", exc_info=True)
+            kind = None
+        if kind is None:
+            return "Every Twitch key can use this account."
+        if kind in ("affiliate", "partner"):
+            return f"Twitch {kind.capitalize()}, so ad breaks work too."
+        return (
+            "Every Twitch key can use this account except ad breaks, which "
+            "Twitch allows only for Affiliates and Partners."
+        )
+
     def _refresh(self) -> bool:
         twitch = self.app.twitch
         linked = twitch.linked
@@ -151,12 +171,14 @@ class TwitchSettingsDialog(Adw.Window):
             self.account_row.set_subtitle(
                 "Connect again to allow: " + ", ".join(missing)
             )
+        elif linked:
+            # The account type is worth stating here rather than leaving it to
+            # be discovered from a faded key: it is not something wrong with
+            # the setup, and there is nothing to fix.
+            self.account_row.set_subtitle(self._capability_note())
         else:
             self.account_row.set_subtitle(
-                "Keys that set the title, the category, clips and markers can "
-                "use this account."
-                if linked
-                else "No Twitch key can do anything until an account is connected."
+                "No Twitch key can do anything until an account is connected."
             )
         self.unlink_button.set_visible(linked)
         self.link_button.set_label(
