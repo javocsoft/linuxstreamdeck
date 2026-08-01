@@ -144,6 +144,16 @@ def _contrasting(color) -> tuple[int, int, int]:
     return (0, 0, 0) if luminance > 0.5 else (255, 255, 255)
 
 
+def contrasting_ink(color) -> str:
+    """"#000000" or "#ffffff", whichever reads on the given colour.
+
+    The hex form of `_contrasting`, for a caller passing it back in as
+    `text_color`: the alert flash lets the user choose the colour of the whole
+    deck, so nothing can assume the word on it stays legible in black.
+    """
+    return "#000000" if _contrasting(color) == (0, 0, 0) else "#ffffff"
+
+
 def _pulse_blend(color, amount: float) -> tuple[int, int, int]:
     """Breathe a color by lightening it, without changing what colour it is.
 

@@ -160,6 +160,15 @@ on the same hardware as the scene switches.
   Filter it to **questions and mentions** or to **first-time chatters** and it
   keeps working on a busy channel. The same key also watches **new followers,
   subscriptions and raids**, together or one per key.
+  For when a sound is not enough — headphones on, deep in a game — switch on
+  **Flash the whole deck** and every key pulses three times in the colour of
+  what arrived: blue for chat, green for a follower, purple for a subscription,
+  orange for a raid. The middle key says which it was in one word — `CHAT`,
+  `FOLLOW`, `SUB`, `RAID` — so you do not have to have learnt the colours, and
+  if you would rather it were always your own colour, type one in **Flash
+  colour** and the word switches to black or white to stay readable on it. It
+  follows the same rule as the sound rather than firing per message, and it
+  wakes the deck if the screen saver had it.
 - 🔴 **The deck tells you when something went wrong** — a key whose action fails
   is outlined in red with an exclamation mark for a few seconds, so you find out
   from the hardware you were already looking at rather than from a message in a
@@ -221,7 +230,7 @@ on the same hardware as the scene switches.
 | **Your stream** | Set the stream title · set the category, picked from live Twitch suggestions with box art |
 | **Moments** | Create a clip · create a stream marker |
 | **On air** | Start an ad break of a chosen length (Affiliates and Partners only) · raid another channel (or cancel it) · post a highlighted announcement in your chat |
-| **Do not miss it** | A key that lights up, shows who is waiting and for how long, and plays a sound: chat messages, new followers, subscriptions and raids |
+| **Do not miss it** | A key that lights up, shows who is waiting and for how long, plays a sound and can flash the whole deck: chat messages, new followers, subscriptions and raids |
 | **Before going live** | The pre-flight checks your Twitch account, title, category and whether you are already live |
 
 Connecting asks for no password. The dialog shows a short code, you enter it at

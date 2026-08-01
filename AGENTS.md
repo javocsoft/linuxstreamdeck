@@ -1923,7 +1923,10 @@ into the escalation the key draws.
 One history is kept and each key reads it through **its own acknowledgement**,
 so two keys watching different things forget independently and pressing one
 never silences another. `FORGET_SECONDS` matters as much: a key that never goes
-quiet again is one nobody looks at.
+quiet again is one nobody looks at. A key that has acknowledged nothing yet is
+`NEVER_ACKNOWLEDGED`, which is `-inf` rather than 0.0 — monotonic time counts
+from boot, so on a machine that started moments ago 0.0 is a perfectly ordinary
+timestamp and an alert stamped before it would be dropped as already seen.
 
 **`should_sound()` is the mailbox rule, not the keystroke one.** A sound per
 message is unbearable the moment a chat wakes up, and the first thing anyone
@@ -1940,6 +1943,66 @@ nothing is in a position to see that: alerts expire on their own clock and the
 key is never told. The first version kept one, so a key nobody pressed made its
 noise once and then stayed silent for good — and the method meant to clear it
 on a press was never called by anything.
+
+**The whole deck can light up, on the same rule as the sound.** `flash` is
+per key and off by default; when it is on, `_start_flash()` pulses every key
+between the colour of what arrived and black, `FLASH_PULSES` times. It exists
+for the case the sound does not cover — headphones, a game, somebody
+concentrating — and it rides `should_sound()` deliberately: a flash *per
+message* would be far worse than a noise per message, because a busy chat
+would leave the deck strobing without a pause.
+
+**The middle key says what arrived, in one short upper-case word.** The colour
+alone says *which* of the four it was only to somebody who has learnt the four
+colours; a word says it to anybody. `FLASH_WORDS` holds them, `_flash_center()`
+finds the middle of whatever grid is connected, and `FLASH_WORD_CHARS` bounds
+them at six characters — that bound is the whole design. `compose()` fits
+centered text to the key's width, so a long word is drawn small, and measured
+at 72 px "MESSAGE" and "FOLLOWER" came out at roughly half the size of "CHAT"
+and "RAID": readable if peered at, which is exactly what somebody deep in a
+game is not doing. Hence `CHAT` / `FOLLOW` / `SUB` / `RAID`, and `TWITCH` for
+anything else.
+
+**The colour can be overridden per key, and defaults to the one per event.**
+`flash_color` is a plain text field that `depends_on` the flash being on, so
+the row is hidden rather than dropped and turning the flash off and on again
+keeps what was chosen. `_hex_color()` validates it to `#rgb` / `#rrggbb` **in
+`twitch/actions.py`**, not in the renderer: this value reaches Pillow on a
+worker thread, once per pulse, and a colour typed with a digit missing would
+raise there rather than simply not being used. Anything it rejects — including
+blank, which is the default — falls back to `FLASH_COLORS`.
+
+**The word's ink comes from `renderer.contrasting_ink()`**, so a custom colour
+cannot make it invisible. A fixed white word disappears on the pale yellow
+somebody will inevitably pick; the helper is the hex form of the renderer's own
+`_contrasting`, which the alert key's outlined clock already uses.
+
+Five things about it are load-bearing:
+
+- **It stands aside from normal renders, and they stand aside from it.**
+  `_standing_aside()` is what `refresh()` and `_render_keys()` consult, and it
+  now answers for the screen saver *and* the flash — without the second, an
+  `obs.state` or a live-loop tick would paint real keys over half the pulses.
+  `_flashing` is raised **before** the work is queued and cleared **before**
+  the closing `refresh()`, or that refresh stands aside for a flash that has
+  finished and leaves the deck black.
+- **A frame is composed once, not once per key.** A whole flash is three
+  images: the lit key, the lit key carrying the word, and the dark key, each
+  reused across every slot and every pulse. Composing per key would make one
+  flash 6 × `key_count` renders — 192 on an XL — on the single worker that also
+  draws every real key.
+- **A sleeping deck is woken first.** The saver owns the deck and the render
+  guards would drop the flash entirely, and asleep is exactly the state
+  somebody deep in a game is in, so the feature would fail precisely when it is
+  needed. `_wake_for_flash()` uses the ordinary `record_activity()` path and
+  then waits, bounded by `FLASH_WAKE_SECONDS`, for the saver's own thread to
+  let go between frames. The consequence is honest and worth knowing: waking
+  counts as activity, so the idle timer starts again from there.
+- **One at a time.** A second flash over the first would only cut it short, and
+  a deck already flashing is already asking to be looked at.
+- **It stays under three flashes a second.** A Stream Deck is nowhere near the
+  screen area photosensitivity guidance is written for, but staying the right
+  side of that threshold costs nothing at all.
 
 **`play_audio()` takes a volume as a percentage and a stop signal it can
 call.** Handing it `volume / 100.0` and the `_stopping` Event — both of which
@@ -2570,7 +2633,20 @@ ignored and you will chase a ghost.
    sounds once and never again; keep the sound going to `play_audio` as a
    **percentage** with a **callable** stop signal, and keep it wrapped so a
    failure is reported — an executor swallows a worker's exception, and a sound
-   that cannot play is otherwise indistinguishable from nothing happening.
+   that cannot play is otherwise indistinguishable from nothing happening. Keep
+   the deck flash on the same rule as the sound rather than per message, keep
+   `_standing_aside()` covering it so normal renders cannot paint over its
+   pulses, raise `_flashing` before queueing and clear it before the closing
+   `refresh()`, compose each frame once for the whole grid, and keep it under
+   three flashes a second. Keep its word within `FLASH_WORD_CHARS` and its ink
+   from `renderer.contrasting_ink()`: `compose()` fits centered text to the key
+   width, so a longer word is drawn at half the size for a pulse that lasts a
+   fifth of a second, and a fixed white one vanishes on a pale chosen colour.
+   Validate that chosen colour in `twitch/actions.py`, never at the renderer —
+   it reaches Pillow on a worker once per pulse. Never let 0.0 stand for "this
+   key has never been acknowledged": monotonic time counts from boot, so on a
+   machine that just started it is an ordinary timestamp, and anything stamped
+   before it is silently dropped as already seen.
 
 ---
 

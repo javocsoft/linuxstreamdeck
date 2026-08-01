@@ -494,6 +494,64 @@ def alert_filter(params: dict) -> str:
     return value if value in events.CHAT_FILTERS else events.FILTER_ALL
 
 
+# The whole deck lit at once, for somebody looking at a game rather than at the
+# deck. It takes the colour of what arrived, so a flash caught out of the corner
+# of an eye already says which of them it was.
+FLASH_COLORS = {
+    events.CHAT: "#3fa9ff",
+    events.FOLLOW: "#4fd06a",
+    events.SUBSCRIBE: "#c47bff",
+    events.RAID: "#ff8a3d",
+}
+FLASH_DEFAULT_COLOR = "#ffffff"
+
+# The word that goes on the middle key while the deck is lit. One word, upper
+# case and no longer than FLASH_WORD_CHARS on purpose: `compose()` fits centered
+# text to the key's width, so a long word is drawn small, and a pulse lasts a
+# fraction of a second. Measured at 72 px, "MESSAGE" and "FOLLOWER" came out at
+# roughly half the size of "CHAT" and "RAID" -- readable if peered at, which is
+# exactly what somebody deep in a game is not doing. The colour carries the rest
+# of the message anyway.
+FLASH_WORD_CHARS = 6
+FLASH_WORDS = {
+    events.CHAT: "CHAT",
+    events.FOLLOW: "FOLLOW",
+    events.SUBSCRIBE: "SUB",
+    events.RAID: "RAID",
+}
+FLASH_DEFAULT_WORD = "TWITCH"
+
+
+def alert_flashes(params: dict) -> bool:
+    """Whether this key lights the whole deck when something arrives."""
+    return str((params or {}).get("flash") or "no") == "yes"
+
+
+def alert_flash_color(params: dict, alert) -> str:
+    """The colour the deck lights up in: the chosen one, or one per event."""
+    return _hex_color((params or {}).get("flash_color")) or FLASH_COLORS.get(
+        getattr(alert, "source", ""), FLASH_DEFAULT_COLOR
+    )
+
+
+def alert_flash_word(alert) -> str:
+    """What the middle key says while the deck is lit."""
+    return FLASH_WORDS.get(getattr(alert, "source", ""), FLASH_DEFAULT_WORD)
+
+
+def _hex_color(value) -> str:
+    """A '#rgb' / '#rrggbb' colour, or "" for anything else.
+
+    Checked here rather than left to the renderer: this reaches Pillow on a
+    worker thread, and a colour typed with a digit missing would raise there
+    rather than simply not being used.
+    """
+    color = str(value or "").strip().lower()
+    if len(color) not in (4, 7) or not color.startswith("#"):
+        return ""
+    return color if all(c in "0123456789abcdef" for c in color[1:]) else ""
+
+
 def alert_matches(params: dict, alert) -> bool:
     """Whether a key configured this way cares about this alert.
 
@@ -547,6 +605,27 @@ class AlertKey(Action):
         ),
         Param("volume", "Volume", kind="int", default=70,
               minimum=0, maximum=100, step=5),
+        Param(
+            "flash",
+            "Flash the whole deck",
+            kind="choice",
+            default="no",
+            choices=["no", "yes"],
+            choice_labels={"no": "No", "yes": "Yes"},
+        ),
+        Param(
+            "flash_color",
+            "Flash colour",
+            kind="string",
+            default="",
+            # Blank is a meaningful answer here rather than an unfinished one,
+            # so the empty field says what it does -- and names the format
+            # while it is at it, since anything else falls silently back to it.
+            placeholder="A colour for each kind of event, or #ff8a3d",
+            # It only means anything while the flash is on.
+            depends_on="flash",
+            depends_values=["yes"],
+        ),
         Param(
             "remind_after",
             "Remind again after",

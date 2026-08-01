@@ -212,6 +212,20 @@ class AttentionTests(unittest.TestCase):
 
         self.assertEqual(pending, [])
 
+    def test_a_key_that_was_never_pressed_has_acknowledged_nothing(self) -> None:
+        """The sentinel cannot be 0.0, which is a real monotonic timestamp.
+
+        Monotonic time counts from boot, so on a machine that started moments
+        ago an alert can legitimately be stamped near — or, in a test that
+        works backwards from now, below — zero. Treating that as already seen
+        made a key stay quiet with somebody waiting on it.
+        """
+        self.attention.add(chat(at=-50.0))
+
+        pending = self.attention.pending("k", (events.CHAT,), "all", now=0.0)
+
+        self.assertEqual(len(pending), 1)
+
     def test_the_history_is_bounded(self) -> None:
         for i in range(att.HISTORY_LIMIT + 50):
             self.attention.add(chat(at=float(i)))
@@ -1051,6 +1065,10 @@ class AlertRunTests(unittest.TestCase):
             _alerting={},
             _refresh_runtime_keys=lambda _keys: None,
             sounds=[],
+            flashes=[],
+        )
+        stub._start_flash = lambda color, word: stub.flashes.append(
+            (color, word)
         )
         stub.attention._on_change = lambda alert: DeckController._on_alert(
             stub, alert
@@ -1107,6 +1125,448 @@ class AlertRunTests(unittest.TestCase):
         deck.attention.add(follow(display="bea"))
 
         self.assertEqual(len(deck.sounds), 2)
+
+    def test_a_key_that_asked_for_it_lights_the_whole_deck(self) -> None:
+        deck = self._controller(flash="yes")
+
+        deck.attention.add(follow())
+
+        self.assertEqual(
+            deck.flashes,
+            [(twitch_actions.FLASH_COLORS[events.FOLLOW], "FOLLOW")],
+        )
+
+    def test_a_key_that_did_not_ask_never_flashes(self) -> None:
+        deck = self._controller()
+
+        deck.attention.add(follow())
+
+        self.assertEqual(deck.flashes, [])
+
+    def test_the_flash_follows_the_same_rule_as_the_sound(self) -> None:
+        """A flash per message would be far worse than a noise per message:
+        a busy chat would leave the deck strobing without a pause."""
+        deck = self._controller(flash="yes")
+
+        for _ in range(5):
+            deck.attention.add(follow())
+
+        self.assertEqual(len(deck.flashes), 1)
+
+
+class FlashChoiceTests(unittest.TestCase):
+    """Which alerts light the whole deck, and in what colour."""
+
+    def test_it_is_off_unless_it_was_asked_for(self) -> None:
+        self.assertFalse(twitch_actions.alert_flashes({}))
+        self.assertFalse(twitch_actions.alert_flashes({"flash": "no"}))
+        self.assertFalse(twitch_actions.alert_flashes(None))
+        self.assertTrue(twitch_actions.alert_flashes({"flash": "yes"}))
+
+    def test_the_key_offers_it(self) -> None:
+        action = registry.get("twitch.alert")
+        flash = next(p for p in action.params if p.name == "flash")
+
+        self.assertEqual(flash.default, "no")
+        self.assertEqual(sorted(flash.choices), ["no", "yes"])
+
+    def test_each_kind_of_event_has_its_own_colour(self) -> None:
+        """A flash caught in the corner of an eye says which it was."""
+        colours = {
+            twitch_actions.alert_flash_color({}, Alert(source=source, display="a"))
+            for source in events.SOURCES
+        }
+
+        self.assertEqual(len(colours), len(events.SOURCES))
+
+    def test_something_unrecognised_still_flashes(self) -> None:
+        self.assertEqual(
+            twitch_actions.alert_flash_color({}, Alert(source="whatever", display="a")),
+            twitch_actions.FLASH_DEFAULT_COLOR,
+        )
+
+    def test_a_chosen_colour_replaces_the_one_per_event(self) -> None:
+        alert = Alert(source=events.FOLLOW, display="a")
+
+        self.assertEqual(
+            twitch_actions.alert_flash_color({"flash_color": "#ff0000"}, alert),
+            "#ff0000",
+        )
+        self.assertEqual(
+            twitch_actions.alert_flash_color({"flash_color": "#F0A"}, alert),
+            "#f0a",
+        )
+
+    def test_text_that_is_not_a_colour_falls_back(self) -> None:
+        """A hand-edited file must not reach Pillow mid-render, on a worker,
+        with something it cannot parse."""
+        alert = Alert(source=events.FOLLOW, display="a")
+        default = twitch_actions.FLASH_COLORS[events.FOLLOW]
+
+        for value in ("", "   ", "red", "#12345", "#ggg", "0033ff", None, 7):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    twitch_actions.alert_flash_color({"flash_color": value}, alert),
+                    default,
+                )
+
+    def test_the_colour_is_only_asked_for_once_the_flash_is_on(self) -> None:
+        """It answers a question only the flash has. Hiding rather than
+        dropping the row keeps whatever was chosen when it is turned back on."""
+        action = registry.get("twitch.alert")
+        colour = next(p for p in action.params if p.name == "flash_color")
+
+        self.assertEqual(colour.depends_on, "flash")
+        self.assertEqual(list(colour.depends_values), ["yes"])
+        self.assertEqual(colour.default, "")
+        self.assertTrue(colour.placeholder)
+
+    def test_each_kind_of_event_says_what_it_was(self) -> None:
+        words = {
+            twitch_actions.alert_flash_word(Alert(source=source, display="a"))
+            for source in events.SOURCES
+        }
+
+        self.assertEqual(len(words), len(events.SOURCES))
+        for word in words:
+            self.assertTrue(word.isupper())
+
+    def test_the_word_stays_short_enough_to_read_at_a_glance(self) -> None:
+        """`compose()` fits centered text to the key width, so a long word is
+        drawn small -- and a pulse lasts a fraction of a second."""
+        for word in (
+            *twitch_actions.FLASH_WORDS.values(),
+            twitch_actions.FLASH_DEFAULT_WORD,
+        ):
+            with self.subTest(word=word):
+                self.assertLessEqual(len(word), twitch_actions.FLASH_WORD_CHARS)
+
+    def test_something_unrecognised_still_says_something(self) -> None:
+        self.assertEqual(
+            twitch_actions.alert_flash_word(Alert(source="whatever", display="a")),
+            twitch_actions.FLASH_DEFAULT_WORD,
+        )
+
+
+class DeckFlashTests(unittest.TestCase):
+    """The whole deck lit at once, for somebody looking at a game.
+
+    A sound can be missed under headphones; a panel going bright in the corner
+    of an eye cannot. What is pinned here is mostly that it gets out of the way
+    again: a flash that left the deck black, or that normal renders painted
+    over half of, is worse than none.
+    """
+
+    def _deck(self, *, key_count=15, asleep=False):
+        state = {"asleep": asleep, "woken": 0}
+
+        def record_activity():
+            state["woken"] += 1
+            state["asleep"] = False
+            return True
+
+        class Deck:
+            """`screensaver_active` is a property because the flash has to see
+            it change under it, exactly as it does live."""
+
+            image_size = (72, 72)
+
+            @property
+            def screensaver_active(self):
+                return state["asleep"]
+
+        deck = Deck()
+        deck.key_count = key_count
+        deck.set_key_image = lambda index, image: self.painted.append(
+            (index, image.convert("RGB").getpixel((36, 36)))
+        )
+        deck.record_activity = record_activity
+        self.state = state
+        return deck
+
+    def _controller(self, **deck_args):
+        from linuxstreamdeck.core.controller import DeckController
+
+        self.painted: list = []
+        self.repaints: list = []
+        stub = SimpleNamespace(
+            _stopping=threading.Event(),
+            _flashing=threading.Event(),
+            deck=self._deck(**deck_args),
+            bus=SimpleNamespace(emit=lambda *a, **k: None),
+            refresh=lambda: self.repaints.append(True),
+            _notification_executor=SimpleNamespace(
+                submit=lambda fn, *a: self.jobs.append(lambda: fn(*a))
+            ),
+        )
+        self.jobs: list = []
+        for name in (
+            "_flash_deck",
+            "_paint_frame",
+            "_flash_frame",
+            "_flash_key",
+            "_flash_center",
+            "_wake_for_flash",
+            "_start_flash",
+            "_standing_aside",
+        ):
+            setattr(
+                stub, name, getattr(DeckController, name).__get__(stub, type(stub))
+            )
+        return stub
+
+    @staticmethod
+    def _quickly():
+        """The same flash with the waits taken out."""
+        from linuxstreamdeck.core import controller as controller_module
+
+        return unittest.mock.patch.multiple(
+            controller_module,
+            FLASH_ON_SECONDS=0.001,
+            FLASH_OFF_SECONDS=0.001,
+            FLASH_WAKE_SECONDS=0.05,
+        )
+
+    def _frames(self):
+        """The colour each frame painted, in order."""
+        return [colour for index, colour in self.painted if index == 0]
+
+    # ---------- what it draws ----------
+
+    def test_it_pulses_the_whole_deck_light_and_dark(self) -> None:
+        from linuxstreamdeck.core.controller import FLASH_PULSES
+
+        deck = self._controller()
+        deck._flashing.set()
+
+        with self._quickly():
+            deck._flash_deck("#4fd06a")
+
+        frames = self._frames()
+        self.assertEqual(len(frames), FLASH_PULSES * 2)
+        self.assertEqual(frames[0], (79, 208, 106))
+        self.assertEqual(frames[1], (0, 0, 0))
+        self.assertEqual(frames[0::2], [frames[0]] * FLASH_PULSES)
+
+    def test_every_key_of_the_deck_is_lit(self) -> None:
+        deck = self._controller(key_count=32)
+        deck._flashing.set()
+
+        with self._quickly():
+            deck._flash_deck("#4fd06a")
+
+        self.assertEqual(
+            sorted({index for index, _c in self.painted}), list(range(32))
+        )
+
+    def test_the_middle_key_says_what_arrived(self) -> None:
+        deck = self._controller()
+
+        frame = deck._flash_frame((72, 72), "#4fd06a", "FOLLOW", 15)
+
+        worded = {index for index, pair in enumerate(frame)
+                  if pair is not frame[0]}
+        self.assertEqual(worded, {7})
+
+    def test_the_word_lands_in_the_middle_of_any_grid(self) -> None:
+        for columns, count, middle in (
+            (5, 15, 7),      # Original / MK.2
+            (3, 6, 4),       # Mini
+            (4, 8, 6),       # Neo, Plus
+            (8, 32, 20),     # XL
+        ):
+            with self.subTest(columns=columns):
+                deck = self._controller(key_count=count)
+                deck.deck.columns = columns
+                self.assertEqual(deck._flash_center(count), middle)
+
+    def test_a_frame_is_composed_once_rather_than_once_per_key(self) -> None:
+        """Three images for the whole flash. Composing per key per pulse would
+        be a hundred and ninety-two of them on an XL, on the one worker that
+        also draws every real key."""
+        from linuxstreamdeck.core import controller as controller_module
+
+        deck = self._controller(key_count=32)
+        deck.deck.columns = 8
+        deck._flashing.set()
+        composed = []
+        real = controller_module.renderer.compose
+
+        with self._quickly(), unittest.mock.patch.object(
+            controller_module.renderer,
+            "compose",
+            lambda **kw: composed.append(kw) or real(**kw),
+        ):
+            deck._flash_deck("#4fd06a", "FOLLOW")
+
+        self.assertEqual(len(composed), 3)
+
+    def test_the_word_is_drawn_in_whatever_reads_on_the_colour(self) -> None:
+        """The colour is the user's to choose, so black cannot be assumed."""
+        from linuxstreamdeck.core import controller as controller_module
+
+        deck = self._controller()
+        inks = []
+        real = controller_module.renderer.compose
+        with unittest.mock.patch.object(
+            controller_module.renderer,
+            "compose",
+            lambda **kw: inks.append(kw["text_color"]) or real(**kw),
+        ):
+            deck._flash_key((72, 72), "#ffee00", "SUB")
+            deck._flash_key((72, 72), "#101820", "SUB")
+
+        self.assertEqual(inks, ["#000000", "#ffffff"])
+
+    def test_it_stays_under_three_flashes_a_second(self) -> None:
+        """A Stream Deck is far smaller than what photosensitivity guidance is
+        written for, but staying the right side of it costs nothing."""
+        from linuxstreamdeck.core.controller import (
+            FLASH_OFF_SECONDS,
+            FLASH_ON_SECONDS,
+        )
+
+        self.assertLessEqual(1.0 / (FLASH_ON_SECONDS + FLASH_OFF_SECONDS), 3.0)
+
+    # ---------- getting out of the way again ----------
+
+    def test_the_deck_goes_back_to_normal_afterwards(self) -> None:
+        deck = self._controller()
+        deck._flashing.set()
+
+        with self._quickly():
+            deck._flash_deck("#4fd06a")
+
+        self.assertFalse(deck._flashing.is_set())
+        self.assertEqual(self.repaints, [True])
+
+    def test_the_flag_is_cleared_before_the_repaint(self) -> None:
+        """refresh() stands aside for a flash, so the other order leaves the
+        deck black until something else happens to repaint it."""
+        deck = self._controller()
+        deck._flashing.set()
+        seen = []
+        deck.refresh = lambda: seen.append(deck._flashing.is_set())
+
+        with self._quickly():
+            deck._flash_deck("#4fd06a")
+
+        self.assertEqual(seen, [False])
+
+    def test_a_failure_still_puts_the_deck_back(self) -> None:
+        deck = self._controller()
+        deck._flashing.set()
+        deck.deck.set_key_image = lambda *_a: 1 / 0
+
+        with self._quickly(), self.assertLogs(
+            "linuxstreamdeck.core.controller", "WARNING"
+        ):
+            deck._flash_deck("#4fd06a")
+
+        self.assertFalse(deck._flashing.is_set())
+        self.assertEqual(self.repaints, [True])
+
+    def test_normal_renders_stand_aside_while_it_runs(self) -> None:
+        deck = self._controller()
+
+        self.assertFalse(deck._standing_aside())
+        deck._flashing.set()
+        self.assertTrue(deck._standing_aside())
+
+    def test_shutdown_ends_it_promptly(self) -> None:
+        """Timed with the real delays, so a loop that sleeps through the
+        signal takes the whole flash and is told apart from one that does not.
+        """
+        from linuxstreamdeck.core.controller import (
+            FLASH_OFF_SECONDS,
+            FLASH_ON_SECONDS,
+            FLASH_PULSES,
+        )
+
+        deck = self._controller()
+        deck._flashing.set()
+        # Shut down the moment the first frame reaches the deck.
+        deck.deck.set_key_image = lambda index, image: (
+            self.painted.append(
+                (index, image.convert("RGB").getpixel((36, 36)))
+            ),
+            deck._stopping.set(),
+        )
+        started = att.time.monotonic()
+
+        deck._flash_deck("#4fd06a")
+
+        whole = FLASH_PULSES * (FLASH_ON_SECONDS + FLASH_OFF_SECONDS)
+        self.assertLess(att.time.monotonic() - started, whole / 2)
+        self.assertLess(len(self._frames()), FLASH_PULSES * 2)
+
+    # ---------- one at a time ----------
+
+    def test_a_second_flash_does_not_interrupt_the_first(self) -> None:
+        deck = self._controller()
+
+        deck._start_flash("#4fd06a")
+        deck._start_flash("#ff8a3d")
+
+        self.assertEqual(len(self.jobs), 1)
+
+    def test_the_flag_is_raised_before_the_work_is_queued(self) -> None:
+        """A render queued in between would paint over the first pulse."""
+        deck = self._controller()
+        raised = []
+        deck._notification_executor = SimpleNamespace(
+            submit=lambda fn, *a: raised.append(deck._flashing.is_set())
+        )
+
+        deck._start_flash("#4fd06a")
+
+        self.assertEqual(raised, [True])
+
+    def test_a_flash_asked_for_during_shutdown_is_dropped(self) -> None:
+        deck = self._controller()
+        deck._notification_executor = SimpleNamespace(
+            submit=lambda *_a: (_ for _ in ()).throw(RuntimeError())
+        )
+
+        deck._start_flash("#4fd06a")
+
+        self.assertFalse(deck._flashing.is_set())
+
+    # ---------- the screen saver owns the deck while it is on ----------
+
+    def test_a_sleeping_deck_is_woken_first(self) -> None:
+        """Asleep is exactly the state somebody deep in a game is in, so a
+        flash that the saver's render guards dropped would fail precisely when
+        it is needed."""
+        deck = self._controller(asleep=True)
+        deck._flashing.set()
+
+        with self._quickly():
+            deck._flash_deck("#4fd06a")
+
+        self.assertEqual(self.state["woken"], 1)
+        self.assertTrue(self.painted)
+
+    def test_an_awake_deck_is_not_woken_again(self) -> None:
+        deck = self._controller()
+        deck._flashing.set()
+
+        with self._quickly():
+            deck._flash_deck("#4fd06a")
+
+        self.assertEqual(self.state["woken"], 0)
+
+    def test_a_saver_that_will_not_let_go_is_given_up_on(self) -> None:
+        deck = self._controller(asleep=True)
+        deck.deck.record_activity = lambda: True      # stays asleep
+        deck._flashing.set()
+
+        with self._quickly():
+            started = att.time.monotonic()
+            deck._flash_deck("#4fd06a")
+
+        self.assertLess(att.time.monotonic() - started, 1.0)
+        self.assertFalse(deck._flashing.is_set())
 
 
 if __name__ == "__main__":

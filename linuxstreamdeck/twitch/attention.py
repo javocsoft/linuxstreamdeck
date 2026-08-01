@@ -30,6 +30,12 @@ FORGET_SECONDS = 30 * 60.0
 # the last is "this is now rude".
 URGENCY_STEPS = (30.0, 120.0, 300.0)
 
+# What a key that has never been pressed has acknowledged. It cannot be 0.0:
+# monotonic time counts from boot, so on a machine that started a moment ago
+# 0.0 is a perfectly ordinary timestamp, and anything stamped before it would
+# be silently dropped as already seen.
+NEVER_ACKNOWLEDGED = float("-inf")
+
 
 class Attention:
     """One shared history, read through per-key acknowledgements."""
@@ -62,7 +68,7 @@ class Attention:
         """The alerts this key has not been told about yet, oldest first."""
         moment = time.monotonic() if now is None else now
         with self._lock:
-            since = self._acked.get(key, 0.0)
+            since = self._acked.get(key, NEVER_ACKNOWLEDGED)
             alerts = list(self._alerts)
         return [
             alert

@@ -138,6 +138,19 @@ ALERT_REFRESH_SECONDS = 1.0
 # without running needs one derived from the clock instead.
 ALERT_PULSE_SECONDS = 1.0
 
+# The whole deck lit at once for an alert, for somebody looking at a game rather
+# than at the deck: a sound can be missed under headphones, a panel going bright
+# in the corner of an eye cannot. Three pulses in a shade over a second, which
+# keeps it under three flashes a second. A Stream Deck is nowhere near the
+# screen area photosensitivity guidance is written for, but staying the right
+# side of that threshold costs nothing at all.
+FLASH_PULSES = 3
+FLASH_ON_SECONDS = 0.18
+FLASH_OFF_SECONDS = 0.16
+FLASH_OFF_COLOR = "#000000"
+# How long to give the screen saver to let go of the deck before painting.
+FLASH_WAKE_SECONDS = 1.0
+
 # Actions that can draw a live thumbnail of an OBS scene. The tick has to be at
 # least as fast as the quickest rate any of them offers, or a key asking for two
 # frames a second would silently get one.
@@ -278,6 +291,10 @@ class DeckController:
         # interval only. Whether it should make one at all is asked of the
         # alerts themselves in _on_alert, never of this.
         self._alerting: dict[RuntimeKey, float] = {}
+        # Set while the whole deck is being lit for an alert. Normal renders
+        # stand aside for it exactly as they do for the screen saver, or they
+        # would paint real keys over half the pulses.
+        self._flashing = threading.Event()
         # ON/OFF state of toggle keys, keyed by RuntimeKey
         self._toggle: dict[RuntimeKey, bool] = {}
         # Number of queued/running feedback-enabled invocations for each key.
@@ -1792,6 +1809,14 @@ class DeckController:
             if should_sound(bool(earlier), pending, reminded, remind_after):
                 self._alerting[runtime_key] = time.monotonic()
                 self._play_alert_sound(kc.params)
+                # On the same rule as the sound, deliberately. A flash per
+                # message would be far worse than a noise per message: a busy
+                # chat would leave the deck strobing continuously.
+                if twitch_actions.alert_flashes(kc.params):
+                    self._start_flash(
+                        twitch_actions.alert_flash_color(kc.params, alert),
+                        twitch_actions.alert_flash_word(alert),
+                    )
         self._refresh_runtime_keys(tuple(self._alert_keys()))
 
     def _alert_keys(self) -> dict[RuntimeKey, KeyConfig]:
@@ -1823,6 +1848,103 @@ class DeckController:
         except RuntimeError:
             # Submitted during shutdown; nothing left to announce.
             log.debug("Alert sound submitted after shutdown")
+
+    def _start_flash(self, color: str, word: str = "") -> None:
+        """Light the whole deck, for an alert nobody was going to hear."""
+        if self._stopping.is_set() or self._flashing.is_set():
+            # Already lit: a second flash on top of the first would only cut
+            # it short, and the deck is plainly already asking to be looked at.
+            return
+        # Set before submitting, so a render queued in between stands aside
+        # rather than painting real keys over the first pulse.
+        self._flashing.set()
+        try:
+            self._notification_executor.submit(self._flash_deck, color, word)
+        except RuntimeError:
+            self._flashing.clear()
+            log.debug("Deck flash submitted after shutdown")
+
+    def _flash_deck(self, color: str, word: str = "") -> None:
+        """Pulse the whole deck between one colour and black, then put it back.
+
+        A lit frame is the same solid colour on every key but the middle one,
+        which carries the word, so the whole flash is **three** composed images
+        rather than one per key per pulse -- which on an XL would be a hundred
+        and ninety-two, on the one worker that also draws every real key.
+        """
+        try:
+            self._wake_for_flash()
+            size = self.deck.image_size
+            count = max(0, int(self.deck.key_count))
+            lit = self._flash_frame(size, color, word, count)
+            dark = self._flash_frame(size, FLASH_OFF_COLOR, "", count)
+            for pulse in range(FLASH_PULSES * 2):
+                on = pulse % 2 == 0
+                self._paint_frame(lit if on else dark, count)
+                if self._stopping.wait(
+                    FLASH_ON_SECONDS if on else FLASH_OFF_SECONDS
+                ):
+                    return
+        except Exception:
+            log.warning("Could not flash the deck", exc_info=True)
+        finally:
+            # Before the repaint, or refresh() would stand aside for a flash
+            # that has finished and leave the deck black.
+            self._flashing.clear()
+            self.refresh()
+
+    def _flash_frame(self, size, color: str, word: str, count: int) -> list:
+        """One (image, png) per key, built once and reused by every pulse."""
+        plain = self._flash_key(size, color, "")
+        frame = [plain] * count
+        middle = self._flash_center(count)
+        if word and 0 <= middle < count:
+            frame[middle] = self._flash_key(size, color, word)
+        return frame
+
+    def _flash_key(self, size, color: str, word: str):
+        image = renderer.compose(
+            size=size,
+            bg=color,
+            center_text=word,
+            # The colour is the user's to choose, so nothing here may assume
+            # the word on it still reads in black.
+            text_color=renderer.contrasting_ink(color),
+        )
+        return image, renderer.to_png_bytes(image)
+
+    def _flash_center(self, count: int) -> int:
+        """The key the word goes on: the middle of whatever grid is connected."""
+        columns = max(1, int(getattr(self.deck, "columns", 0) or 1))
+        rows = max(1, -(-count // columns))
+        return min(max(0, count - 1), (rows // 2) * columns + columns // 2)
+
+    def _paint_frame(self, frame: list, count: int) -> None:
+        for index in range(count):
+            if self._stopping.is_set():
+                return
+            image, png = frame[index]
+            self.deck.set_key_image(index, image)
+            self.bus.emit("ui.key_image", index=index, png=png)
+
+    def _wake_for_flash(self) -> None:
+        """Bring the deck back from the screen saver, which owns it while on.
+
+        Without this the flash would be dropped by the very render guards that
+        keep the saver coherent — and asleep is exactly the state somebody deep
+        in a game is in, so the feature would fail precisely when it is needed.
+        Waking counts as activity, so the idle timer starts again from here.
+        """
+        if not self.deck.screensaver_active:
+            return
+        self.deck.record_activity()
+        # It lets go on its own thread, between frames, so painting straight
+        # away would put the first pulses into a deck that is still refusing
+        # them.
+        deadline = time.monotonic() + FLASH_WAKE_SECONDS
+        while self.deck.screensaver_active and time.monotonic() < deadline:
+            if self._stopping.wait(0.02):
+                return
 
     def _alert_sound(self, sound: str, volume: int) -> None:
         """Play it, and say so when it cannot be played.
@@ -1930,6 +2052,7 @@ class DeckController:
         if (
             self._stopping.is_set()
             or self.deck.screensaver_active
+            or self._flashing.is_set()
             or self._render_pending.is_set()
         ):
             return
@@ -1940,6 +2063,15 @@ class DeckController:
             self._render_pending.clear()
             if not self._stopping.is_set():
                 raise
+
+    def _standing_aside(self) -> bool:
+        """Whether something else owns the deck right now.
+
+        Two things do, and a normal render has to yield to both: the screen
+        saver, which draws its own coordinated frames, and an alert flash,
+        which would otherwise have half its pulses painted over.
+        """
+        return self.deck.screensaver_active or self._flashing.is_set()
 
     def _render_page(self) -> None:
         self._render_pending.clear()
@@ -1957,16 +2089,16 @@ class DeckController:
         }
 
     def _render_keys(self, indices, view: tuple[int, int, tuple[int, ...]]) -> None:
-        if view != self._view() or self.deck.screensaver_active:
+        if view != self._view() or self._standing_aside():
             return
         grid = self.container
         size = self.deck.image_size
         for index in indices:
-            if self._stopping.is_set() or self.deck.screensaver_active:
+            if self._stopping.is_set() or self._standing_aside():
                 return
             spec = self._key_spec(index, grid.key(index), size)
             image = renderer.compose(**spec)
-            if view != self._view() or self.deck.screensaver_active:
+            if view != self._view() or self._standing_aside():
                 return
             self.deck.set_key_image(index, image)
             self.bus.emit("ui.key_image", index=index, png=renderer.to_png_bytes(image))
