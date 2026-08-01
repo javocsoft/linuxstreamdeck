@@ -21,6 +21,7 @@ class Param:
     name: str
     label: str
     # string | int | float | choice | duration | optional_duration | file
+    # | color
     # ("file" covers a folder too; see `directory` below)
     kind: str = "string"
     default: Any = None
@@ -67,6 +68,13 @@ class Param:
     # back does not lose what was chosen.
     depends_on: str = ""
     depends_values: list[str] = field(default_factory=list)
+    # For kind == "color": which colour the swatch shows while nothing is
+    # stored. An empty stored value means "inherit", exactly as it does for a
+    # key's icon and text colour, so the button has to show the colour that
+    # would be used without ever writing it into the key. Either a literal
+    # "#rrggbb", or a source the editor resolves live:  twitch_flash
+    default_color: str = ""
+    default_color_source: str = ""
 
 
 # --- duration parameters (kind == "duration") ---

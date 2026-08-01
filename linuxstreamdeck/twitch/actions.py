@@ -539,6 +539,20 @@ def alert_flash_word(alert) -> str:
     return FLASH_WORDS.get(getattr(alert, "source", ""), FLASH_DEFAULT_WORD)
 
 
+def flash_color_for_choice(source_choice: str) -> str:
+    """The colour a key watching this source flashes in, with none chosen.
+
+    The editor shows it in the colour button while the value is inherited, so
+    it has to be the colour that key would really use. A choice watching more
+    than one kind of event has no single answer -- "Everything" flashes four
+    different colours -- and falls back to the neutral default.
+    """
+    sources = ALERT_SOURCES.get(str(source_choice or ""), ())
+    if len(sources) != 1:
+        return FLASH_DEFAULT_COLOR
+    return FLASH_COLORS.get(sources[0], FLASH_DEFAULT_COLOR)
+
+
 def _hex_color(value) -> str:
     """A '#rgb' / '#rrggbb' colour, or "" for anything else.
 
@@ -616,12 +630,14 @@ class AlertKey(Action):
         Param(
             "flash_color",
             "Flash colour",
-            kind="string",
+            kind="color",
             default="",
             # Blank is a meaningful answer here rather than an unfinished one,
-            # so the empty field says what it does -- and names the format
-            # while it is at it, since anything else falls silently back to it.
-            placeholder="A colour for each kind of event, or #ff8a3d",
+            # so the cleared field says what it does. The swatch then shows the
+            # colour this key would really flash in, resolved from the source
+            # it watches.
+            placeholder="Using the colour of each kind of event",
+            default_color_source="twitch_flash",
             # It only means anything while the flash is on.
             depends_on="flash",
             depends_values=["yes"],

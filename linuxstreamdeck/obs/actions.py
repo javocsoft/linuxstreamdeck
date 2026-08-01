@@ -285,12 +285,25 @@ class StreamToggle(Action):
     name = "Stream on/off"
     category = CAT_OUTPUT
     description = (
-        "Start or stop the live stream. The key turns green and shows "
-        "LIVE while you are broadcasting."
+        "Start or stop the live stream. «toggle» switches between the two, so "
+        "one key does both. The key turns green and shows LIVE while you are "
+        "broadcasting."
     )
+    params = [
+        Param("mode", "Mode", kind="choice", default="toggle",
+              choices=["toggle", "start", "stop"]),
+    ]
 
     def execute(self, ctx, p):
-        ctx.obs.request("ToggleStream")
+        # An older key has no mode and toggled, so that stays the default --
+        # exactly as obs.record does, which is the key this one sits next to.
+        mode = p.get("mode", "toggle")
+        if mode == "start":
+            ctx.obs.request("StartStream")
+        elif mode == "stop":
+            ctx.obs.request("StopStream")
+        else:
+            ctx.obs.request("ToggleStream")
 
     def feedback(self, ctx, p):
         if ctx.obs.state.streaming:

@@ -14,6 +14,7 @@ from gi.repository import Gtk  # noqa: E402
 from linuxstreamdeck import basic_actions as _basic_actions  # noqa: E402,F401
 from linuxstreamdeck.core.config import ActionStep, Config  # noqa: E402
 from linuxstreamdeck.obs import actions as _obs_actions  # noqa: E402,F401
+from linuxstreamdeck.twitch import actions as _twitch_actions  # noqa: E402,F401
 
 HAS_DISPLAY = Gtk.init_check()
 
@@ -97,6 +98,13 @@ def menu_entries(items) -> dict[str, bool]:
 
 def menu_callback(items, label: str):
     return next(cb for name, _e, cb in filter(None, items) if name == label)
+
+
+def rgba_hex(rgba) -> str:
+    """What a colour button is showing, as the editor would store it."""
+    from linuxstreamdeck.ui.steps import rgba_to_hex
+
+    return rgba_to_hex(rgba)
 
 
 class LabelledChoiceTests(unittest.TestCase):
@@ -274,6 +282,130 @@ class FolderParameterTests(unittest.TestCase):
         self.editor.load(ActionStep(action="obs.stats"))
 
         self.assertIn("Home folder", self._widget().entry.get_placeholder_text())
+
+
+class ColorParameterTests(unittest.TestCase):
+    """A `color` parameter whose empty value means "inherit".
+
+    It was a plain text field first, and that answered neither half of what it
+    is for: nothing was shown while the value was inherited, and typing a
+    colour by hand meant guessing both the format and the shade. The
+    inheritance contract is the same one the key's own text colour follows --
+    showing the default must never write it into the key.
+    """
+
+    def setUp(self) -> None:
+        from linuxstreamdeck.ui.steps import StepEditor
+
+        self.editor = StepEditor(fake_app(FakeObs()))
+
+    def _widget(self):
+        return self.editor._param_widgets["flash_color"][1]
+
+    def _load(self, **params):
+        self.editor.load(
+            ActionStep(action="twitch.alert", params={"flash": "yes", **params})
+        )
+
+    def test_it_offers_a_colour_picker_rather_than_a_text_field(self) -> None:
+        from linuxstreamdeck.ui.steps import _ColorEntry
+
+        self._load()
+
+        self.assertIsInstance(self._widget(), _ColorEntry)
+
+    def test_showing_the_default_does_not_store_it(self) -> None:
+        """The whole point of the blocked handler. Without it, opening a key
+        and saving it would freeze today's default into the configuration and
+        the colour would stop following the kind of event."""
+        self._load()
+
+        self.assertEqual(self._widget().get_text(), "")
+        self.assertEqual(self.editor.get_step().params["flash_color"], "")
+
+    def test_the_swatch_shows_the_colour_this_key_would_flash_in(self) -> None:
+        """A followers key showing the chat blue would be a default that is
+        simply wrong for it."""
+        from linuxstreamdeck.twitch import actions as twitch_actions
+        from linuxstreamdeck.twitch import events
+
+        self._load(source="followers")
+
+        self.assertEqual(
+            rgba_hex(self._widget().button.get_rgba()),
+            twitch_actions.FLASH_COLORS[events.FOLLOW],
+        )
+
+    def test_a_source_with_no_single_colour_shows_the_neutral_one(self) -> None:
+        from linuxstreamdeck.twitch import actions as twitch_actions
+
+        self._load(source="everything")
+
+        self.assertEqual(
+            rgba_hex(self._widget().button.get_rgba()),
+            twitch_actions.FLASH_DEFAULT_COLOR,
+        )
+
+    def test_a_chosen_colour_round_trips(self) -> None:
+        self._load(flash_color="#ff0000")
+
+        self.assertEqual(self._widget().get_text(), "#ff0000")
+        self.assertEqual(rgba_hex(self._widget().button.get_rgba()), "#ff0000")
+        self.assertEqual(
+            self.editor.get_step().params["flash_color"], "#ff0000"
+        )
+
+    def test_picking_a_colour_stores_it(self) -> None:
+        from gi.repository import Gdk
+
+        self._load()
+        rgba = Gdk.RGBA()
+        rgba.parse("#123456")
+        self._widget().button.set_rgba(rgba)
+
+        self.assertEqual(
+            self.editor.get_step().params["flash_color"], "#123456"
+        )
+
+    def test_clearing_gives_inheritance_back(self) -> None:
+        self._load(source="followers", flash_color="#ff0000")
+
+        self._widget().set_value("")
+
+        self.assertEqual(self.editor.get_step().params["flash_color"], "")
+
+    def _watch(self, choice: str) -> None:
+        param, widget = self.editor._param_widgets["source"]
+        widget.set_selected(param.choices.index(choice))
+
+    def test_the_swatch_follows_the_source_being_changed(self) -> None:
+        """Without this it stays on the colour the row was built with, which is
+        visibly the wrong default the moment the key watches something else."""
+        from linuxstreamdeck.twitch import actions as twitch_actions
+        from linuxstreamdeck.twitch import events
+
+        self._load(source="followers")
+        self._watch("raids")
+
+        self.assertEqual(
+            rgba_hex(self._widget().button.get_rgba()),
+            twitch_actions.FLASH_COLORS[events.RAID],
+        )
+
+    def test_a_chosen_colour_survives_the_source_changing(self) -> None:
+        """It is theirs. The source it was picked under has nothing to do with
+        it, and repainting it would silently undo a deliberate choice."""
+        self._load(source="followers", flash_color="#ff0000")
+
+        self._watch("raids")
+
+        self.assertEqual(self._widget().get_text(), "#ff0000")
+        self.assertEqual(rgba_hex(self._widget().button.get_rgba()), "#ff0000")
+
+    def test_the_cleared_field_says_what_blank_means(self) -> None:
+        self._load()
+
+        self.assertIn("each kind of event", self._widget().button.get_tooltip_text())
 
 
 @unittest.skipUnless(HAS_DISPLAY, "GTK needs a display to build widgets")

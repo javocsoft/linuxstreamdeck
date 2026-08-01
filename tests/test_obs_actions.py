@@ -172,6 +172,53 @@ class RecordModeTests(unittest.TestCase):
         )
 
 
+class StreamModeTests(unittest.TestCase):
+    """Streaming had no mode at all while recording had one.
+
+    The two sit next to each other in the same category and read as a pair, so
+    a key that could start a recording but only toggle a stream looked like a
+    broken editor rather than a deliberate difference. "Start streaming" is
+    also the safer thing to put on a deck than "toggle": pressing it twice by
+    accident costs nothing.
+    """
+
+    def setUp(self) -> None:
+        self.action = action_registry.get("obs.stream")
+        self.obs = RecordingObs()
+
+    def _run(self, params: dict) -> str:
+        self.action.execute(context(self.obs), params)
+        return self.obs.requests[-1][0]
+
+    def test_start_and_stop_are_explicit_requests(self) -> None:
+        self.assertEqual(self._run({"mode": "start"}), "StartStream")
+        self.assertEqual(self._run({"mode": "stop"}), "StopStream")
+
+    def test_toggle_switches_between_them(self) -> None:
+        self.assertEqual(self._run({"mode": "toggle"}), "ToggleStream")
+
+    def test_a_key_saved_before_the_mode_existed_still_toggles(self) -> None:
+        self.assertEqual(self._run({}), "ToggleStream")
+
+    def test_an_unknown_mode_falls_back_to_toggle(self) -> None:
+        self.assertEqual(self._run({"mode": "nonsense"}), "ToggleStream")
+
+    def test_it_offers_the_same_choice_recording_does(self) -> None:
+        record = action_registry.get("obs.record")
+        mode = next(p for p in self.action.params if p.name == "mode")
+        twin = next(p for p in record.params if p.name == "mode")
+
+        self.assertEqual(mode.choices, twin.choices)
+        self.assertEqual(mode.default, twin.default)
+
+    def test_live_feedback_is_unchanged(self) -> None:
+        self.obs.state.streaming = True
+        self.assertEqual(
+            self.action.feedback(context(self.obs), {"mode": "start"})["badge"],
+            "LIVE",
+        )
+
+
 class AudioActionParameterTests(unittest.TestCase):
     AUDIO_ACTIONS = ("obs.mute", "obs.volume_adjust", "obs.volume_set")
 

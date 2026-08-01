@@ -576,11 +576,14 @@ Actions are declarative and self-registering:
 - Subclass `Action`, set `id`, `name`, `category`, `params`, optional
   `default_icon` (`"mdi:name"`), and decorate with `@register`.
 - Each `Param` has a `kind` (`string | int | float | choice | duration |
-  optional_duration | file`). Duration fields accept `MM:SS` / `H:MM:SS`;
+  optional_duration | file | color`). Duration fields accept `MM:SS` /
+  `H:MM:SS`;
   `optional_duration` may stay blank. Numeric parameters may declare
   `minimum` / `maximum` / `step`; file parameters may declare `extensions` and
   `file_filter_name` for the native chooser, or `directory=True` to pick a folder
-  instead (no extensions apply then). Any parameter may set `placeholder`, which
+  instead (no extensions apply then). A `color` parameter is the picker plus
+  clear button described in **A colour parameter that can be left inherited**
+  below. Any parameter may set `placeholder`, which
   is worth doing when blank is a meaningful value rather than an unfinished one,
   so the empty field can say what it means — `obs.stats`'s `disk_folder` is the
   case. A parameter may also set
@@ -1964,13 +1967,48 @@ game is not doing. Hence `CHAT` / `FOLLOW` / `SUB` / `RAID`, and `TWITCH` for
 anything else.
 
 **The colour can be overridden per key, and defaults to the one per event.**
-`flash_color` is a plain text field that `depends_on` the flash being on, so
-the row is hidden rather than dropped and turning the flash off and on again
-keeps what was chosen. `_hex_color()` validates it to `#rgb` / `#rrggbb` **in
-`twitch/actions.py`**, not in the renderer: this value reaches Pillow on a
-worker thread, once per pulse, and a colour typed with a digit missing would
-raise there rather than simply not being used. Anything it rejects — including
-blank, which is the default — falls back to `FLASH_COLORS`.
+`flash_color` `depends_on` the flash being on, so the row is hidden rather than
+dropped and turning the flash off and on again keeps what was chosen.
+`_hex_color()` validates it to `#rgb` / `#rrggbb` **in `twitch/actions.py`**,
+not in the renderer: this value reaches Pillow on a worker thread, once per
+pulse, and a colour typed with a digit missing would raise there rather than
+simply not being used. Anything it rejects — including blank, which is the
+default — falls back to `FLASH_COLORS`.
+
+### A colour parameter that can be left inherited
+
+`kind="color"` is `_ColorEntry` in `ui/steps.py`: a `Gtk.ColorDialogButton`
+plus a clear button. It exists because `flash_color` was a plain text field
+first, and that answered neither half of what such a field is for — nothing was
+shown while the value was inherited, and typing a colour by hand meant guessing
+both the format and the shade.
+
+It follows `AppearanceBox`'s **text**-colour contract, not its background one,
+and §5.24 is the reason: an empty value means inherit. So the button has to
+*show* the colour that would be used while the key stores nothing, and its
+`notify::rgba` handler is blocked while that colour is put on screen. Without
+the block, displaying the default is indistinguishable from the user picking
+that exact colour, and merely opening a key and saving it would freeze today's
+default into it. `set_value("")` is what the clear button gives back.
+
+**Which colour an empty swatch shows is `Param.default_color`, or
+`default_color_source` when a literal cannot answer.** `twitch_flash` is the
+case: the flash colour is one per kind of event, so the honest swatch is the
+one belonging to what that key actually watches, and
+`flash_color_for_choice()` resolves it — falling back to
+`FLASH_DEFAULT_COLOR` for a choice like **Everything** that has no single
+answer. A followers key showing the chat blue would be a default that is simply
+wrong for it.
+
+**`COLOR_SOURCE_PARENTS` is what keeps the swatch current.** It names the
+parameter each source reads, so `_watch_dependencies()` follows that dropdown
+for the same reason it follows a `depends_on` parent — otherwise switching a
+key from followers to raids leaves the swatch green until the key is closed and
+reopened. `set_inherited()` decides whether that changes anything on screen,
+and deliberately only it: a colour the user chose is theirs. That is enforced
+by `value or self._inherited` rather than by the short-circuit in
+`set_inherited()`, which is why mutating the short-circuit is equivalent —
+`set_value()` is idempotent.
 
 **The word's ink comes from `renderer.contrasting_ink()`**, so a custom colour
 cannot make it invisible. A fixed white word disappears on the pale yellow
@@ -2578,10 +2616,13 @@ ignored and you will chase a ghost.
    every model but the Plus.
 
 24. **An empty appearance value means inherit, never "the default".** That holds
-   for `icon`, `font_size` and now `text_color`: store nothing and let the
-   renderer decide, or clearing a choice silently freezes the current default
-   into the configuration. When the editor shows an inherited value it must
-   block its own change handler while doing so.
+   for `icon`, `font_size`, `text_color` and every `kind="color"` parameter:
+   store nothing and let the renderer decide, or clearing a choice silently
+   freezes the current default into the configuration. When the editor shows an
+   inherited value it must block its own change handler while doing so. A
+   `color` parameter whose inherited value depends on a sibling must name that
+   sibling in `COLOR_SOURCE_PARENTS`, or the swatch keeps showing a default
+   that stopped being the right one.
 
 25. **A checker may never overclaim.** Keep `UNCHECKED` above `OK` in
    `STATE_ORDER`, always named in the summary, and drawn faded with its own

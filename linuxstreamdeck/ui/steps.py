@@ -45,6 +45,11 @@ CATEGORY_ORDER = [
 # or a local dropdown stops filling while OBS is closed.
 LOCAL_CHOICE_SOURCES = frozenset({"pages", "deck_profiles", "applications"})
 
+# Which parameter a `Param.default_color_source` reads to work out the colour
+# an inherited swatch should show. Listing it here is what lets the editor
+# follow that parameter, so the swatch keeps up when it changes.
+COLOR_SOURCE_PARENTS = {"twitch_flash": "source"}
+
 # Internal drag payload used to reorder the steps of one list.
 _STEP_DRAG_PREFIX = "linuxstreamdeck-step:"
 
@@ -616,6 +621,68 @@ class _FileEntry(Gtk.Box):
             self.entry.set_text(path)
 
 
+class _ColorEntry(Gtk.Box):
+    """A colour picker for a parameter whose empty value means "inherit".
+
+    It follows AppearanceBox's text-colour contract rather than its background
+    one, and for the same reason: the button has to *show* the colour that
+    would be used while the key stores nothing, so its handler is blocked while
+    that colour is put on screen. Without the block, displaying the default is
+    indistinguishable from the user picking that exact colour, and simply
+    opening a key would freeze today's default into it for ever.
+
+    A plain text field was the first version and answered neither half of what
+    this is for: it showed nothing at all while the value was inherited, and
+    typing a colour by hand meant guessing both the format and the shade.
+    """
+
+    def __init__(self, param: Param, value, inherited: str) -> None:
+        super().__init__(spacing=6)
+        self.param = param
+        self._inherited = inherited or DEFAULT_TEXT_COLOR
+        self._ref = ""
+        self.button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog())
+        self.button.set_hexpand(True)
+        self._handler = self.button.connect("notify::rgba", self._picked)
+        self.append(self.button)
+
+        clear = Gtk.Button.new_from_icon_name("edit-clear-symbolic")
+        clear.set_tooltip_text(param.placeholder or "Use the default color")
+        clear.connect("clicked", lambda _b: self.set_value(""))
+        self.append(clear)
+        self.set_value(str(value if value is not None else param.default or ""))
+
+    def get_text(self) -> str:
+        """The stored reference: a colour, or "" while it is inherited."""
+        return self._ref
+
+    def set_inherited(self, color: str) -> None:
+        """Change the colour shown while nothing is stored."""
+        self._inherited = color or DEFAULT_TEXT_COLOR
+        if not self._ref:
+            self.set_value("")
+
+    def set_value(self, value: str) -> None:
+        self._ref = value
+        rgba = Gdk.RGBA()
+        rgba.parse(value or self._inherited)
+        self.button.handler_block(self._handler)
+        self.button.set_rgba(rgba)
+        self.button.handler_unblock(self._handler)
+        self._describe()
+
+    def _picked(self, *_args) -> None:
+        self._ref = rgba_to_hex(self.button.get_rgba())
+        self._describe()
+
+    def _describe(self) -> None:
+        self.button.set_tooltip_text(
+            (self.param.placeholder or "Using the default color")
+            if not self._ref
+            else f"{self.param.label}: {self._ref}"
+        )
+
+
 # =========================== single-step editor ===========================
 
 class StepEditor(Gtk.Box):
@@ -819,9 +886,21 @@ class StepEditor(Gtk.Box):
         self._refresh_dependent_rows()
 
     def _watch_dependencies(self, action) -> None:
-        """Follow every parameter that decides whether another one applies."""
+        """Follow every parameter another one is decided by.
+
+        Two different decisions, one mechanism: whether a row applies at all,
+        and which colour an inherited swatch shows. The second matters as much
+        as the first -- switching a key from followers to raids without it
+        leaves the swatch green until the key is closed and reopened, which is
+        a default that is visibly wrong for what the key now watches.
+        """
         parents = {
             param.depends_on for param in action.params if param.depends_on
+        }
+        parents |= {
+            COLOR_SOURCE_PARENTS[param.default_color_source]
+            for param in action.params
+            if param.default_color_source in COLOR_SOURCE_PARENTS
         }
         for name in parents:
             pair = self._param_widgets.get(name)
@@ -829,9 +908,22 @@ class StepEditor(Gtk.Box):
                 continue
             widget = pair[1]
             if isinstance(widget, Gtk.DropDown):
-                widget.connect(
-                    "notify::selected", lambda *_a: self._refresh_dependent_rows()
-                )
+                widget.connect("notify::selected", self._on_parent_changed)
+
+    def _on_parent_changed(self, *_args) -> None:
+        self._refresh_dependent_rows()
+        self._refresh_inherited_colors()
+
+    def _refresh_inherited_colors(self) -> None:
+        """Tell each colour swatch what it would inherit now.
+
+        Whether that changes anything on screen is the widget's decision, and
+        deliberately only its decision: a colour the user chose is theirs, and
+        the source it was chosen under has nothing to do with it.
+        """
+        for param, widget in self._param_widgets.values():
+            if isinstance(widget, _ColorEntry):
+                widget.set_inherited(self._inherited_color(param))
 
     def _refresh_dependent_rows(self) -> None:
         """Hide the parameters that cannot apply to the current selection.
@@ -879,6 +971,8 @@ class StepEditor(Gtk.Box):
             )
         if param.kind == "file":
             return _FileEntry(param, value)
+        if param.kind == "color":
+            return _ColorEntry(param, value, self._inherited_color(param))
         if param.kind in ("int", "float"):
             digits = 0 if param.kind == "int" else 1
             lower = param.minimum if param.minimum is not None else -100000
@@ -1079,6 +1173,22 @@ class StepEditor(Gtk.Box):
         pair = self._param_widgets.get(name)
         return str(self._widget_value(*pair)) if pair else ""
 
+    def _inherited_color(self, param: Param) -> str:
+        """The colour a `kind="color"` swatch shows while nothing is stored.
+
+        A literal answers most cases. `twitch_flash` cannot: that colour is one
+        per kind of event, so the honest swatch is the one belonging to what
+        this key actually watches -- a followers key showing the chat blue
+        would be a default that is simply wrong for it.
+        """
+        if param.default_color_source == "twitch_flash":
+            from ..twitch import actions as twitch_actions
+
+            return twitch_actions.flash_color_for_choice(
+                self._sibling_value("source")
+            )
+        return param.default_color
+
     # ---------- utilities ----------
 
     @staticmethod
@@ -1087,7 +1197,7 @@ class StepEditor(Gtk.Box):
             if param.kind == "optional_duration" and not widget.get_text().strip():
                 return ""
             return format_duration(parse_duration(widget.get_text()))
-        if isinstance(widget, _FileEntry):
+        if isinstance(widget, (_FileEntry, _ColorEntry)):
             return widget.get_text()
         if isinstance(widget, Gtk.SpinButton):
             return int(widget.get_value()) if param.kind == "int" else widget.get_value()

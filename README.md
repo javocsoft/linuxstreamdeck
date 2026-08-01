@@ -165,8 +165,10 @@ on the same hardware as the scene switches.
   what arrived: blue for chat, green for a follower, purple for a subscription,
   orange for a raid. The middle key says which it was in one word — `CHAT`,
   `FOLLOW`, `SUB`, `RAID` — so you do not have to have learnt the colours, and
-  if you would rather it were always your own colour, type one in **Flash
-  colour** and the word switches to black or white to stay readable on it. It
+  if you would rather it were always your own colour, pick one in **Flash
+  colour** and the word switches to black or white to stay readable on it. The
+  picker starts on the colour that key would really flash in, and the button
+  beside it gives you the per-event colours back. It
   follows the same rule as the sound rather than firing per message, and it
   wakes the deck if the screen saver had it.
 - 🔴 **The deck tells you when something went wrong** — a key whose action fails
