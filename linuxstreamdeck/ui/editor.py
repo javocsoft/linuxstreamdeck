@@ -155,6 +155,14 @@ class EditorPanel(Gtk.Box):
         self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scroller.set_vexpand(True)
         self.scroller.set_min_content_height(180)
+        # An overlay scrollbar is drawn *over* the content instead of taking
+        # width of its own, which put it on top of the right-hand end of every
+        # row: the arrow of each dropdown and the action picker's search button
+        # sat underneath it. That is fine over a document, where the text simply
+        # continues behind it, and wrong over a column of controls whose last
+        # few pixels are the part you click. Turning it off makes the bar
+        # reserve its own width, so nothing is ever covered.
+        self.scroller.set_overlay_scrolling(False)
         self.append(self.scroller)
 
         # buttons pinned at the bottom (always visible even if the body overflows)

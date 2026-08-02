@@ -442,14 +442,19 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
    Next to the **Action** dropdown, the magnifier searches **every** action at
    once — by name, by category or by what its description says — so you do not
    have to know which category it lives in.
-5. **Undo** the last key change with `Ctrl+Z`, or right-click a key and choose
+5. **Drag the divider** between the deck and the editor to give the panel as
+   much room as you want; it is remembered for next time. It stops when it
+   reaches the deck, which never changes size — the keys stay exactly where
+   they are whether a key is selected or not, so a folder's double-click always
+   lands on the folder.
+6. **Undo** the last key change with `Ctrl+Z`, or right-click a key and choose
    **Undo last change**. Clearing, pasting and moving keys can all be taken
    back. The history belongs to the grid you are looking at, so changing page,
    profile or folder starts a fresh one.
-6. **Find a key** with `Ctrl+F`, or the ⋮ menu → **Find a key…**. It searches
+7. **Find a key** with `Ctrl+F`, or the ⋮ menu → **Find a key…**. It searches
    every profile, page and folder by label, action or parameter value — "mic",
    "scene Live", "05:00" — and jumps straight to whichever key you pick.
-7. **Reorder** configured keys by dragging with the primary mouse button. Drop
+8. **Reorder** configured keys by dragging with the primary mouse button. Drop
    onto an empty position to move the key, or onto an occupied position to swap
    both keys; dragging works in any direction. Empty keys are destinations, not
    drag sources. To move a key **into** a folder, hold the drag still over that
@@ -457,16 +462,16 @@ LSD_DEBUG=1 ./run.sh     # with debug logging
    inside it. Holding over the Back key leaves the folder the same way, so a key
    can also be dragged back out. **Duplicate** a key with right-click → Copy,
    then Paste onto another (or `Ctrl+C`/`Ctrl+V`).
-8. **Folders** — set a key's type to **Folder** and save it; then double-click it
+9. **Folders** — set a key's type to **Folder** and save it; then double-click it
    on the grid (or right-click → Open folder) to configure the keys it holds.
    Pressing it on the physical deck opens it too.
-9. **Pages** — use the menu (⋮) next to the page selector to add a new page, rename or
+10. **Pages** — use the menu (⋮) next to the page selector to add a new page, rename or
    delete the current one. Page names must be unique within their profile.
-10. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or
+11. **Profiles** — switch with the header selector; use the menu (⋮) to create, edit or
    delete a profile. Each profile has its own pages and keys.
-11. **Stream Deck display** — use its button in the header to configure
+12. **Stream Deck display** — use its button in the header to configure
    the screen saver and what the physical deck shows after a clean exit.
-12. **About** — click the About button in the header for application details,
+13. **About** — click the About button in the header for application details,
    licensing and the GitHub link.
 
 If the selected key has unsaved edits, LinuxStreamDeck protects them before you

@@ -97,6 +97,15 @@ CLOSE_ACTION_CHOICES = (
 CLOSE_ACTIONS = frozenset(choice[0] for choice in CLOSE_ACTION_CHOICES)
 DEFAULT_CLOSE_ACTION = CLOSE_ACTION_TRAY
 
+# How wide the editor panel is, as the user last left it. The window clamps it
+# again to whatever the current window can actually give, so an imported width
+# from a much wider screen is harmless rather than something to strip out. The
+# lower bound is what the panel's own contents need; the upper one only stops a
+# hand-edited file asking for a panel nobody could drag back.
+DEFAULT_EDITOR_WIDTH = 440
+MIN_EDITOR_WIDTH = 380
+MAX_EDITOR_WIDTH = 1600
+
 SCREENSAVER_CHOICES = (
     (
         "neon_pipes",
@@ -767,6 +776,7 @@ class Config:
     exit_display: ExitDisplaySettings = field(default_factory=ExitDisplaySettings)
     brightness: int = 80
     close_action: str = DEFAULT_CLOSE_ACTION
+    editor_width: int = DEFAULT_EDITOR_WIDTH
     obs_password_needs_migration: bool = field(
         default=False, repr=False, compare=False
     )
@@ -905,6 +915,10 @@ class Config:
                 image_path=str(raw_exit_display.get("image_path", "") or ""),
             )
             brightness = max(10, min(100, int(raw.get("brightness", 80))))
+            editor_width = max(MIN_EDITOR_WIDTH, min(MAX_EDITOR_WIDTH, int(
+                raw.get("editor_width", DEFAULT_EDITOR_WIDTH)
+                or DEFAULT_EDITOR_WIDTH
+            )))
         except (TypeError, ValueError) as error:
             raise ValueError("The configuration contains an invalid number") from error
         close_action = str(raw.get("close_action", DEFAULT_CLOSE_ACTION) or "")
@@ -920,6 +934,7 @@ class Config:
             exit_display=exit_display,
             brightness=brightness,
             close_action=close_action,
+            editor_width=editor_width,
             obs_password_needs_migration="password" in raw_obs,
         )
 
@@ -1091,6 +1106,7 @@ class Config:
         self.exit_display = replacement.exit_display
         self.brightness = replacement.brightness
         self.close_action = replacement.close_action
+        self.editor_width = replacement.editor_width
         return info
 
     def finish_password_migration(self) -> None:
@@ -1406,6 +1422,7 @@ class Config:
         self.exit_display = replacement.exit_display
         self.brightness = replacement.brightness
         self.close_action = replacement.close_action
+        self.editor_width = replacement.editor_width
         self.obs_password_needs_migration = (
             replacement.obs_password_needs_migration
         )

@@ -12,6 +12,9 @@ from linuxstreamdeck.core.config import (
     CLOSE_ACTION_QUIT,
     CLOSE_ACTION_TRAY,
     DEFAULT_CLOSE_ACTION,
+    DEFAULT_EDITOR_WIDTH,
+    MAX_EDITOR_WIDTH,
+    MIN_EDITOR_WIDTH,
     Config,
 )
 
@@ -47,6 +50,55 @@ class CloseActionTests(unittest.TestCase):
         raw = config._serializable_dict()
 
         self.assertEqual(raw["close_action"], CLOSE_ACTION_QUIT)
+
+
+class EditorWidthPersistenceTests(unittest.TestCase):
+    """How wide the user dragged the editor panel, remembered across runs.
+
+    It is clamped on the way in rather than trusted, because a configuration
+    can be hand-edited, and because it travels in an export: a width that suits
+    an ultrawide is not a width a laptop can give. The window clamps it again
+    to what the current window can actually spare, so a value that is merely
+    too large is harmless.
+    """
+
+    def test_it_starts_at_the_default(self) -> None:
+        self.assertEqual(Config().editor_width, DEFAULT_EDITOR_WIDTH)
+
+    def test_a_chosen_width_survives_a_round_trip(self) -> None:
+        restored = Config.from_dict({"profiles": [], "editor_width": 640})
+
+        self.assertEqual(restored.editor_width, 640)
+
+    def test_it_is_serialized(self) -> None:
+        config = Config()
+        config.editor_width = 640
+
+        self.assertEqual(config._serializable_dict()["editor_width"], 640)
+
+    def test_a_configuration_without_the_field_still_loads(self) -> None:
+        self.assertEqual(
+            Config.from_dict({"profiles": []}).editor_width,
+            DEFAULT_EDITOR_WIDTH,
+        )
+
+    def test_a_width_nobody_could_drag_back_is_clamped(self) -> None:
+        for stored, expected in (
+            (10, MIN_EDITOR_WIDTH),
+            (0, DEFAULT_EDITOR_WIDTH),      # falsy: never set
+            (99999, MAX_EDITOR_WIDTH),
+            (-400, MIN_EDITOR_WIDTH),
+        ):
+            with self.subTest(stored=stored):
+                restored = Config.from_dict(
+                    {"profiles": [], "editor_width": stored}
+                )
+
+                self.assertEqual(restored.editor_width, expected)
+
+    def test_rubbish_is_reported_rather_than_crashing_the_load(self) -> None:
+        with self.assertRaises(ValueError):
+            Config.from_dict({"profiles": [], "editor_width": "wide"})
 
 
 class AutostartEntryTests(unittest.TestCase):

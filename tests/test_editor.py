@@ -516,6 +516,53 @@ class _FakeButton:
         self.label = label
 
 
+class _FakePaned:
+    """Just enough Gtk.Paned to exercise the width restore and the save.
+
+    A real one is no use here: an offscreen window never runs a proper
+    allocation cycle, so its width stays 0 and set_position does nothing --
+    which is precisely the state the retry exists for, and would make every
+    one of these tests pass for the wrong reason.
+    """
+
+    def __init__(self, width: int = 0, position: int | None = None) -> None:
+        self.width = width
+        self.position = position
+
+    def get_width(self) -> int:
+        return self.width
+
+    def get_position(self) -> int:
+        return self.position or 0
+
+    def set_position(self, position: int) -> None:
+        self.position = position
+
+
+def _width_stub(paned, config=None, restored=False):
+    """A stand-in MainWindow carrying the real width methods.
+
+    They call each other, so binding them is what makes the retry path
+    reachable at all.
+    """
+    from linuxstreamdeck.ui.window import MainWindow
+
+    window = SimpleNamespace(
+        _paned=paned,
+        _width_restored=restored,
+        _width_save_id=0,
+        app=SimpleNamespace(config=config),
+    )
+    for name in (
+        "_restore_editor_width",
+        "_apply_editor_width",
+        "_on_editor_width_changed",
+        "_save_editor_width",
+    ):
+        setattr(window, name, getattr(MainWindow, name).__get__(window, type(window)))
+    return window
+
+
 class _FakeGLib:
     """Just enough of GLib to run the hover timer without a main loop."""
 
@@ -821,6 +868,199 @@ class PressFeedbackTests(unittest.TestCase):
         EditorPanel._test(panel, button, "single")
 
         self.assertEqual(button.classes, set())
+
+
+class EditorWidthTests(unittest.TestCase):
+    """The editor panel must not change how much width it claims by itself.
+
+    A pane shares its spare width only between the children that resize. The
+    panel's Save button hexpands and the whole button row is hidden while no
+    key is selected, so the panel's *inherited* expand flag flipped off when
+    the editor was empty and on again when a key was loaded. The key grid
+    therefore went from receiving all the spare width to half of it on the very
+    click that selected a key, and because the grid box is centered it slid
+    left by a quarter of that -- 247 px measured at 1920.
+
+    The pointer was then two keys away from the one it had just been over,
+    which broke the second click of a folder's double-click. None of it is
+    visible in the code, and none of it happens in a window small enough to
+    have no spare width, which is why it needs pinning here.
+
+    Dragging the handle is the one thing that may change the width, and that is
+    the user asking for it.
+    """
+
+    def setUp(self) -> None:
+        if not GridHintWidthTests._gtk_ready():
+            self.skipTest("GTK needs a display to measure widgets")
+
+    def test_the_panel_never_expands_on_its_own(self) -> None:
+        from gi.repository import Gtk
+
+        from linuxstreamdeck.ui.window import MainWindow
+
+        source = inspect.getsource(MainWindow._build_ui)
+        self.assertIn("self.editor.set_hexpand(False)", source)
+
+        # And that it is the explicit flag rather than a hopeful default:
+        # without it the value is computed from whatever the panel holds.
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        box.append(Gtk.Button(label="Save", hexpand=True))
+        self.assertTrue(box.compute_expand(Gtk.Orientation.HORIZONTAL))
+        box.set_hexpand(False)
+        self.assertFalse(box.compute_expand(Gtk.Orientation.HORIZONTAL))
+
+    def test_the_button_row_cannot_move_the_handle(self) -> None:
+        """The panel's expand flag must stay put as its contents come and go,
+        or selecting a key renegotiates the split all over again."""
+        from gi.repository import Gtk
+
+        from linuxstreamdeck.core.config import MIN_EDITOR_WIDTH
+
+        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        panel.set_size_request(MIN_EDITOR_WIDTH, -1)
+        panel.set_hexpand(False)
+        buttons = Gtk.Box()
+        buttons.append(Gtk.Button(label="Save", hexpand=True))
+        panel.append(buttons)
+
+        expands = []
+        for visible in (False, True):
+            buttons.set_visible(visible)
+            expands.append(panel.compute_expand(Gtk.Orientation.HORIZONTAL))
+
+        self.assertEqual(
+            expands,
+            [False, False],
+            "the panel's expand flag still follows its button row, so the "
+            "key grid will jump the moment a key is selected",
+        )
+
+    def test_the_deck_is_what_stops_the_handle(self) -> None:
+        """The cap is the grid's own minimum width rather than a number kept
+        somewhere else, so it cannot drift from the deck actually connected."""
+        from linuxstreamdeck.ui.window import MainWindow
+
+        source = inspect.getsource(MainWindow._build_ui)
+        self.assertIn("content.set_shrink_start_child(False)", source)
+        self.assertIn("content.set_shrink_end_child(False)", source)
+        # The grid area absorbs a window resize; the panel keeps its width.
+        self.assertIn("content.set_resize_start_child(True)", source)
+        self.assertIn("content.set_resize_end_child(False)", source)
+
+    def test_the_stored_width_is_never_narrower_than_the_panel_needs(self) -> None:
+        """The panel asked for 380 px before any of this, and measures the same
+        in every state, so a lower bound below that squeezes every key's
+        parameter rows rather than only the crowded ones."""
+        from linuxstreamdeck.core.config import (
+            DEFAULT_EDITOR_WIDTH, MAX_EDITOR_WIDTH, MIN_EDITOR_WIDTH,
+        )
+
+        self.assertGreaterEqual(MIN_EDITOR_WIDTH, 380)
+        self.assertGreaterEqual(DEFAULT_EDITOR_WIDTH, MIN_EDITOR_WIDTH)
+        self.assertGreater(MAX_EDITOR_WIDTH, DEFAULT_EDITOR_WIDTH)
+
+    def test_the_remembered_width_becomes_a_handle_position(self) -> None:
+        window = _width_stub(
+            _FakePaned(width=1600), SimpleNamespace(editor_width=640)
+        )
+        window._restore_editor_width(None)
+
+        # 1600 wide, 640 of it the panel: the handle sits at 960.
+        self.assertEqual(window._paned.position, 960)
+
+    def test_restoring_it_happens_once_and_not_on_every_reopen(self) -> None:
+        """`map` fires again when the window comes back from the status area,
+        and re-running this would throw away a width set since."""
+        window = _width_stub(
+            _FakePaned(width=1600), SimpleNamespace(editor_width=640)
+        )
+        window._restore_editor_width(None)
+        window._paned.position = 1200          # the user drags it since
+        window._restore_editor_width(None)
+
+        self.assertEqual(window._paned.position, 1200)
+
+    def test_it_gives_up_rather_than_spinning_on_a_pane_with_no_width(self) -> None:
+        """The pane has no width at `map`, so the retry is the normal path --
+        which is exactly why it needs a bound."""
+        window = _width_stub(_FakePaned(width=0))
+        scheduled: list = []
+        with unittest.mock.patch(
+            "linuxstreamdeck.ui.window.GLib.timeout_add",
+            lambda _ms, fn, *args: scheduled.append((fn, args)),
+        ):
+            window._apply_editor_width(640, 1)
+            self.assertEqual(len(scheduled), 1, "it never retried at all")
+            _fn, args = scheduled[0]
+            window._apply_editor_width(*args)
+
+        self.assertEqual(len(scheduled), 1, "the retry never stops")
+        self.assertIsNone(window._paned.position)
+
+    def test_a_drag_is_written_once_it_comes_to_rest(self) -> None:
+        """A drag emits a position change per pixel, and every save is a file
+        write plus a backup rotation."""
+        saves: list = []
+        config = SimpleNamespace(editor_width=440, save=lambda: saves.append(1))
+        window = _width_stub(
+            _FakePaned(width=1600, position=960), config, restored=True
+        )
+        pending: list = []
+        with unittest.mock.patch(
+            "linuxstreamdeck.ui.window.GLib.timeout_add",
+            lambda _ms, fn: (pending.append(fn), 7)[1],
+        ), unittest.mock.patch(
+            "linuxstreamdeck.ui.window.GLib.source_remove", lambda _id: None
+        ):
+            for _ in range(40):                 # the drag itself
+                window._on_editor_width_changed(None, None)
+
+            self.assertEqual(saves, [], "saved while still dragging")
+            pending[-1]()                       # it comes to rest
+
+        self.assertEqual(config.editor_width, 640)
+        self.assertEqual(len(saves), 1)
+
+    def test_a_position_set_before_the_restore_is_not_a_choice(self) -> None:
+        """GTK gives the pane a position of its own during the first
+        allocation, which arrives before the remembered width is applied.
+        Treating that as a drag would overwrite the stored width with a default
+        the user never picked -- and it has to be caught as *nothing
+        scheduled*, since with no main loop a scheduled save never runs and an
+        assertion about saves passes either way.
+        """
+        saves: list = []
+        window = _width_stub(
+            _FakePaned(width=1600, position=960),
+            SimpleNamespace(editor_width=440, save=lambda: saves.append(1)),
+        )
+        scheduled: list = []
+        with unittest.mock.patch(
+            "linuxstreamdeck.ui.window.GLib.timeout_add",
+            lambda _ms, fn: (scheduled.append(fn), 7)[1],
+        ):
+            window._on_editor_width_changed(None, None)
+
+        self.assertEqual(scheduled, [], "the initial position was saved")
+        self.assertEqual(saves, [])
+
+    def test_the_panel_reserves_room_for_its_own_scrollbar(self) -> None:
+        """An overlay scrollbar is drawn over the content rather than taking
+        width of its own, and it landed on the right-hand end of every row --
+        the arrow of each dropdown, the action picker's search button. Fine
+        over a document, wrong over a column of controls."""
+        from gi.repository import Gtk
+
+        from linuxstreamdeck.ui.editor import EditorPanel
+
+        source = inspect.getsource(EditorPanel.__init__)
+        self.assertIn("self.scroller.set_overlay_scrolling(False)", source)
+
+        scroller = Gtk.ScrolledWindow()
+        self.assertTrue(scroller.get_overlay_scrolling())
+        scroller.set_overlay_scrolling(False)
+        self.assertFalse(scroller.get_overlay_scrolling())
 
 
 class WindowStylesheetTests(unittest.TestCase):

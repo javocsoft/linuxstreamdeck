@@ -1449,6 +1449,56 @@ because falling through hands the focus to GTK's own directional search and
 leaves the grid entirely. It is a scoped, bubble-phase `Gtk.EventControllerKey`
 on the grid — not the broad `Gtk.EventControllerLegacy` hook that §5.15 forbids.
 
+### The editor panel width, and why it may only change when asked
+
+The window's content is a `Gtk.Paned`: the grid box on the left, the editor on
+the right, with a handle the user drags. The width they leave it at is
+`Config.editor_width`, clamped to `MIN_EDITOR_WIDTH` / `MAX_EDITOR_WIDTH` on
+load and serialized like `brightness`.
+
+**A drag is the only thing that may move it.** Before the pane, the panel had no
+`hexpand` of its own, so it inherited one from its contents — and its Save
+button hexpands while the whole button row is hidden by `clear()`. The panel
+stopped expanding whenever no key was selected and started again the moment one
+was loaded. The grid box went from receiving all the spare width to half of it,
+and since it is `halign=CENTER` it slid left by a quarter of that: **247 px
+measured at 1920**, against a 96 px key. The pointer ended up two keys from the
+one it had just pressed, so the second click of a folder's double-click landed
+somewhere else. `self.editor.set_hexpand(False)` is what fixes that, and it has
+to stay explicit: any widget whose expand flag can follow its contents will
+renegotiate the layout under whatever the user was pointing at.
+
+Four details:
+
+- **The deck is what stops the handle.** `shrink_start_child` and
+  `shrink_end_child` are both False, so neither side may go below its own
+  minimum — and the grid box's minimum *is* the key grid. The cap is therefore
+  the deck itself rather than a number kept somewhere that could drift from the
+  model connected.
+- **`resize_start_child` alone.** A window resize is absorbed by the grid area
+  while the panel keeps the width it was given, which is what makes a
+  remembered width mean anything on a window that opens maximized.
+- **The position is restored once, and it needs a retry.** A pane position is a
+  distance from the left edge, so it cannot be computed until the pane has a
+  width — and it has none at `map`, because allocation comes afterwards. Hence
+  `RESTORE_TRIES`, and hence the bound on it: an unbounded retry would spin,
+  and the honest fallback is to open at the minimum and be dragged once. It
+  runs once because `map` fires again when the window returns from the status
+  area, and re-running it would discard a width set since.
+- **The drag is saved when it comes to rest.** `notify::position` arrives per
+  pixel of pointer movement and every save is a file write plus a backup
+  rotation, so `EDITOR_WIDTH_SAVE_MS` debounces it. A position change arriving
+  *before* the restore is ignored: GTK assigns the pane one of its own during
+  the first allocation, and storing that would overwrite the remembered width
+  with a default nobody picked.
+
+**The panel's scrollbar is not an overlay one.** `set_overlay_scrolling(False)`
+in `EditorPanel`. An overlay scrollbar is drawn over the content instead of
+taking width of its own, which put it on top of the right-hand end of every row
+— the arrow of each dropdown, the action picker's search button. That is fine
+over a document, where the text simply continues behind it, and wrong over a
+column of controls whose last few pixels are the part you click.
+
 ### Running key feedback and workers
 
 Multi and multi-toggle invocations, plus single actions with
@@ -2302,8 +2352,11 @@ by `sys.audio` or the `sound` parameter of `sys.timer`; identical audio content
 is deduplicated even across both actions. Audio is limited to 200 MiB per file
 and 500 MiB total, while the exit image is limited to 50 MiB. Built-in `mdi:`
 icons stay as references, and OBS passwords and provider API keys are never
-exported. `close_action` travels with the configuration like `brightness` does,
-but the autostart entry never does: it stays local to each computer. Missing, unreadable, unsupported or oversized portable files remain
+exported. `close_action` and `editor_width` travel with the configuration like
+`brightness` does — the width is clamped on load and clamped again by the pane
+to what the window can actually spare, so one carried over from a much wider
+screen is harmless — but the autostart entry never does: it stays local to each
+computer. Missing, unreadable, unsupported or oversized portable files remain
 local references and produce an export warning.
 
 Import accepts every version in `SUPPORTED_EXPORT_VERSIONS` (v1 to v4),
@@ -2510,6 +2563,13 @@ ignored and you will chase a ghost.
    `move_key_to()` refuses the reserved Back slot at either end, a folder that
    does not fit at the destination depth and a folder dropped inside itself, and
    drops the undo history, whose entries only name indices of one container.
+   Keep `self.editor.set_hexpand(False)`: without the explicit flag the panel
+   inherits one from its hidden-until-selected button row, the grid box loses
+   half its spare width on the click that selects a key, and the centered grid
+   slides 247 px left at 1920 — so the pointer is two keys away and a folder's
+   second click misses. Keep both `shrink_*_child` False, which is what makes
+   the key grid's own minimum the stop for the drag handle, and keep the
+   restore bounded, run once and told apart from a drag.
 
 14. **Stateful clocks must remain key-scoped and cheap.** Keep countdown and
    stopwatch state keyed by profile/page/key and pass that identity through

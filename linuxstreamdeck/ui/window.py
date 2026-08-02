@@ -17,7 +17,12 @@ from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
 from .. import APP_NAME  # noqa: E402
 from ..core import actions as action_registry  # noqa: E402
-from ..core.config import KIND_SINGLE, KeyConfig  # noqa: E402
+from ..core.config import (  # noqa: E402
+    KIND_SINGLE,
+    MAX_EDITOR_WIDTH,
+    MIN_EDITOR_WIDTH,
+    KeyConfig,
+)
 from .about import AboutDialog  # noqa: E402
 from .dials import DialRow  # noqa: E402
 from .editor import EditorPanel  # noqa: E402
@@ -29,6 +34,17 @@ log = logging.getLogger(__name__)
 
 GRID_COLS = 5
 KEY_PIXELS = 96
+
+# How long the editor panel's width has to stay put before it is written to the
+# configuration. A save is a file write plus a backup rotation, and dragging the
+# handle emits a position change per pixel of pointer movement.
+EDITOR_WIDTH_SAVE_MS = 500
+
+# Restoring that width needs the pane's own width, which is still 0 when the
+# pane is mapped, because allocation comes afterwards. These bound the wait:
+# give up rather than spin, and open at the minimum instead.
+RESTORE_RETRY_MS = 40
+RESTORE_TRIES = 25
 
 # How long a second click on the same key still counts as a double click.
 DOUBLE_CLICK_SECONDS = 0.4
@@ -223,6 +239,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._spring_index: int | None = None
         self._spring_timer: int | None = None
         self._last_key_click: tuple[int, float] | None = None
+        # Pending debounced write of the editor panel's width.
+        self._width_save_id = 0
         # Columns the on-screen grid is currently laid out in; see
         # _build_key_grid. GRID_COLS is only the pre-connection default.
         self._grid_columns = GRID_COLS
@@ -342,8 +360,8 @@ class MainWindow(Adw.ApplicationWindow):
 
         view.add_top_bar(header)
 
-        # content: grid + editor
-        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        # content: grid + editor, with a handle the user can drag between them
+        content = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
 
         grid_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
@@ -377,14 +395,41 @@ class MainWindow(Adw.ApplicationWindow):
         # model, so nothing about it is reachable without the hardware.
         self.dial_row = DialRow(self)
         grid_box.append(self.dial_row)
-        content.append(grid_box)
-
-        content.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        self._grid_box = grid_box
 
         self.editor = EditorPanel(self.app)
-        self.editor.set_size_request(380, -1)
+        self.editor.set_size_request(MIN_EDITOR_WIDTH, -1)
         self.editor.set_vexpand(True)
-        content.append(self.editor)
+        # Explicit, because otherwise it is inherited from whatever the panel
+        # currently holds. Its Save button hexpands and the whole button row is
+        # hidden while no key is selected, so the panel stopped expanding when
+        # the editor was empty and started again when a key was loaded. A pane
+        # shares its spare width only between the children that resize, so the
+        # grid went from all of it to half of it on the very click that selected
+        # a key, and since the grid box is centered it slid left by a quarter of
+        # the spare width -- 247 px measured at 1920. The pointer ended up two
+        # keys away from the one it had just pressed, so the second click of a
+        # folder's double-click landed somewhere else.
+        self.editor.set_hexpand(False)
+
+        # `shrink_*` is what makes the deck untouchable: neither side may go
+        # below its own minimum, and the grid box's minimum is the key grid
+        # itself, so dragging the handle stops exactly when it reaches the deck.
+        # `resize_start_child` alone means a window resize is absorbed by the
+        # grid area while the panel keeps the width the user gave it.
+        content.set_start_child(grid_box)
+        content.set_end_child(self.editor)
+        content.set_resize_start_child(True)
+        content.set_shrink_start_child(False)
+        content.set_resize_end_child(False)
+        content.set_shrink_end_child(False)
+        content.connect("notify::position", self._on_editor_width_changed)
+        self._paned = content
+        # The position is a distance from the left edge, so it cannot be set
+        # until the pane has a width. Doing it on the first allocation is what
+        # makes a remembered width survive a window that opens maximized.
+        self._width_restored = False
+        content.connect("map", self._restore_editor_width)
 
         view.set_content(content)
 
@@ -1938,6 +1983,67 @@ class MainWindow(Adw.ApplicationWindow):
         self.app.config.brightness = brightness
         self.app.config.save()
         self.app.deck.set_brightness(brightness)
+
+    # ---------- editor panel width ----------
+
+    def _restore_editor_width(self, _paned) -> None:
+        """Put the handle back where the user left it, once only.
+
+        `map` can fire again -- hiding to the status area and reopening the
+        window is exactly that -- and re-running this would throw away a width
+        set since. The pane keeps its own position across a hide, so there is
+        nothing to restore the second time.
+        """
+        if self._width_restored:
+            return
+        self._width_restored = True
+        self._apply_editor_width(self.app.config.editor_width, RESTORE_TRIES)
+
+    def _apply_editor_width(self, width: int, tries: int) -> bool:
+        """Turn a remembered width into a handle position.
+
+        The position is measured from the left edge, so it needs the pane's
+        own width -- which is still 0 at `map`, because allocation comes after
+        it. Hence the retry, and hence the bound on it: an unbounded one would
+        spin for as long as the pane had no width, and the honest fallback is
+        simply to open at the minimum and let the handle be dragged once.
+        """
+        total = self._paned.get_width()
+        if total > 0:
+            self._paned.set_position(max(0, total - width))
+            return False
+        if tries > 0:
+            GLib.timeout_add(
+                RESTORE_RETRY_MS, self._apply_editor_width, width, tries - 1
+            )
+        else:
+            log.debug("Gave up restoring the editor width; the pane has none")
+        return False
+
+    def _on_editor_width_changed(self, _paned, _param) -> None:
+        """Remember the drag, but not every pixel of it.
+
+        A save is a file write plus a backup rotation, and a drag emits this
+        once per pixel of pointer movement. The width is only worth writing
+        once the handle has come to rest.
+        """
+        if not self._width_restored:
+            # The restore itself moves the handle; that is not a user choice.
+            return
+        if self._width_save_id:
+            GLib.source_remove(self._width_save_id)
+        self._width_save_id = GLib.timeout_add(
+            EDITOR_WIDTH_SAVE_MS, self._save_editor_width
+        )
+
+    def _save_editor_width(self) -> bool:
+        self._width_save_id = 0
+        width = self._paned.get_width() - self._paned.get_position()
+        width = max(MIN_EDITOR_WIDTH, min(MAX_EDITOR_WIDTH, width))
+        if width != self.app.config.editor_width:
+            self.app.config.editor_width = width
+            self.app.config.save()
+        return False
 
     def _on_obs_settings(self, _btn) -> None:
         ObsSettingsDialog(self, self.app).present()
