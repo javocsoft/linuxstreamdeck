@@ -1,0 +1,1645 @@
+{
+ "version": "0.3.4",
+ "actions": [
+  {
+   "id": "ha.state",
+   "name": "Show a value",
+   "category": "Home Assistant",
+   "description": "Show what a Home Assistant entity reports, live on the key: a temperature, a door, whether the washing machine is running.",
+   "icon": "mdi:home-thermometer",
+   "params": [
+    {
+     "name": "entity",
+     "label": "Entity",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "refresh",
+     "label": "Ask again",
+     "kind": "choice",
+     "choices": [
+      "3",
+      "10",
+      "30",
+      "60"
+     ]
+    }
+   ],
+   "needs": [
+    "Home Assistant"
+   ]
+  },
+  {
+   "id": "ha.switch",
+   "name": "Switch or run",
+   "category": "Home Assistant",
+   "description": "Turn a Home Assistant entity on or off, or run a scene or script. The key lights up while the entity is on.",
+   "icon": "mdi:home-automation",
+   "params": [
+    {
+     "name": "entity",
+     "label": "Entity",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "mode",
+     "label": "Do what",
+     "kind": "choice",
+     "choices": [
+      "toggle",
+      "turn_on",
+      "turn_off"
+     ]
+    }
+   ],
+   "needs": [
+    "Home Assistant"
+   ]
+  },
+  {
+   "id": "light.brightness",
+   "name": "Light brightness",
+   "category": "Lights",
+   "description": "Make an Elgato Key Light brighter or dimmer, or set a level.",
+   "icon": "mdi:brightness-6",
+   "params": [
+    {
+     "name": "light",
+     "label": "Light",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "mode",
+     "label": "Do what",
+     "kind": "choice",
+     "choices": [
+      "up",
+      "down",
+      "set"
+     ]
+    },
+    {
+     "name": "amount",
+     "label": "Brightness (%)",
+     "kind": "int",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "light.power",
+   "name": "Light on/off",
+   "category": "Lights",
+   "description": "Switch an Elgato Key Light on or off. The key lights up while the light is on.",
+   "icon": "mdi:lightbulb-on-outline",
+   "params": [
+    {
+     "name": "light",
+     "label": "Light",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "mode",
+     "label": "Do what",
+     "kind": "choice",
+     "choices": [
+      "toggle",
+      "on",
+      "off"
+     ]
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "light.temperature",
+   "name": "Light temperature",
+   "category": "Lights",
+   "description": "Make an Elgato Key Light warmer or cooler, or set a colour temperature between 2900K and 7000K.",
+   "icon": "mdi:thermometer",
+   "params": [
+    {
+     "name": "light",
+     "label": "Light",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "mode",
+     "label": "Do what",
+     "kind": "choice",
+     "choices": [
+      "up",
+      "down",
+      "set"
+     ]
+    },
+    {
+     "name": "amount",
+     "label": "Temperature (K)",
+     "kind": "int",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "nav.profile.go",
+   "name": "Change profile",
+   "category": "Navigation",
+   "description": "Switch to a selected profile and its own set of pages.",
+   "icon": "mdi:account-switch",
+   "params": [
+    {
+     "name": "profile",
+     "label": "Destination profile",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "nav.page.go",
+   "name": "Go to page",
+   "category": "Navigation",
+   "description": "Switch directly to a selected page in the current profile.",
+   "icon": "mdi:book-open-page-variant",
+   "params": [
+    {
+     "name": "page",
+     "label": "Destination page",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "nav.page.next",
+   "name": "Next page",
+   "category": "Navigation",
+   "description": "Switch to the next page, wrapping to the first page after the last.",
+   "icon": "mdi:page-next",
+   "params": [],
+   "needs": []
+  },
+  {
+   "id": "nav.page.indicator",
+   "name": "Page indicator",
+   "category": "Navigation",
+   "description": "Show which page is active. Pressing it does nothing, so it can sit next to the page navigation keys.",
+   "icon": "mdi:book-open-variant",
+   "params": [
+    {
+     "name": "show",
+     "label": "Show",
+     "kind": "choice",
+     "choices": [
+      "Number",
+      "Page name",
+      "Number and total"
+     ]
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "nav.page.previous",
+   "name": "Previous page",
+   "category": "Navigation",
+   "description": "Switch to the previous page, wrapping to the last page from the first.",
+   "icon": "mdi:page-previous",
+   "params": [],
+   "needs": []
+  },
+  {
+   "id": "obs.hotkey",
+   "name": "OBS hotkey",
+   "category": "OBS · Advanced",
+   "description": "Trigger any internal OBS hotkey by name.",
+   "icon": "mdi:keyboard",
+   "params": [
+    {
+     "name": "hotkey",
+     "label": "Hotkey",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.stats",
+   "name": "OBS statistics",
+   "category": "OBS · Advanced",
+   "description": "Show a live measurement on the key: dropped frames, bitrate, stream or recording time, free disk space, CPU or FPS. System CPU and free disk space keep working while OBS is closed.",
+   "icon": "mdi:chart-line",
+   "params": [
+    {
+     "name": "metric",
+     "label": "Measurement",
+     "kind": "choice",
+     "choices": [
+      "dropped",
+      "bitrate",
+      "congestion",
+      "stream_time",
+      "record_time",
+      "disk",
+      "cpu",
+      "system_cpu",
+      "memory",
+      "fps",
+      "render_lag"
+     ]
+    },
+    {
+     "name": "colored",
+     "label": "Warn with color",
+     "kind": "choice",
+     "choices": [
+      "yes",
+      "no"
+     ]
+    },
+    {
+     "name": "disk_folder",
+     "label": "Disk folder (free disk space)",
+     "kind": "file",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.preflight",
+   "name": "Pre-flight check",
+   "category": "OBS · Advanced",
+   "description": "Check audio, cameras, disk, CPU, the stream destination and your Twitch title and category, and show the results across the whole deck. Reports only; changes nothing.",
+   "icon": "mdi:clipboard-check-outline",
+   "params": [],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.raw",
+   "name": "Raw request (advanced)",
+   "category": "OBS · Advanced",
+   "description": "Send any obs-websocket v5 protocol request. 100% API coverage.",
+   "icon": "mdi:code-json",
+   "params": [
+    {
+     "name": "request_type",
+     "label": "Request type",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "payload",
+     "label": "JSON payload",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.mute",
+   "name": "Mute input",
+   "category": "OBS · Audio",
+   "description": "The key lights up when the input is muted. The scene only narrows the list of inputs to choose from; muting applies to the input itself, on every scene.",
+   "icon": "mdi:microphone-off",
+   "params": [
+    {
+     "name": "scene",
+     "label": "Scene (narrows the list below)",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "input",
+     "label": "Audio input",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "mode",
+     "label": "Mode",
+     "kind": "choice",
+     "choices": [
+      "toggle",
+      "mute",
+      "unmute"
+     ]
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.volume_adjust",
+   "name": "Raise/lower volume",
+   "category": "OBS · Audio",
+   "description": "The scene only narrows the list of inputs to choose from; the change applies to the input itself, on every scene.",
+   "icon": "mdi:volume-medium",
+   "params": [
+    {
+     "name": "scene",
+     "label": "Scene (narrows the list below)",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "input",
+     "label": "Audio input",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "delta_db",
+     "label": "Change (dB, negative lowers)",
+     "kind": "float",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.volume_set",
+   "name": "Set volume",
+   "category": "OBS · Audio",
+   "description": "The scene only narrows the list of inputs to choose from; the change applies to the input itself, on every scene.",
+   "icon": "mdi:volume-high",
+   "params": [
+    {
+     "name": "scene",
+     "label": "Scene (narrows the list below)",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "input",
+     "label": "Audio input",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "db",
+     "label": "Volume (dB)",
+     "kind": "float",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.media",
+   "name": "Media control",
+   "category": "OBS · Media",
+   "description": "Control video/audio sources (Media Source, VLC).",
+   "icon": "mdi:play-circle",
+   "params": [
+    {
+     "name": "input",
+     "label": "Media source",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "op",
+     "label": "Operation",
+     "kind": "choice",
+     "choices": [
+      "play/pause",
+      "restart",
+      "stop",
+      "next",
+      "previous"
+     ]
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.record_chapter",
+   "name": "Add recording chapter",
+   "category": "OBS · Recording & Streaming",
+   "description": "Mark this moment in the recording so it is easy to find later. Needs OBS 30.2+ recording to hybrid MP4.",
+   "icon": "mdi:bookmark-plus-outline",
+   "params": [
+    {
+     "name": "name",
+     "label": "Chapter name",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.record_pause",
+   "name": "Pause recording",
+   "category": "OBS · Recording & Streaming",
+   "description": "Pause or resume a recording in progress, without closing the file. The key lights up while it is paused.",
+   "icon": "mdi:pause-circle",
+   "params": [],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.record",
+   "name": "Record on/off",
+   "category": "OBS · Recording & Streaming",
+   "description": "Start or stop recording. «toggle» switches between the two, so one key does both.",
+   "icon": "mdi:record-circle",
+   "params": [
+    {
+     "name": "mode",
+     "label": "Mode",
+     "kind": "choice",
+     "choices": [
+      "toggle",
+      "start",
+      "stop"
+     ]
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.replay",
+   "name": "Replay buffer on/off",
+   "category": "OBS · Recording & Streaming",
+   "description": "Start or stop the replay buffer, which keeps the last seconds of video in memory ready to be saved.",
+   "icon": "mdi:backup-restore",
+   "params": [],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.replay_save",
+   "name": "Save replay",
+   "category": "OBS · Recording & Streaming",
+   "description": "Save what the replay buffer is holding to a file, capturing the moment that just happened.",
+   "icon": "mdi:content-save",
+   "params": [],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.screenshot",
+   "name": "Source screenshot",
+   "category": "OBS · Recording & Streaming",
+   "description": "Save a PNG screenshot of a source or scene.",
+   "icon": "mdi:camera",
+   "params": [
+    {
+     "name": "source",
+     "label": "Source or scene",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "directory",
+     "label": "Destination folder",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.record_split",
+   "name": "Split recording file",
+   "category": "OBS · Recording & Streaming",
+   "description": "Close the current recording file and carry on into a new one, without stopping. Needs OBS 30+.",
+   "icon": "mdi:content-cut",
+   "params": [],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.stream",
+   "name": "Stream on/off",
+   "category": "OBS · Recording & Streaming",
+   "description": "Start or stop the live stream. «toggle» switches between the two, so one key does both. The key turns green and shows LIVE while you are broadcasting.",
+   "icon": "mdi:broadcast",
+   "params": [
+    {
+     "name": "mode",
+     "label": "Mode",
+     "kind": "choice",
+     "choices": [
+      "toggle",
+      "start",
+      "stop"
+     ]
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.virtualcam",
+   "name": "Virtual camera on/off",
+   "category": "OBS · Recording & Streaming",
+   "description": "Start or stop the virtual camera, so OBS shows up as a webcam in Zoom, Meet, Discord and anything else.",
+   "icon": "mdi:webcam",
+   "params": [],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.profile",
+   "name": "OBS profile",
+   "category": "OBS · Scenes",
+   "description": "Switch to another OBS profile, swapping its encoding, output and recording settings. This is an OBS profile, not a LinuxStreamDeck one.",
+   "icon": "mdi:account-cog",
+   "params": [
+    {
+     "name": "profile",
+     "label": "Profile",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.scene_collection",
+   "name": "Scene collection",
+   "category": "OBS · Scenes",
+   "description": "Switch to another OBS scene collection, swapping the whole set of scenes and sources at once.",
+   "icon": "mdi:folder-multiple-image",
+   "params": [
+    {
+     "name": "collection",
+     "label": "Collection",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.scene_preview",
+   "name": "Set preview scene",
+   "category": "OBS · Scenes",
+   "description": "Put a scene in the studio mode preview. The key can show a live preview of what that scene is showing.",
+   "icon": "mdi:eye-outline",
+   "params": [
+    {
+     "name": "scene",
+     "label": "Scene",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "preview",
+     "label": "Live preview",
+     "kind": "choice",
+     "choices": [
+      "off",
+      "slow",
+      "smooth"
+     ]
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.transition_set",
+   "name": "Set transition",
+   "category": "OBS · Scenes",
+   "description": "Choose the transition used between scenes, and optionally how long it lasts in milliseconds.",
+   "icon": "mdi:transition",
+   "params": [
+    {
+     "name": "transition",
+     "label": "Transition",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "duration_ms",
+     "label": "Duration (ms, 0 = keep)",
+     "kind": "int",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.studio_mode",
+   "name": "Studio mode on/off",
+   "category": "OBS · Scenes",
+   "description": "Turn studio mode on or off, so scenes are staged in preview before going to program. The key lights up while it is on.",
+   "icon": "mdi:view-dashboard",
+   "params": [],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.scene_switch",
+   "name": "Switch scene",
+   "category": "OBS · Scenes",
+   "description": "Switch the program scene. The key lights up when it is the active scene, and can show a live preview of what that scene is showing.",
+   "icon": "mdi:image-multiple",
+   "params": [
+    {
+     "name": "scene",
+     "label": "Scene",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "preview",
+     "label": "Live preview",
+     "kind": "choice",
+     "choices": [
+      "off",
+      "slow",
+      "smooth"
+     ]
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.studio_transition",
+   "name": "Transition (studio)",
+   "category": "OBS · Scenes",
+   "description": "Send the preview to program.",
+   "icon": "mdi:transition",
+   "params": [],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.filter",
+   "name": "Enable/disable filter",
+   "category": "OBS · Sources & Filters",
+   "description": "Enable, disable or toggle a filter applied to a source, such as a chroma key, a colour correction or a noise gate.",
+   "icon": "mdi:image-filter-black-white",
+   "params": [
+    {
+     "name": "source",
+     "label": "Source",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "filter",
+     "label": "Filter",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "mode",
+     "label": "Mode",
+     "kind": "choice",
+     "choices": [
+      "toggle",
+      "enable",
+      "disable"
+     ]
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.transform",
+   "name": "Move/scale source",
+   "category": "OBS · Sources & Filters",
+   "description": "Change one transform property of a source in a scene. «adjust» adds to the current value, so a key can nudge it repeatedly.",
+   "icon": "mdi:cursor-move",
+   "params": [
+    {
+     "name": "scene",
+     "label": "Scene",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "source",
+     "label": "Source",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "property",
+     "label": "Property",
+     "kind": "choice",
+     "choices": [
+      "positionX",
+      "positionY",
+      "scaleX",
+      "scaleY",
+      "rotation"
+     ]
+    },
+    {
+     "name": "mode",
+     "label": "Mode",
+     "kind": "choice",
+     "choices": [
+      "set",
+      "adjust"
+     ]
+    },
+    {
+     "name": "value",
+     "label": "Value",
+     "kind": "float",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.browser_refresh",
+   "name": "Refresh browser source",
+   "category": "OBS · Sources & Filters",
+   "description": "Reload a browser source, bypassing its cache.",
+   "icon": "mdi:refresh",
+   "params": [
+    {
+     "name": "input",
+     "label": "Browser source",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.text",
+   "name": "Set text source",
+   "category": "OBS · Sources & Filters",
+   "description": "Replace what a text source displays. Useful for a countdown message, a «back in 5» card or a now-playing line.",
+   "icon": "mdi:format-text",
+   "params": [
+    {
+     "name": "input",
+     "label": "Text source",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "text",
+     "label": "Text",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "obs.source_visibility",
+   "name": "Show/hide source",
+   "category": "OBS · Sources & Filters",
+   "description": "Show, hide or toggle a source in a scene. Sources inside a group can be picked too. The key lights up while the source is visible.",
+   "icon": "mdi:eye",
+   "params": [
+    {
+     "name": "scene",
+     "label": "Scene",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "source",
+     "label": "Source",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "mode",
+     "label": "Mode",
+     "kind": "choice",
+     "choices": [
+      "toggle",
+      "show",
+      "hide"
+     ]
+    }
+   ],
+   "needs": [
+    "OBS"
+   ]
+  },
+  {
+   "id": "sys.app.close",
+   "name": "Close application",
+   "category": "System",
+   "description": "Ask an application to quit, or force it to stop.",
+   "icon": "mdi:close-box",
+   "params": [
+    {
+     "name": "application",
+     "label": "Application",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "force",
+     "label": "Force close",
+     "kind": "choice",
+     "choices": [
+      "No",
+      "Yes"
+     ]
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.timer",
+   "name": "Countdown timer",
+   "category": "System",
+   "description": "Start a countdown shown as HH:MM:SS. Press again while it is running or after it finishes to stop and reset it. An optional sound can play on completion.",
+   "icon": "mdi:timer-outline",
+   "params": [
+    {
+     "name": "duration",
+     "label": "Timer duration (MM:SS)",
+     "kind": "duration",
+     "choices": []
+    },
+    {
+     "name": "sound",
+     "label": "Completion sound (optional)",
+     "kind": "file",
+     "choices": []
+    },
+    {
+     "name": "volume",
+     "label": "Sound volume (%)",
+     "kind": "int",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.counter",
+   "name": "Counter",
+   "category": "System",
+   "description": "Count something on the key: deaths, takes, attempts. A press adds, and holding the key resets it. Give it a negative step to count down.",
+   "icon": "mdi:counter",
+   "params": [
+    {
+     "name": "step",
+     "label": "Each press adds",
+     "kind": "int",
+     "choices": []
+    },
+    {
+     "name": "start",
+     "label": "Starts at",
+     "kind": "int",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.shortcut",
+   "name": "Keyboard shortcut",
+   "category": "System",
+   "description": "Send a keyboard shortcut to the focused application. Pick a preset to fill in the shortcut, then edit it if your desktop uses another one.",
+   "icon": "mdi:keyboard",
+   "params": [
+    {
+     "name": "preset",
+     "label": "Preset",
+     "kind": "choice",
+     "choices": [
+      "",
+      "Cut",
+      "Copy",
+      "Paste",
+      "Paste without formatting",
+      "Undo",
+      "Redo",
+      "Select all",
+      "Save",
+      "Find",
+      "Print",
+      "Emoji picker",
+      "Open file manager",
+      "Open run dialog",
+      "Lock screen",
+      "Open terminal",
+      "Snap window left",
+      "Snap window right",
+      "Maximize window",
+      "Minimize window",
+      "Close window",
+      "Show desktop",
+      "Switch application",
+      "Screenshot to file",
+      "Screenshot to clipboard",
+      "Screenshot of active window",
+      "Screenshot of an area"
+     ]
+    },
+    {
+     "name": "shortcut",
+     "label": "Shortcut",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.media",
+   "name": "Media action",
+   "category": "System",
+   "description": "Control the running media player through MPRIS, or the session volume.",
+   "icon": "mdi:play-pause",
+   "params": [
+    {
+     "name": "action",
+     "label": "Action",
+     "kind": "choice",
+     "choices": [
+      "Previous track",
+      "Play / Pause",
+      "Next track",
+      "Stop",
+      "Mute",
+      "Volume up",
+      "Volume down"
+     ]
+    },
+    {
+     "name": "show",
+     "label": "Show what is playing",
+     "kind": "choice",
+     "choices": [
+      "no",
+      "yes"
+     ]
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.open",
+   "name": "Open",
+   "category": "System",
+   "description": "Open a file, folder or program with the desktop's own handler.",
+   "icon": "mdi:folder-open",
+   "params": [
+    {
+     "name": "target",
+     "label": "File, folder or program",
+     "kind": "file",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.url",
+   "name": "Open URL",
+   "category": "System",
+   "description": "Open a web address in the default browser.",
+   "icon": "mdi:web",
+   "params": [
+    {
+     "name": "url",
+     "label": "URL",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.app.open",
+   "name": "Open application",
+   "category": "System",
+   "description": "Start an installed application, optionally closing it again with a long press.",
+   "icon": "mdi:rocket-launch",
+   "params": [
+    {
+     "name": "application",
+     "label": "Application",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "if_running",
+     "label": "If it is already running",
+     "kind": "choice",
+     "choices": [
+      "Yes",
+      "No"
+     ]
+    },
+    {
+     "name": "long_press",
+     "label": "On long press",
+     "kind": "choice",
+     "choices": [
+      "Nothing",
+      "Close the application",
+      "Force close the application"
+     ]
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.audio",
+   "name": "Play audio file",
+   "category": "System",
+   "description": "Play a local WAV, MP3, OGG, FLAC or Opus file. Send it to the virtual microphone and it becomes a soundboard: OBS, Discord or a call can pick that up and everyone hears it. A multiple-action sequence continues after playback finishes or reaches its time limit.",
+   "icon": "mdi:music-note",
+   "params": [
+    {
+     "name": "file",
+     "label": "Audio file",
+     "kind": "file",
+     "choices": []
+    },
+    {
+     "name": "volume",
+     "label": "Volume (%)",
+     "kind": "int",
+     "choices": []
+    },
+    {
+     "name": "duration",
+     "label": "Maximum play time (optional)",
+     "kind": "optional_duration",
+     "choices": []
+    },
+    {
+     "name": "output",
+     "label": "Who hears it",
+     "kind": "choice",
+     "choices": [
+      "local",
+      "shared"
+     ]
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.command",
+   "name": "Run command",
+   "category": "System",
+   "description": "Run a shell command in the background.",
+   "icon": "mdi:console",
+   "params": [
+    {
+     "name": "command",
+     "label": "Command",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.shortcut.switch",
+   "name": "Shortcut switch",
+   "category": "System",
+   "description": "Alternate between two keyboard shortcuts, sending the next one on each press.",
+   "icon": "mdi:keyboard-outline",
+   "params": [
+    {
+     "name": "first",
+     "label": "First shortcut",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "second",
+     "label": "Second shortcut",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.stopwatch",
+   "name": "Stopwatch",
+   "category": "System",
+   "description": "Count elapsed time as HH:MM:SS. Press again to stop and reset it to zero.",
+   "icon": "mdi:clock-outline",
+   "params": [],
+   "needs": []
+  },
+  {
+   "id": "sys.audio_device",
+   "name": "Switch audio device",
+   "category": "System",
+   "description": "Make a device the one the session uses. Choose a second device too and one key moves between them, which is what speakers and a headset want. The key lights up while its device is the one in use.",
+   "icon": "mdi:speaker-multiple",
+   "params": [
+    {
+     "name": "device",
+     "label": "Device",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "device_alt",
+     "label": "And back to",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.stats",
+   "name": "System monitor",
+   "category": "System",
+   "description": "Show a live machine measurement on the key: CPU, memory, GPU, temperatures, network throughput or free disk space. None of it needs OBS.",
+   "icon": "mdi:cpu-64-bit",
+   "params": [
+    {
+     "name": "metric",
+     "label": "Measurement",
+     "kind": "choice",
+     "choices": [
+      "cpu",
+      "cpu_temp",
+      "memory",
+      "memory_used",
+      "gpu",
+      "gpu_memory",
+      "gpu_temp",
+      "net_down",
+      "net_up",
+      "disk"
+     ]
+    },
+    {
+     "name": "interface",
+     "label": "Network interface",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "disk_folder",
+     "label": "Disk folder",
+     "kind": "file",
+     "choices": []
+    },
+    {
+     "name": "colored",
+     "label": "Warn with color",
+     "kind": "choice",
+     "choices": [
+      "yes",
+      "no"
+     ]
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.volume",
+   "name": "Volume and mute",
+   "category": "System",
+   "description": "Change the volume of the speakers, the microphone or one application on its own. A mute key lights up while whatever it points at is muted.",
+   "icon": "mdi:volume-high",
+   "params": [
+    {
+     "name": "target",
+     "label": "What to change",
+     "kind": "choice",
+     "choices": [
+      "output",
+      "input",
+      "app"
+     ]
+    },
+    {
+     "name": "application",
+     "label": "Application",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "mode",
+     "label": "Do what",
+     "kind": "choice",
+     "choices": [
+      "up",
+      "down",
+      "set",
+      "toggle",
+      "mute",
+      "unmute"
+     ]
+    },
+    {
+     "name": "amount",
+     "label": "By how much",
+     "kind": "int",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.wait",
+   "name": "Wait",
+   "category": "System",
+   "description": "Pause for the given time (MM:SS) before the next action. Meant for multiple / toggle keys, between two actions.",
+   "icon": "mdi:timer-sand",
+   "params": [
+    {
+     "name": "duration",
+     "label": "Wait time (MM:SS)",
+     "kind": "duration",
+     "choices": []
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "twitch.announce",
+   "name": "Announce in chat",
+   "category": "Twitch",
+   "description": "Post a highlighted announcement in your own Twitch chat.",
+   "icon": "mdi:bullhorn-outline",
+   "params": [
+    {
+     "name": "message",
+     "label": "Message",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "color",
+     "label": "Highlight",
+     "kind": "choice",
+     "choices": [
+      "primary",
+      "blue",
+      "green",
+      "orange",
+      "purple"
+     ]
+    }
+   ],
+   "needs": [
+    "Twitch"
+   ]
+  },
+  {
+   "id": "twitch.alert",
+   "name": "Chat and event alerts",
+   "category": "Twitch",
+   "description": "Light up when somebody is waiting on you: a chat message, a new follower, a subscription or a raid. Shows who it was, how long they have waited and how many are unread, with an optional sound. Press it to mark them seen.",
+   "icon": "mdi:message-alert",
+   "params": [
+    {
+     "name": "source",
+     "label": "Watch for",
+     "kind": "choice",
+     "choices": [
+      "chat",
+      "followers",
+      "subscriptions",
+      "raids",
+      "everything"
+     ]
+    },
+    {
+     "name": "chat_filter",
+     "label": "Which chat messages",
+     "kind": "choice",
+     "choices": [
+      "all",
+      "attention",
+      "first"
+     ]
+    },
+    {
+     "name": "sound",
+     "label": "Sound",
+     "kind": "file",
+     "choices": []
+    },
+    {
+     "name": "volume",
+     "label": "Volume",
+     "kind": "int",
+     "choices": []
+    },
+    {
+     "name": "flash",
+     "label": "Flash the whole deck",
+     "kind": "choice",
+     "choices": [
+      "no",
+      "yes"
+     ]
+    },
+    {
+     "name": "flash_color",
+     "label": "Flash colour",
+     "kind": "color",
+     "choices": []
+    },
+    {
+     "name": "remind_after",
+     "label": "Remind again after",
+     "kind": "optional_duration",
+     "choices": []
+    },
+    {
+     "name": "avatar",
+     "label": "Show who it was",
+     "kind": "choice",
+     "choices": [
+      "yes",
+      "no"
+     ]
+    }
+   ],
+   "needs": [
+    "Twitch"
+   ]
+  },
+  {
+   "id": "twitch.clip",
+   "name": "Create clip",
+   "category": "Twitch",
+   "description": "Clip the last few seconds of the stream, the same as the Twitch clip button. The channel has to be live.",
+   "icon": "mdi:movie-open-play",
+   "params": [],
+   "needs": [
+    "Twitch"
+   ]
+  },
+  {
+   "id": "twitch.marker",
+   "name": "Create stream marker",
+   "category": "Twitch",
+   "description": "Mark this moment in the Twitch broadcast so it is easy to find afterwards. Pairs with the OBS recording chapter marker.",
+   "icon": "mdi:bookmark-outline",
+   "params": [
+    {
+     "name": "description",
+     "label": "Note",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "Twitch"
+   ]
+  },
+  {
+   "id": "twitch.raid",
+   "name": "Raid a channel",
+   "category": "Twitch",
+   "description": "Offer a raid to another channel, or cancel one already offered. Twitch opens the countdown on your chat; it never moves anyone by itself.",
+   "icon": "mdi:rocket-launch-outline",
+   "params": [
+    {
+     "name": "mode",
+     "label": "Action",
+     "kind": "choice",
+     "choices": [
+      "start",
+      "cancel"
+     ]
+    },
+    {
+     "name": "channel",
+     "label": "Channel to raid",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "Twitch"
+   ]
+  },
+  {
+   "id": "twitch.set_category",
+   "name": "Set stream category",
+   "category": "Twitch",
+   "description": "Change the Twitch category (the game). The name is looked up on Twitch when the key is pressed, so an approximate one still works.",
+   "icon": "mdi:gamepad-variant",
+   "params": [
+    {
+     "name": "category",
+     "label": "Category",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "Twitch"
+   ]
+  },
+  {
+   "id": "twitch.set_title",
+   "name": "Set stream title",
+   "category": "Twitch",
+   "description": "Change the title of the Twitch stream.",
+   "icon": "mdi:format-title",
+   "params": [
+    {
+     "name": "title",
+     "label": "Stream title",
+     "kind": "string",
+     "choices": []
+    }
+   ],
+   "needs": [
+    "Twitch"
+   ]
+  },
+  {
+   "id": "twitch.commercial",
+   "name": "Start ad break",
+   "category": "Twitch",
+   "description": "Run an ad break of the chosen length. Only Twitch Affiliates and Partners can run ads; the key is faded for an account that cannot. The channel also has to be live, and Twitch enforces its own gap between breaks.",
+   "icon": "mdi:currency-usd",
+   "params": [
+    {
+     "name": "length",
+     "label": "Length",
+     "kind": "choice",
+     "choices": [
+      "30",
+      "60",
+      "90",
+      "120",
+      "150",
+      "180"
+     ]
+    }
+   ],
+   "needs": [
+    "Twitch"
+   ]
+  },
+  {
+   "id": "twitch.stats",
+   "name": "Twitch statistics",
+   "category": "Twitch",
+   "description": "Show a live Twitch measurement on the key: viewers, followers, stream uptime, or whether the channel is live.",
+   "icon": "mdi:twitch",
+   "params": [
+    {
+     "name": "metric",
+     "label": "Measurement",
+     "kind": "choice",
+     "choices": [
+      "viewers",
+      "followers",
+      "uptime",
+      "status"
+     ]
+    },
+    {
+     "name": "colored",
+     "label": "Color the key",
+     "kind": "choice",
+     "choices": [
+      "yes",
+      "no"
+     ]
+    }
+   ],
+   "needs": [
+    "Twitch"
+   ]
+  },
+  {
+   "id": "web.request",
+   "name": "Web request",
+   "category": "Web",
+   "description": "Call an HTTP endpoint and, if you want, show a value from its answer on the key. Covers anything that speaks REST: a home automation bridge, a webhook, a dashboard, your own server.",
+   "icon": "mdi:web",
+   "params": [
+    {
+     "name": "url",
+     "label": "URL",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "method",
+     "label": "Method",
+     "kind": "choice",
+     "choices": [
+      "GET",
+      "POST",
+      "PUT",
+      "PATCH",
+      "DELETE"
+     ]
+    },
+    {
+     "name": "headers",
+     "label": "Headers",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "body",
+     "label": "Body",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "display",
+     "label": "Show the answer on the key",
+     "kind": "choice",
+     "choices": [
+      "no",
+      "yes"
+     ]
+    },
+    {
+     "name": "value_path",
+     "label": "Value to show",
+     "kind": "string",
+     "choices": []
+    },
+    {
+     "name": "refresh",
+     "label": "Ask again",
+     "kind": "choice",
+     "choices": [
+      "2",
+      "5",
+      "15",
+      "60"
+     ]
+    }
+   ],
+   "needs": []
+  }
+ ]
+}

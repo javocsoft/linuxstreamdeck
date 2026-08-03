@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>LinuxStreamDeck — your Elgato Stream Deck, at home on Linux</title>
+<meta name="description" content="Turn an Elgato Stream Deck into a Linux control surface. Deep OBS Studio integration, plus Twitch, Home Assistant, Key Lights and per-application audio.">
+<meta name="author" content="JavocSoft">
+
+<!-- Every absolute address below is written by landing/generate.py from this
+     one canonical link. Change it with: generate.py --site-url https://… -->
+<link rel="canonical" href="https://javocsoft.github.io/linuxstreamdeck/">
+
+<meta name="theme-color" content="#0e0f13" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f7f8fa" media="(prefers-color-scheme: light)">
+<link rel="icon" href="assets/img/logo.svg" type="image/svg+xml">
+<link rel="icon" href="assets/img/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="assets/img/favicon-180.png">
+<link rel="stylesheet" href="assets/style.css">
+
+<!-- Facebook, WhatsApp, LinkedIn, Slack, Discord -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="LinuxStreamDeck">
+<meta property="og:locale" content="en_GB">
+<meta property="og:url" content="https://javocsoft.github.io/linuxstreamdeck/">
+<meta property="og:title" content="LinuxStreamDeck — your Elgato Stream Deck, at home on Linux">
+<meta property="og:description" content="Deep OBS Studio integration, plus Twitch, Home Assistant, Key Lights and per-application audio. Free and open source.">
+<meta property="og:image" content="https://javocsoft.github.io/linuxstreamdeck/assets/img/og-card.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="LinuxStreamDeck: your Elgato Stream Deck, at home on Linux, over a row of configured deck keys.">
+
+<!-- X / Twitter -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="LinuxStreamDeck — your Elgato Stream Deck, at home on Linux">
+<meta name="twitter:description" content="Deep OBS Studio integration, plus Twitch, Home Assistant, Key Lights and per-application audio. Free and open source.">
+<meta name="twitter:image" content="https://javocsoft.github.io/linuxstreamdeck/assets/img/og-card.png">
+<meta name="twitter:image:alt" content="LinuxStreamDeck: your Elgato Stream Deck, at home on Linux, over a row of configured deck keys.">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "LinuxStreamDeck",
+  "url": "https://javocsoft.github.io/linuxstreamdeck/",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "Linux",
+  "description": "A GTK4 desktop application that turns an Elgato Stream Deck into a control surface on Linux, built around deep OBS Studio integration, with Twitch, Home Assistant, Elgato Key Lights and per-application audio built in.",
+  "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+  "image": "https://javocsoft.github.io/linuxstreamdeck/assets/img/og-card.png",
+  "screenshot": "https://javocsoft.github.io/linuxstreamdeck/assets/img/app-window.png",
+  "downloadUrl": "https://github.com/javocsoft/linuxstreamdeck/releases",
+  "codeRepository": "https://github.com/javocsoft/linuxstreamdeck",
+  "author": { "@type": "Person", "name": "JavocSoft" },
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" }
+}
+</script>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/img/logo.svg" alt=""><span>LinuxStreamDeck</span></a>
+    <nav>
+      <a href="#different" class="hide-s">Why this one</a>
+      <a href="#features">Features</a>
+      <a href="#actions">Actions</a>
+      <a href="#guide">Guide</a>
+      <a class="ghost" href="https://github.com/javocsoft/linuxstreamdeck">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ------------------------------------------------------------- hero -->
+<div class="hero wrap">
+  <span class="badge">GPL-3.0 · <b data-action-count>65</b> actions · v<b data-version>0.3.4</b></span>
+  <h1>Your Elgato Stream Deck,<br>finally at home on <em>Linux</em>.</h1>
+  <p class="lead">
+    Elgato ships software for macOS and Windows only. This is a GTK4 desktop
+    application built around <b>deep OBS Studio integration</b>, with Twitch,
+    Home Assistant, Key Lights and per-application audio native rather than
+    bolted on.
+  </p>
+  <div class="cta">
+    <a class="btn primary" href="#install">Install it</a>
+    <a class="btn plain" href="#actions">Browse the actions</a>
+  </div>
+  <div class="shot">
+    <img src="assets/img/app-window.png" alt="The LinuxStreamDeck window: a 15-key virtual deck on the left and the key editor on the right." width="980" height="560">
+  </div>
+</div>
+
+<!-- -------------------------------------------------------- difference -->
+<section id="different">
+  <div class="wrap">
+    <h2>Why this one</h2>
+    <p class="sub">
+      The Linux community has built several genuinely good Stream Deck projects
+      and they deserve credit. These are the things this one does differently —
+      not better at everything, different on purpose.
+    </p>
+    <div class="diff">
+      <article>
+        <div class="mark">◉</div>
+        <h3>OBS is the point, not a plugin</h3>
+        <p>
+          29 OBS actions with live feedback on the keys, plus a raw-request
+          escape hatch that reaches 100% of the obs-websocket v5 protocol. The
+          active scene lights up, recording turns red, a muted mic is marked.
+        </p>
+      </article>
+      <article>
+        <div class="mark">▲</div>
+        <h3>A deck that never lies to you</h3>
+        <p>
+          A key that cannot work is faded. A key whose action just failed is
+          outlined in red. A measurement the machine does not report shows a
+          dash, never a zero — because a zero is a claim.
+        </p>
+      </article>
+      <article>
+        <div class="mark">✦</div>
+        <h3>No plugin ecosystem to assemble</h3>
+        <p>
+          Twitch, Home Assistant, Elgato Key Lights, per-application audio,
+          HTTP endpoints and machine monitoring are in the box. Nothing to
+          install, nothing running under Wine.
+        </p>
+      </article>
+      <article>
+        <div class="mark">◫</div>
+        <h3>Works with no hardware plugged in</h3>
+        <p>
+          The on-screen grid mirrors the physical device, so you can configure
+          and test every key — single, double and long press included — before
+          the deck ever arrives.
+        </p>
+      </article>
+      <article>
+        <div class="mark">⌘</div>
+        <h3>Built for Wayland, not around it</h3>
+        <p>
+          Media through MPRIS, audio through PipeWire, shortcuts through
+          ydotool. No faked media keys, no X11 assumptions, no privileges.
+        </p>
+      </article>
+      <article>
+        <div class="mark">✧</div>
+        <h3>Ready before you go live</h3>
+        <p>
+          A pre-flight check answers, on the deck itself, the question asked in
+          the minute before streaming: microphones, cameras, disk, stream
+          target — and says plainly what it could not check.
+        </p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ---------------------------------------------------------- features -->
+<section id="features">
+  <div class="wrap">
+    <h2>What it puts on the keys</h2>
+    <p class="sub">Every key below is drawn by the application's own renderer, so this is exactly what the hardware shows.</p>
+
+    <div class="feature">
+      <div class="text">
+        <h3>OBS, with the state on the key</h3>
+        <p>
+          Scenes, recording, streaming, sources, filters, audio, transitions,
+          the replay buffer, studio mode. The key shows what OBS is doing
+          rather than what you last pressed, straight from obs-websocket
+          events.
+        </p>
+        <p>
+          A scene key can even show a live thumbnail of what that scene is
+          sending out — the fastest way to spot a dead capture card
+          <b>before</b> you cut to it.
+        </p>
+        <div class="tagrow"><span class="tag">29 actions</span><span class="tag">Live feedback</span><span class="tag">Raw request</span></div>
+      </div>
+      <figure><img src="assets/img/keys-obs.png" alt="Five keys: an active Camera scene lit blue, an inactive Screen scene, a red Record key, a green Go live key badged LIVE, and a red muted Mic key." width="540" height="116"></figure>
+    </div>
+
+    <div class="feature">
+      <div class="text">
+        <h3>Numbers that change on their own</h3>
+        <p>
+          CPU, memory, GPU load and temperature, network throughput, free disk
+          space — read straight from the kernel, so they keep working with OBS
+          closed. Keys colour themselves amber and then red as a value gets
+          into trouble.
+        </p>
+        <p>
+          Plus countdown timers, a stopwatch, and a counter for the things you
+          lose track of.
+        </p>
+        <div class="tagrow"><span class="tag">No OBS needed</span><span class="tag">Warning colours</span><span class="tag">A dash, never a fake zero</span></div>
+      </div>
+      <figure><img src="assets/img/keys-live.png" alt="Six keys: CPU 43 percent in green, CPU temperature 88 degrees in amber, GPU 97 percent in amber, 6.0 megabits upload, 2.9 gigabytes of disk left in red, and a counter labelled Deaths at 7." width="646" height="116"></figure>
+    </div>
+
+    <div class="feature">
+      <div class="text">
+        <h3>Twitch, your house, and your lights</h3>
+        <p>
+          A Twitch key tells you <b>how long somebody has been waiting</b> —
+          not how many messages there are, because a count says nothing about
+          whether you are ignoring someone. It can sound, and it can flash the
+          whole deck when headphones are not enough.
+        </p>
+        <p>
+          Home Assistant entities come from a dropdown of what your server
+          really has. Elgato Key Lights are found on the network by themselves.
+          And one generic HTTP action reaches anything else that speaks REST.
+        </p>
+        <div class="tagrow"><span class="tag">Twitch</span><span class="tag">Home Assistant</span><span class="tag">Key Lights</span><span class="tag">Any HTTP endpoint</span></div>
+      </div>
+      <figure><img src="assets/img/keys-services.png" alt="Six keys: a chat alert waiting two minutes with three unread, a clip key, a lit Home Assistant kitchen light, an office temperature of 21.4, a Key Light and an uptime value." width="646" height="116"></figure>
+    </div>
+
+    <div class="feature">
+      <div class="text">
+        <h3>Audio the way a stream actually needs it</h3>
+        <p>
+          Mute the game without muting Discord. Turn the music down without
+          touching the microphone. Move the whole session between speakers and
+          a headset with one key.
+        </p>
+        <p>
+          And a <b>soundboard</b>: send a sound to the virtual microphone and
+          pick it up in OBS, Discord or a call, so everyone hears it — you
+          included.
+        </p>
+        <div class="tagrow"><span class="tag">Per application</span><span class="tag">PipeWire</span><span class="tag">Virtual microphone</span></div>
+      </div>
+      <figure><img src="assets/img/keys-audio.png" alt="Six audio keys: microphone, a red muted microphone, game volume up, a red muted Discord, a headset device switch and a sound effect." width="646" height="116"></figure>
+    </div>
+
+    <div class="feature">
+      <div class="text">
+        <h3>Media, and what is playing</h3>
+        <p>
+          Transport over MPRIS, so one key works with Spotify, VLC, Firefox and
+          mpv alike. Turn on <em>show what is playing</em> and the key fills
+          with the album art and the artist.
+        </p>
+        <p>
+          The song title deliberately is not shown: at 96&nbsp;px it either gets
+          cut or is drawn too small to read, while the cover is recognisable
+          before you read anything.
+        </p>
+        <div class="tagrow"><span class="tag">MPRIS</span><span class="tag">Album art</span><span class="tag">One key, every player</span></div>
+      </div>
+      <figure>
+        <img src="assets/img/keys-media.png" alt="Five media keys: previous, a now-playing key filled with album art and the artist name, next, volume down and volume up." width="540" height="116">
+        <figcaption>The cover and the artist come from the player; this sleeve is invented for the picture</figcaption>
+      </figure>
+    </div>
+
+    <div class="feature">
+      <div class="text">
+        <h3>It tells you when something is wrong</h3>
+        <p>
+          A key whose every action needs OBS is <b>faded</b> while OBS is
+          closed, so "not ready" stops looking like "idle". A key whose action
+          just failed gets a red outline for a few seconds, because that is
+          where you are looking.
+        </p>
+        <p>
+          Long sequences show <code>RUN</code> with a slow breathing halo while
+          they are working. Folders group related keys without spending a page.
+        </p>
+        <div class="tagrow"><span class="tag">Faded when unusable</span><span class="tag">Red on failure</span><span class="tag">Folders</span></div>
+      </div>
+      <figure><img src="assets/img/keys-honest.png" alt="Five keys: a faded unavailable scene key, a key outlined in red after failing, a key showing RUN while working, a folder and a running countdown." width="540" height="116"></figure>
+    </div>
+
+    <div class="feature">
+      <div class="text">
+        <h3>And when it is idle, it is worth looking at</h3>
+        <p>
+          Eleven coordinated full-deck screen savers, drawn across the real
+          grid of whatever deck is connected, with their own brightness and
+          idle delay. A physical deck also wakes with a short startup sequence
+          that spells its name across the keys.
+        </p>
+        <p>
+          You choose what it leaves on screen after a clean exit, too: the
+          firmware standby image, every key off, or one image of your own.
+        </p>
+        <div class="tagrow"><span class="tag">11 styles</span><span class="tag">Any deck shape</span><span class="tag">Custom exit image</span></div>
+      </div>
+      <figure><img src="assets/img/keys-screensaver.png" alt="The Hyperspace screen saver drawn as one coordinated image across a 15-key grid." width="540" height="328"><figcaption>Hyperspace, one frame, across all fifteen keys at once</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<!-- ----------------------------------------------------------- actions -->
+<section id="actions">
+  <div class="wrap">
+    <h2>Every action, searchable</h2>
+    <p class="sub">
+      Search by what you want to do rather than by where it lives. Try
+      <code>mute</code>, <code>scene</code>, <code>temperature</code> or
+      <code>clip</code>. Press <kbd>/</kbd> from anywhere to jump here.
+    </p>
+
+    <div class="finder">
+      <div class="searchbox">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" type="search" placeholder="Search actions, parameters, categories…" autocomplete="off" spellcheck="false" aria-label="Search actions">
+      </div>
+      <div class="filters" id="filters"></div>
+    </div>
+
+    <noscript>
+      <p class="note">The search and the category filters need JavaScript. The
+      complete list of every action is below either way.</p>
+    </noscript>
+
+    <p class="count" id="count"><!-- generated:count -->65 actions<!-- /generated:count --></p>
+    <!-- The cards below are written by landing/generate.py so the catalogue is
+         in the served HTML, where crawlers and non-JavaScript readers can see
+         it. app.js replaces them with identical markup on first render. -->
+    <div class="cards" id="cards"><!-- generated:cards --><article class="card"><header><h4>Show a value</h4><span class="cat">Home Assistant</span></header><p>Show what a Home Assistant entity reports, live on the key: a temperature, a door, whether the washing machine is running.</p><ul><li class="need">needs Home Assistant</li><li>Entity</li><li>Ask again</li><li class="aid">ha.state</li></ul></article><article class="card"><header><h4>Switch or run</h4><span class="cat">Home Assistant</span></header><p>Turn a Home Assistant entity on or off, or run a scene or script. The key lights up while the entity is on.</p><ul><li class="need">needs Home Assistant</li><li>Entity</li><li>Do what</li><li class="aid">ha.switch</li></ul></article><article class="card"><header><h4>Light brightness</h4><span class="cat">Lights</span></header><p>Make an Elgato Key Light brighter or dimmer, or set a level.</p><ul><li>Light</li><li>Do what</li><li>Brightness (%)</li><li class="aid">light.brightness</li></ul></article><article class="card"><header><h4>Light on/off</h4><span class="cat">Lights</span></header><p>Switch an Elgato Key Light on or off. The key lights up while the light is on.</p><ul><li>Light</li><li>Do what</li><li class="aid">light.power</li></ul></article><article class="card"><header><h4>Light temperature</h4><span class="cat">Lights</span></header><p>Make an Elgato Key Light warmer or cooler, or set a colour temperature between 2900K and 7000K.</p><ul><li>Light</li><li>Do what</li><li>Temperature (K)</li><li class="aid">light.temperature</li></ul></article><article class="card"><header><h4>Change profile</h4><span class="cat">Navigation</span></header><p>Switch to a selected profile and its own set of pages.</p><ul><li>Destination profile</li><li class="aid">nav.profile.go</li></ul></article><article class="card"><header><h4>Go to page</h4><span class="cat">Navigation</span></header><p>Switch directly to a selected page in the current profile.</p><ul><li>Destination page</li><li class="aid">nav.page.go</li></ul></article><article class="card"><header><h4>Next page</h4><span class="cat">Navigation</span></header><p>Switch to the next page, wrapping to the first page after the last.</p><ul><li class="aid">nav.page.next</li></ul></article><article class="card"><header><h4>Page indicator</h4><span class="cat">Navigation</span></header><p>Show which page is active. Pressing it does nothing, so it can sit next to the page navigation keys.</p><ul><li>Show</li><li class="aid">nav.page.indicator</li></ul></article><article class="card"><header><h4>Previous page</h4><span class="cat">Navigation</span></header><p>Switch to the previous page, wrapping to the last page from the first.</p><ul><li class="aid">nav.page.previous</li></ul></article><article class="card"><header><h4>OBS hotkey</h4><span class="cat">OBS · Advanced</span></header><p>Trigger any internal OBS hotkey by name.</p><ul><li class="need">needs OBS</li><li>Hotkey</li><li class="aid">obs.hotkey</li></ul></article><article class="card"><header><h4>OBS statistics</h4><span class="cat">OBS · Advanced</span></header><p>Show a live measurement on the key: dropped frames, bitrate, stream or recording time, free disk space, CPU or FPS. System CPU and free disk space keep working while OBS is closed.</p><ul><li class="need">needs OBS</li><li>Measurement</li><li>Warn with color</li><li>Disk folder (free disk space)</li><li class="aid">obs.stats</li></ul></article><article class="card"><header><h4>Pre-flight check</h4><span class="cat">OBS · Advanced</span></header><p>Check audio, cameras, disk, CPU, the stream destination and your Twitch title and category, and show the results across the whole deck. Reports only; changes nothing.</p><ul><li class="need">needs OBS</li><li class="aid">obs.preflight</li></ul></article><article class="card"><header><h4>Raw request (advanced)</h4><span class="cat">OBS · Advanced</span></header><p>Send any obs-websocket v5 protocol request. 100% API coverage.</p><ul><li class="need">needs OBS</li><li>Request type</li><li>JSON payload</li><li class="aid">obs.raw</li></ul></article><article class="card"><header><h4>Mute input</h4><span class="cat">OBS · Audio</span></header><p>The key lights up when the input is muted. The scene only narrows the list of inputs to choose from; muting applies to the input itself, on every scene.</p><ul><li class="need">needs OBS</li><li>Scene (narrows the list below)</li><li>Audio input</li><li>Mode</li><li class="aid">obs.mute</li></ul></article><article class="card"><header><h4>Raise/lower volume</h4><span class="cat">OBS · Audio</span></header><p>The scene only narrows the list of inputs to choose from; the change applies to the input itself, on every scene.</p><ul><li class="need">needs OBS</li><li>Scene (narrows the list below)</li><li>Audio input</li><li>Change (dB, negative lowers)</li><li class="aid">obs.volume_adjust</li></ul></article><article class="card"><header><h4>Set volume</h4><span class="cat">OBS · Audio</span></header><p>The scene only narrows the list of inputs to choose from; the change applies to the input itself, on every scene.</p><ul><li class="need">needs OBS</li><li>Scene (narrows the list below)</li><li>Audio input</li><li>Volume (dB)</li><li class="aid">obs.volume_set</li></ul></article><article class="card"><header><h4>Media control</h4><span class="cat">OBS · Media</span></header><p>Control video/audio sources (Media Source, VLC).</p><ul><li class="need">needs OBS</li><li>Media source</li><li>Operation</li><li class="aid">obs.media</li></ul></article><article class="card"><header><h4>Add recording chapter</h4><span class="cat">OBS · Recording &amp; Streaming</span></header><p>Mark this moment in the recording so it is easy to find later. Needs OBS 30.2+ recording to hybrid MP4.</p><ul><li class="need">needs OBS</li><li>Chapter name</li><li class="aid">obs.record_chapter</li></ul></article><article class="card"><header><h4>Pause recording</h4><span class="cat">OBS · Recording &amp; Streaming</span></header><p>Pause or resume a recording in progress, without closing the file. The key lights up while it is paused.</p><ul><li class="need">needs OBS</li><li class="aid">obs.record_pause</li></ul></article><article class="card"><header><h4>Record on/off</h4><span class="cat">OBS · Recording &amp; Streaming</span></header><p>Start or stop recording. «toggle» switches between the two, so one key does both.</p><ul><li class="need">needs OBS</li><li>Mode</li><li class="aid">obs.record</li></ul></article><article class="card"><header><h4>Replay buffer on/off</h4><span class="cat">OBS · Recording &amp; Streaming</span></header><p>Start or stop the replay buffer, which keeps the last seconds of video in memory ready to be saved.</p><ul><li class="need">needs OBS</li><li class="aid">obs.replay</li></ul></article><article class="card"><header><h4>Save replay</h4><span class="cat">OBS · Recording &amp; Streaming</span></header><p>Save what the replay buffer is holding to a file, capturing the moment that just happened.</p><ul><li class="need">needs OBS</li><li class="aid">obs.replay_save</li></ul></article><article class="card"><header><h4>Source screenshot</h4><span class="cat">OBS · Recording &amp; Streaming</span></header><p>Save a PNG screenshot of a source or scene.</p><ul><li class="need">needs OBS</li><li>Source or scene</li><li>Destination folder</li><li class="aid">obs.screenshot</li></ul></article><article class="card"><header><h4>Split recording file</h4><span class="cat">OBS · Recording &amp; Streaming</span></header><p>Close the current recording file and carry on into a new one, without stopping. Needs OBS 30+.</p><ul><li class="need">needs OBS</li><li class="aid">obs.record_split</li></ul></article><article class="card"><header><h4>Stream on/off</h4><span class="cat">OBS · Recording &amp; Streaming</span></header><p>Start or stop the live stream. «toggle» switches between the two, so one key does both. The key turns green and shows LIVE while you are broadcasting.</p><ul><li class="need">needs OBS</li><li>Mode</li><li class="aid">obs.stream</li></ul></article><article class="card"><header><h4>Virtual camera on/off</h4><span class="cat">OBS · Recording &amp; Streaming</span></header><p>Start or stop the virtual camera, so OBS shows up as a webcam in Zoom, Meet, Discord and anything else.</p><ul><li class="need">needs OBS</li><li class="aid">obs.virtualcam</li></ul></article><article class="card"><header><h4>OBS profile</h4><span class="cat">OBS · Scenes</span></header><p>Switch to another OBS profile, swapping its encoding, output and recording settings. This is an OBS profile, not a LinuxStreamDeck one.</p><ul><li class="need">needs OBS</li><li>Profile</li><li class="aid">obs.profile</li></ul></article><article class="card"><header><h4>Scene collection</h4><span class="cat">OBS · Scenes</span></header><p>Switch to another OBS scene collection, swapping the whole set of scenes and sources at once.</p><ul><li class="need">needs OBS</li><li>Collection</li><li class="aid">obs.scene_collection</li></ul></article><article class="card"><header><h4>Set preview scene</h4><span class="cat">OBS · Scenes</span></header><p>Put a scene in the studio mode preview. The key can show a live preview of what that scene is showing.</p><ul><li class="need">needs OBS</li><li>Scene</li><li>Live preview</li><li class="aid">obs.scene_preview</li></ul></article><article class="card"><header><h4>Set transition</h4><span class="cat">OBS · Scenes</span></header><p>Choose the transition used between scenes, and optionally how long it lasts in milliseconds.</p><ul><li class="need">needs OBS</li><li>Transition</li><li>Duration (ms, 0 = keep)</li><li class="aid">obs.transition_set</li></ul></article><article class="card"><header><h4>Studio mode on/off</h4><span class="cat">OBS · Scenes</span></header><p>Turn studio mode on or off, so scenes are staged in preview before going to program. The key lights up while it is on.</p><ul><li class="need">needs OBS</li><li class="aid">obs.studio_mode</li></ul></article><article class="card"><header><h4>Switch scene</h4><span class="cat">OBS · Scenes</span></header><p>Switch the program scene. The key lights up when it is the active scene, and can show a live preview of what that scene is showing.</p><ul><li class="need">needs OBS</li><li>Scene</li><li>Live preview</li><li class="aid">obs.scene_switch</li></ul></article><article class="card"><header><h4>Transition (studio)</h4><span class="cat">OBS · Scenes</span></header><p>Send the preview to program.</p><ul><li class="need">needs OBS</li><li class="aid">obs.studio_transition</li></ul></article><article class="card"><header><h4>Enable/disable filter</h4><span class="cat">OBS · Sources &amp; Filters</span></header><p>Enable, disable or toggle a filter applied to a source, such as a chroma key, a colour correction or a noise gate.</p><ul><li class="need">needs OBS</li><li>Source</li><li>Filter</li><li>Mode</li><li class="aid">obs.filter</li></ul></article><article class="card"><header><h4>Move/scale source</h4><span class="cat">OBS · Sources &amp; Filters</span></header><p>Change one transform property of a source in a scene. «adjust» adds to the current value, so a key can nudge it repeatedly.</p><ul><li class="need">needs OBS</li><li>Scene</li><li>Source</li><li>Property</li><li>Mode</li><li>Value</li><li class="aid">obs.transform</li></ul></article><article class="card"><header><h4>Refresh browser source</h4><span class="cat">OBS · Sources &amp; Filters</span></header><p>Reload a browser source, bypassing its cache.</p><ul><li class="need">needs OBS</li><li>Browser source</li><li class="aid">obs.browser_refresh</li></ul></article><article class="card"><header><h4>Set text source</h4><span class="cat">OBS · Sources &amp; Filters</span></header><p>Replace what a text source displays. Useful for a countdown message, a «back in 5» card or a now-playing line.</p><ul><li class="need">needs OBS</li><li>Text source</li><li>Text</li><li class="aid">obs.text</li></ul></article><article class="card"><header><h4>Show/hide source</h4><span class="cat">OBS · Sources &amp; Filters</span></header><p>Show, hide or toggle a source in a scene. Sources inside a group can be picked too. The key lights up while the source is visible.</p><ul><li class="need">needs OBS</li><li>Scene</li><li>Source</li><li>Mode</li><li class="aid">obs.source_visibility</li></ul></article><article class="card"><header><h4>Close application</h4><span class="cat">System</span></header><p>Ask an application to quit, or force it to stop.</p><ul><li>Application</li><li>Force close</li><li class="aid">sys.app.close</li></ul></article><article class="card"><header><h4>Countdown timer</h4><span class="cat">System</span></header><p>Start a countdown shown as HH:MM:SS. Press again while it is running or after it finishes to stop and reset it. An optional sound can play on completion.</p><ul><li>Timer duration (MM:SS)</li><li>Completion sound (optional)</li><li>Sound volume (%)</li><li class="aid">sys.timer</li></ul></article><article class="card"><header><h4>Counter</h4><span class="cat">System</span></header><p>Count something on the key: deaths, takes, attempts. A press adds, and holding the key resets it. Give it a negative step to count down.</p><ul><li>Each press adds</li><li>Starts at</li><li class="aid">sys.counter</li></ul></article><article class="card"><header><h4>Keyboard shortcut</h4><span class="cat">System</span></header><p>Send a keyboard shortcut to the focused application. Pick a preset to fill in the shortcut, then edit it if your desktop uses another one.</p><ul><li>Preset</li><li>Shortcut</li><li class="aid">sys.shortcut</li></ul></article><article class="card"><header><h4>Media action</h4><span class="cat">System</span></header><p>Control the running media player through MPRIS, or the session volume.</p><ul><li>Action</li><li>Show what is playing</li><li class="aid">sys.media</li></ul></article><article class="card"><header><h4>Open</h4><span class="cat">System</span></header><p>Open a file, folder or program with the desktop&#39;s own handler.</p><ul><li>File, folder or program</li><li class="aid">sys.open</li></ul></article><article class="card"><header><h4>Open URL</h4><span class="cat">System</span></header><p>Open a web address in the default browser.</p><ul><li>URL</li><li class="aid">sys.url</li></ul></article><article class="card"><header><h4>Open application</h4><span class="cat">System</span></header><p>Start an installed application, optionally closing it again with a long press.</p><ul><li>Application</li><li>If it is already running</li><li>On long press</li><li class="aid">sys.app.open</li></ul></article><article class="card"><header><h4>Play audio file</h4><span class="cat">System</span></header><p>Play a local WAV, MP3, OGG, FLAC or Opus file. Send it to the virtual microphone and it becomes a soundboard: OBS, Discord or a call can pick that up and everyone hears it. A multiple-action sequence continues after playback finishes or reaches its time limit.</p><ul><li>Audio file</li><li>Volume (%)</li><li>Maximum play time (optional)</li><li>Who hears it</li><li class="aid">sys.audio</li></ul></article><article class="card"><header><h4>Run command</h4><span class="cat">System</span></header><p>Run a shell command in the background.</p><ul><li>Command</li><li class="aid">sys.command</li></ul></article><article class="card"><header><h4>Shortcut switch</h4><span class="cat">System</span></header><p>Alternate between two keyboard shortcuts, sending the next one on each press.</p><ul><li>First shortcut</li><li>Second shortcut</li><li class="aid">sys.shortcut.switch</li></ul></article><article class="card"><header><h4>Stopwatch</h4><span class="cat">System</span></header><p>Count elapsed time as HH:MM:SS. Press again to stop and reset it to zero.</p><ul><li class="aid">sys.stopwatch</li></ul></article><article class="card"><header><h4>Switch audio device</h4><span class="cat">System</span></header><p>Make a device the one the session uses. Choose a second device too and one key moves between them, which is what speakers and a headset want. The key lights up while its device is the one in use.</p><ul><li>Device</li><li>And back to</li><li class="aid">sys.audio_device</li></ul></article><article class="card"><header><h4>System monitor</h4><span class="cat">System</span></header><p>Show a live machine measurement on the key: CPU, memory, GPU, temperatures, network throughput or free disk space. None of it needs OBS.</p><ul><li>Measurement</li><li>Network interface</li><li>Disk folder</li><li>Warn with color</li><li class="aid">sys.stats</li></ul></article><article class="card"><header><h4>Volume and mute</h4><span class="cat">System</span></header><p>Change the volume of the speakers, the microphone or one application on its own. A mute key lights up while whatever it points at is muted.</p><ul><li>What to change</li><li>Application</li><li>Do what</li><li>By how much</li><li class="aid">sys.volume</li></ul></article><article class="card"><header><h4>Wait</h4><span class="cat">System</span></header><p>Pause for the given time (MM:SS) before the next action. Meant for multiple / toggle keys, between two actions.</p><ul><li>Wait time (MM:SS)</li><li class="aid">sys.wait</li></ul></article><article class="card"><header><h4>Announce in chat</h4><span class="cat">Twitch</span></header><p>Post a highlighted announcement in your own Twitch chat.</p><ul><li class="need">needs Twitch</li><li>Message</li><li>Highlight</li><li class="aid">twitch.announce</li></ul></article><article class="card"><header><h4>Chat and event alerts</h4><span class="cat">Twitch</span></header><p>Light up when somebody is waiting on you: a chat message, a new follower, a subscription or a raid. Shows who it was, how long they have waited and how many are unread, with an optional sound. Press it to mark them seen.</p><ul><li class="need">needs Twitch</li><li>Watch for</li><li>Which chat messages</li><li>Sound</li><li>Volume</li><li>Flash the whole deck</li><li>Flash colour</li><li class="aid">twitch.alert</li></ul></article><article class="card"><header><h4>Create clip</h4><span class="cat">Twitch</span></header><p>Clip the last few seconds of the stream, the same as the Twitch clip button. The channel has to be live.</p><ul><li class="need">needs Twitch</li><li class="aid">twitch.clip</li></ul></article><article class="card"><header><h4>Create stream marker</h4><span class="cat">Twitch</span></header><p>Mark this moment in the Twitch broadcast so it is easy to find afterwards. Pairs with the OBS recording chapter marker.</p><ul><li class="need">needs Twitch</li><li>Note</li><li class="aid">twitch.marker</li></ul></article><article class="card"><header><h4>Raid a channel</h4><span class="cat">Twitch</span></header><p>Offer a raid to another channel, or cancel one already offered. Twitch opens the countdown on your chat; it never moves anyone by itself.</p><ul><li class="need">needs Twitch</li><li>Action</li><li>Channel to raid</li><li class="aid">twitch.raid</li></ul></article><article class="card"><header><h4>Set stream category</h4><span class="cat">Twitch</span></header><p>Change the Twitch category (the game). The name is looked up on Twitch when the key is pressed, so an approximate one still works.</p><ul><li class="need">needs Twitch</li><li>Category</li><li class="aid">twitch.set_category</li></ul></article><article class="card"><header><h4>Set stream title</h4><span class="cat">Twitch</span></header><p>Change the title of the Twitch stream.</p><ul><li class="need">needs Twitch</li><li>Stream title</li><li class="aid">twitch.set_title</li></ul></article><article class="card"><header><h4>Start ad break</h4><span class="cat">Twitch</span></header><p>Run an ad break of the chosen length. Only Twitch Affiliates and Partners can run ads; the key is faded for an account that cannot. The channel also has to be live, and Twitch enforces its own gap between breaks.</p><ul><li class="need">needs Twitch</li><li>Length</li><li class="aid">twitch.commercial</li></ul></article><article class="card"><header><h4>Twitch statistics</h4><span class="cat">Twitch</span></header><p>Show a live Twitch measurement on the key: viewers, followers, stream uptime, or whether the channel is live.</p><ul><li class="need">needs Twitch</li><li>Measurement</li><li>Color the key</li><li class="aid">twitch.stats</li></ul></article><article class="card"><header><h4>Web request</h4><span class="cat">Web</span></header><p>Call an HTTP endpoint and, if you want, show a value from its answer on the key. Covers anything that speaks REST: a home automation bridge, a webhook, a dashboard, your own server.</p><ul><li>URL</li><li>Method</li><li>Headers</li><li>Body</li><li>Show the answer on the key</li><li>Value to show</li><li class="aid">web.request</li></ul></article><!-- /generated:cards --></div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------- guide -->
+<section id="guide">
+  <div class="wrap">
+    <h2>Getting it working</h2>
+    <p class="sub">From nothing to a deck you actually use, in the order it makes sense to do it.</p>
+
+    <div class="guide">
+      <aside>
+        <ol>
+          <li><a href="#install">Install</a></li>
+          <li><a href="#connect-obs">Connect OBS</a></li>
+          <li><a href="#first-key">Your first key</a></li>
+          <li><a href="#key-types">Key types</a></li>
+          <li><a href="#organise">Pages and folders</a></li>
+          <li><a href="#twitch">Twitch</a></li>
+          <li><a href="#home-assistant">Home Assistant</a></li>
+          <li><a href="#audio">Audio and soundboard</a></li>
+          <li><a href="#appearance">Screen saver and exit</a></li>
+          <li><a href="#backup">Backup and sharing</a></li>
+          <li><a href="#trouble">If something is wrong</a></li>
+        </ol>
+      </aside>
+
+      <div>
+        <div class="step" id="install">
+          <h3><span class="n">1</span> Install</h3>
+          <p>Download the <code>.deb</code> from the releases page and install it:</p>
+<pre><code>sudo apt install ./linux-stream-deck-X.Y.Z.deb
+sudo ./packaging/refresh-appstream.sh   # so software centres see it</code></pre>
+          <p>
+            The package is <code>Architecture: all</code> — the pure-Python app
+            plus two vendored dependencies, with GTK4, GStreamer, Pillow and
+            the keyring coming from apt. It recommends <code>ydotool</code>,
+            <code>playerctl</code>, <code>pulseaudio-utils</code> and
+            <code>avahi-utils</code>; each one that is missing simply disables
+            the keys that need it and says so.
+          </p>
+          <div class="note">
+            <b>USB permissions.</b> Run <code>sudo ./install-udev.sh</code> once
+            (the package does it for you) and replug the deck, or it will not
+            open. Building from source instead? <code>./build.sh --apt</code>
+            then <code>./run.sh</code>.
+          </div>
+        </div>
+
+        <div class="step" id="connect-obs">
+          <h3><span class="n">2</span> Connect OBS</h3>
+          <p>
+            In OBS: <b>Tools → WebSocket Server Settings</b>. Enable the server
+            and copy the port and password. In LinuxStreamDeck, click the
+            network button in the header and paste them.
+          </p>
+          <div class="note">
+            <b>Two menus, and it matters which.</b> The header carries two
+            three-dot <span class="mi">⋮</span> buttons and the guide below
+            names them. The <b>profile menu</b> is the one beside the profile
+            selector: profiles, backups, the service accounts, the log. The
+            <b>page menu</b> is beside the page selector and holds only page
+            operations.
+          </div>
+          <p>
+            The password goes to your desktop keyring, never to the
+            configuration file and never into an export. The dot in the status
+            bar turns green when it is connected, and the app reconnects on its
+            own if OBS restarts.
+          </p>
+        </div>
+
+        <div class="step" id="first-key">
+          <h3><span class="n">3</span> Your first key</h3>
+          <ul>
+            <li>Click any key on the grid. The editor opens on the right.</li>
+            <li>Pick a <b>category</b> and an <b>action</b> — or press the magnifier beside the action list and search every action at once, by name or by what it does.</li>
+            <li>Fill in the parameters. Dropdowns fill live from OBS, from your audio devices, from your Home Assistant entities.</li>
+            <li>Under <b>Icon</b>, keep the action's default, pick one of ~7,400 built-in icons, or use your own image.</li>
+            <li>Press <b>Test</b> to run it without touching the hardware, then <b>Save</b>.</li>
+          </ul>
+          <div class="note">
+            Leaving the icon empty is not "no icon" — it means <b>inherit</b>,
+            so the key follows the action's own picture and keeps following it
+            if you change the action. The same is true of the label size and
+            colour.
+          </div>
+        </div>
+
+        <div class="step" id="key-types">
+          <h3><span class="n">4</span> Key types</h3>
+          <div class="scroll-x"><table class="spec">
+            <tr><th>Type</th><th>What it does</th></tr>
+            <tr><td>Single action</td><td>One action, with live state feedback on the key.</td></tr>
+            <tr><td>Multiple actions</td><td>A list run in order. Insert a <b>Wait</b> action to pause between them.</td></tr>
+            <tr><td>Toggle (ON/OFF)</td><td>Two lists and a state, with its own look per state.</td></tr>
+            <tr><td>Random action</td><td>Picks one of its actions at each press.</td></tr>
+            <tr><td>Single / double / long press</td><td>A separate list per gesture.</td></tr>
+            <tr><td>Folder</td><td>Opens its own grid of keys, nested up to five levels.</td></tr>
+          </table></div>
+          <p>
+            Any step in a list can be given a <b>name</b>, and the list shows
+            that instead of the action, which is what keeps a long sequence
+            readable. Steps reorder by dragging their handle, and copy between
+            lists, key types and keys.
+          </p>
+          <p>
+            A list can also be told what a failure should do: carry on, or stop
+            there. Stopping is right when the list is a recipe — "switch scene,
+            wait, start recording" must not record the wrong scene.
+          </p>
+        </div>
+
+        <div class="step" id="organise">
+          <h3><span class="n">5</span> Pages and folders</h3>
+          <ul>
+            <li><b>Profiles</b> keep their own pages and keys: Streaming, Work, Gaming. Switch from the header or from the status icon.</li>
+            <li><b>Pages</b> are added, renamed, duplicated, reordered and deleted from the <b>page menu</b>. Assign keys to go to a named page, or step forward and back.</li>
+            <li><b>Folders</b> group related keys inside one key. Double-click a folder on screen to go in; the first key inside is always Back.</li>
+          </ul>
+          <p>
+            Drag a key onto an empty slot to move it, or onto another key to
+            swap them. <b>Hold a drag over a folder</b> for about a second and
+            it springs open, so you can drop the key inside; holding over Back
+            comes out again. <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back a clear, a
+            paste or a move.
+          </p>
+        </div>
+
+        <div class="step" id="twitch">
+          <h3><span class="n">6</span> Twitch</h3>
+          <p>
+            <b>profile menu</b> → <b>Twitch account…</b>, then read the code off the dialog
+            and type it at <code>twitch.tv/activate</code>. No password is ever
+            asked for and the tokens live in your keyring.
+          </p>
+          <p>
+            You then get: viewers, followers and uptime on a key; set the title
+            or the category; clips; stream markers; ad breaks; raids;
+            announcements. And the alert key, which shows <b>how long somebody
+            has been waiting</b> — filterable down to questions and mentions,
+            or to first-time chatters, so it keeps meaning something on a busy
+            channel.
+          </p>
+          <div class="note">
+            Disconnecting revokes the token, which is all any application can
+            do. Twitch has no API to remove an app from your Connections page —
+            only you can, and the dialog says so and links there.
+          </div>
+        </div>
+
+        <div class="step" id="home-assistant">
+          <h3><span class="n">7</span> Home Assistant</h3>
+          <p>
+            <b>profile menu</b> → <b>Home Assistant…</b>. You need the address
+            (<code>http://homeassistant.local:8123</code> usually works) and a
+            long-lived access token: in Home Assistant, click your user name at
+            the bottom of the sidebar → <b>Security</b> → <b>Long-lived access
+            tokens</b> → <b>Create token</b>. Copy it immediately, it is shown
+            once.
+          </p>
+          <p>
+            The entity dropdown then fills with what your server really has.
+            One key turns a light, a switch, a fan, a media player, a scene or a
+            script on, off or over; another shows what an entity reports.
+          </p>
+        </div>
+
+        <div class="step" id="audio">
+          <h3><span class="n">8</span> Audio and soundboard</h3>
+          <ul>
+            <li><b>Volume and mute</b> — point it at the speakers, the microphone, or one application on its own. A mute key lights up red while whatever it watches is muted, and follows changes you make elsewhere.</li>
+            <li><b>Switch audio device</b> — set the device in use; give it a second one and the key moves between them.</li>
+            <li><b>Play audio file</b> — and set <em>who hears it</em> to the virtual microphone to make it a soundboard.</li>
+          </ul>
+          <div class="note">
+            For a soundboard key, pick <b>Monitor of LinuxStreamDeck</b> as an
+            input in OBS, Discord or your call. The sound also comes out of your
+            own speakers, so a key never feels dead.
+          </div>
+        </div>
+
+        <div class="step" id="appearance">
+          <h3><span class="n">9</span> Screen saver and exit display</h3>
+          <p>
+            The <b>Stream Deck display</b> button in the header holds both.
+            Choose one of eleven animations, an idle delay and a brightness of
+            its own — and preview it immediately, with or without hardware
+            connected.
+          </p>
+          <p>
+            The same dialog sets what the physical deck shows after a clean
+            exit: the firmware standby image, every key off, or one image of
+            yours across the whole grid.
+          </p>
+        </div>
+
+        <div class="step" id="backup">
+          <h3><span class="n">10</span> Backup and sharing</h3>
+          <p>
+            Every save writes a backup, and timestamped copies are kept — <b>profile
+            menu</b> → <b>Restore a backup…</b> lists them with what each one holds.
+          </p>
+          <p>
+            Export the whole configuration as a <code>.lsdconfig</code> bundle
+            that carries your icons, your audio files and your exit image, or
+            right-click one key and export just that as a <code>.lsdkey</code>.
+            Passwords, API keys and tokens are <b>never</b> exported: a machine
+            you move to enters its own.
+          </p>
+        </div>
+
+        <div class="step" id="trouble">
+          <h3><span class="n">11</span> If something is wrong</h3>
+          <div class="scroll-x"><table class="spec">
+            <tr><th>What you see</th><th>What it means</th></tr>
+            <tr><td>The deck never appears</td><td>USB permissions. <code>sudo ./install-udev.sh</code>, then replug it. The status bar says so after the second failed attempt.</td></tr>
+            <tr><td>A faded key</td><td>Every action on it needs a connection that is not there — OBS closed, no Twitch account, no Home Assistant.</td></tr>
+            <tr><td>A key outlined in red</td><td>Its action failed just now. The status bar says why, and the full reason is in the log.</td></tr>
+            <tr><td>A key showing <code>--</code></td><td>The measurement is not available on this machine. A zero would be a claim; a dash is the truth.</td></tr>
+            <tr><td>A dropdown that is empty</td><td>Whatever fills it could not be asked. The field stays typable so you can enter a value by hand.</td></tr>
+            <tr><td>Scenes renamed in OBS</td><td><b>profile menu</b> → <b>Check keys against OBS…</b>. It lists what no longer resolves and repoints them, saving a backup first.</td></tr>
+          </table></div>
+          <p>
+            The full log lives at
+            <code>~/.config/linuxstreamdeck/linuxstreamdeck.log</code> and opens
+            from the <b>profile menu</b>. That is the thing to attach to a bug report.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------ devices -->
+<section id="devices">
+  <div class="wrap">
+    <h2>Supported hardware</h2>
+    <p class="sub">
+      The layout is read from the device, so screen savers, the startup
+      sequence and a custom exit image are laid out across whatever grid you
+      really have.
+    </p>
+    <div class="scroll-x"><table class="spec">
+      <tr><th>Device</th><th>Keys</th><th>Grid</th><th>Status</th></tr>
+      <tr><td>Stream Deck Mini</td><td>6</td><td>3 × 2</td><td>Verified in simulation</td></tr>
+      <tr><td>Stream Deck Neo</td><td>8</td><td>4 × 2</td><td>Verified in simulation</td></tr>
+      <tr><td>Stream Deck Original / MK.2</td><td>15</td><td>5 × 3</td><td><b>Tested on real hardware</b></td></tr>
+      <tr><td>Stream Deck +</td><td>8 + 4 dials + LCD strip</td><td>4 × 2</td><td>Verified in simulation</td></tr>
+      <tr><td>Stream Deck XL</td><td>32</td><td>8 × 4</td><td>Verified in simulation</td></tr>
+      <tr><td>Stream Deck Pedal</td><td>3</td><td>no displays</td><td>Not supported, and says so</td></tr>
+    </table></div>
+    <div class="note">
+      Being straight about this: only the 15-key Original has been run on real
+      hardware. Every other model is covered by an automated simulation of its
+      real geometry, which is not the same thing. If you have one of the others,
+      a bug report is genuinely useful.
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>LinuxStreamDeck v<span data-version>0.3.4</span> · GPL-3.0-or-later · &copy; <span id="year">2026</span> JavocSoft</span>
+    <nav>
+      <a href="https://github.com/javocsoft/linuxstreamdeck">Source</a>
+      <a href="https://github.com/javocsoft/linuxstreamdeck/releases">Releases</a>
+      <a href="https://github.com/javocsoft/linuxstreamdeck/issues">Report a bug</a>
+    </nav>
+  </div>
+</footer>
+
+</main>
+<script src="assets/app.js"></script>
+</body>
+</html>

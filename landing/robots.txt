@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://javocsoft.github.io/linuxstreamdeck/sitemap.xml
