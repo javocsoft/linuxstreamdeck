@@ -119,12 +119,14 @@ class ActionContext:
         cancellation: Event | None = None,
         key: tuple[int, int, int] | None = None,
         twitch=None,
+        home_assistant=None,
     ):
         self.obs = obs                # linuxstreamdeck.obs.client.OBSClient
         self.controller = controller  # linuxstreamdeck.core.controller.DeckController
         self.bus = bus
         self.key = key                # (profile, page, key), when key-specific
         self.twitch = twitch          # linuxstreamdeck.twitch.client.TwitchClient
+        self.home_assistant = home_assistant   # core.homeassistant client
         self._cancellation = cancellation
 
     def derive(self, **overrides) -> "ActionContext":
@@ -143,6 +145,7 @@ class ActionContext:
             "cancellation": self._cancellation,
             "key": self.key,
             "twitch": self.twitch,
+            "home_assistant": self.home_assistant,
         }
         parts.update(overrides)
         return ActionContext(**parts)
@@ -215,6 +218,25 @@ class Action:
         its measurements come from the kernel and keep working regardless.
         """
         return self.needs_obs
+
+    def icon_for(self, params: dict) -> str:
+        """The icon a key inherits, which may depend on how it is configured.
+
+        One action id can be several different buttons: `sys.media` is seven
+        of them behind one parameter, and giving a "next track" key the
+        play/pause picture makes the deck unreadable. Same shape as
+        `requires_obs(params)` -- a class attribute for the simple case, an
+        override for the one that has to look.
+        """
+        return self.default_icon
+
+    def requires_home_assistant(self, params: dict) -> bool:
+        """Whether this key can do anything without a Home Assistant server.
+
+        The third service, answered per action exactly as the other two are, so
+        a key mixing one with a local action still does the local half.
+        """
+        return False
 
     def requires_twitch(self, params: dict) -> bool:
         """Whether this key, as configured, needs a linked Twitch account."""

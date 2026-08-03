@@ -296,6 +296,7 @@ class MainWindow(Adw.ApplicationWindow):
         profile_menu.append_section(None, find_menu)
         service_menu = Gio.Menu()
         service_menu.append("Twitch account…", "win.twitch-account")
+        service_menu.append("Home Assistant…", "win.home-assistant")
         profile_menu.append_section(None, service_menu)
         application_menu = Gio.Menu()
         application_menu.append("Preferences…", "win.app-preferences")
@@ -807,6 +808,7 @@ class MainWindow(Adw.ApplicationWindow):
                          ("config-backups", self._open_backups),
                          ("app-log", self._open_log_file),
                          ("twitch-account", self._open_twitch_settings),
+                         ("home-assistant", self._open_home_assistant_settings),
                          ("app-preferences", self._open_preferences)):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda a, p, cb=cb: cb())
@@ -2056,6 +2058,11 @@ class MainWindow(Adw.ApplicationWindow):
         from .twitch_settings import TwitchSettingsDialog
 
         TwitchSettingsDialog(self, self.app).present()
+
+    def _open_home_assistant_settings(self) -> None:
+        from .ha_settings import HomeAssistantSettingsDialog
+
+        HomeAssistantSettingsDialog(self, self.app).present()
 
     def _open_preferences(self) -> None:
         from .preferences import PreferencesDialog

@@ -78,7 +78,9 @@ app plus the two pip-only deps (`StreamDeck`, `obsws_python`) are vendored under
 `/usr/lib/linuxstreamdeck/_vendor`, while GTK4/Adw (PyGObject), Secret Service,
 GNOME Keyring, GStreamer plus its base/good plugins, Pillow, hidapi,
 websocket-client and `ca-certificates` come from apt `Depends`. `ydotool` (key
-injection) and `playerctl` (media transport) are `Recommends`, so apt installs
+injection), `playerctl` (media transport), `pulseaudio-utils` (per-application
+volume and the default audio device) and `avahi-utils` (finding Key Lights) are
+`Recommends`, so apt installs
 them by default while the package still installs where they are unavailable and
 the app degrades to a status message. `fonts-noto-cjk` is only a `Suggests`: it
 supplies the katakana of the **Matrix Code** screen saver, which falls back to
@@ -139,7 +141,11 @@ linuxstreamdeck/
 ├── app.py             LinuxStreamDeckApp: builds config, credential stores, AI service,
 │                      EventBus, OBS client, deck/controller, MainWindow and the
 │                      status icon; app lifecycle and hide-on-close policy.
-├── basic_actions.py   System actions (including clocks/audio) plus explicit page navigation.
+├── basic_actions.py   System actions (clocks, audio, counter, mixer) plus page navigation.
+├── web_actions.py     One generic HTTP endpoint action, with an optional value on the key.
+├── light_actions.py   Elgato Key Light power, brightness and colour temperature.
+├── system_stats.py    A live machine measurement on a key: CPU, RAM, GPU, temps, network.
+├── ha_actions.py      Home Assistant: switch or run an entity, and show what it reports.
 ├── ai/
 │   ├── constants.py   OpenAI/Claude provider ids, labels and default models.
 │   └── service.py     Provider calls, bounded optional context, local proposal validation.
@@ -156,6 +162,9 @@ linuxstreamdeck/
 │   ├── autostart.py   XDG autostart entry: read/write/remove, hidden-start flag.
 │   ├── apps.py        Desktop applications: list, resolve, launch, find and close.
 │   ├── media.py       MPRIS transport (playerctl) and session volume (wpctl/pactl).
+│   ├── mixer.py       Per-application volume, mic mute and the default device (pactl).
+│   ├── soundboard.py  A null sink plus its monitor, so a sound key reaches the stream.
+│   ├── nowplaying.py  What is playing over MPRIS, and its album art, off the render worker.
 │   ├── keystrokes.py  Shortcut parsing, Linux presets, ydotool/wtype/xdotool.
 │   ├── clocks.py      Thread-safe countdown/stopwatch runtime keyed by RuntimeKey.
 │   ├── controller.py  DeckController: presses, action/render workers, running feedback,
@@ -163,7 +172,11 @@ linuxstreamdeck/
 │   │                  operations and imports.
 │   ├── search.py      Key search across profiles, pages and nested folders.
 │   ├── references.py  Keys pointing at OBS objects that no longer exist.
-│   ├── sysstats.py    Whole-machine CPU from /proc/stat; free disk space.
+│   ├── sysstats.py    Whole-machine readings from /proc and /sys: CPU, memory,
+│   │                  network throughput, temperatures, GPU, free disk space.
+│   ├── webrequest.py  HTTP calls, dotted-path value extraction, off-render cache.
+│   ├── keylight.py    Elgato Key Lights: mDNS discovery, mired conversion, state cache.
+│   ├── homeassistant.py  REST client: entity list, service calls, off-render state cache.
 │   ├── starter.py     The keys a brand new configuration is offered.
 │   ├── preflight.py   Checks worth running in the minute before going live.
 │   ├── icons.py       Built-in icon library (Material Design Icons glyphs via
@@ -217,6 +230,7 @@ linuxstreamdeck/
 │   ├── preflight.py   The pre-flight report in full sentences.
 │   ├── obs_settings.py OBS connection dialog (host/port/password).
 │   ├── twitch_settings.py Twitch account dialog: device code, link, unlink.
+│   ├── ha_settings.py Home Assistant dialog: address, token, and a check that both work.
 │   ├── screensaver_settings.py Screen saver and clean-exit display settings.
 │   └── profile_dialog.py New/edit profile dialog (name + description).
 └── assets/icons/      MDI font (TTF) + icons.json index (bundled, Apache-2.0).
@@ -587,14 +601,22 @@ Actions are declarative and self-registering:
   is worth doing when blank is a meaningful value rather than an unfinished one,
   so the empty field can say what it means — `obs.stats`'s `disk_folder` is the
   case. A parameter may also set
-  `choices_source` so the editor fills the dropdown **live from OBS**
+  `choices_source` so the editor fills the dropdown **live**
   (`scenes`, `inputs`, `media_inputs`, `transitions`, `scene_collections`,
   `profiles`, `sources_in_scene`, `audio_sources_in_scene`, `filters_of_source`,
   `text_inputs`, `browser_inputs`, `hotkeys`, `pages`,
-  `deck_profiles`, `applications`). `pages`, `deck_profiles` and `applications`
-  are the `LOCAL_CHOICE_SOURCES` and must stay **above** the `obs.connected`
+  `deck_profiles`, `applications`, `audio_apps`, `audio_devices`, `key_lights`,
+  `network_interfaces`, `ha_entities`). The last eight are the
+  `LOCAL_CHOICE_SOURCES` and must stay **above** the `obs.connected`
   guard in `_fetch_choices`, so they still fill when OBS is not running. Note
   that `profiles` means OBS profiles; LinuxStreamDeck's own are `deck_profiles`.
+  Not every local source is final when it comes back empty: `pages`,
+  `deck_profiles` and `applications` are `SETTLED_CHOICE_SOURCES`, whose empty
+  answer really means "nothing to pick". The other five can answer empty for a
+  different reason entirely — no mixer installed, no avahi, no Home Assistant
+  configured yet, nothing playing audio — so `_choices_known()` leaves those as
+  a plain text field instead of a dropdown with no way out. Conflating the two
+  is a mistake that already happened once with `ha_entities`.
   A parameter whose full list cannot reasonably be enumerated uses
   `completion_source` instead (`twitch_categories`): the field stays a text
   entry storing free text and gains live suggestions searched as it is typed.
@@ -657,7 +679,14 @@ Actions are declarative and self-registering:
   closed. Everything in `obs/actions.py` is flagged by `_mark_obs_dependency()`
   from its category, so a new OBS action gets it without doing anything.
 - `apply_default_icons({action_id: "mdi:…"})` assigns default icons after
-  registration. Registration happens on import (`app.py` imports the catalogues).
+  registration. Override **`icon_for(params)`** when one action id is really
+  several buttons: `sys.media` is seven of them behind one parameter, and
+  without it a row of transport keys all inherit the play/pause picture. Five
+  places resolve an inherited icon — the deck, a step list, the editor
+  preview, the printable sheet and the dial row — and every one goes through
+  `icon_for`, so a key can never preview one picture and draw another. Same
+  shape as `requires_obs(params)`: an attribute for the simple case, a method
+  for the one that has to look. Registration happens on import (`app.py` imports the catalogues).
 
 ### Countdown timer and stopwatch
 
@@ -687,6 +716,32 @@ pasting over or clearing a key resets that position and cancels its timer sound.
 Profile/page deletion clears all clock state because stored indices shift, as do
 configuration import and controller shutdown. Pressing a running timer resets it;
 pressing a finished timer also cancels its completion sound.
+
+### A key that counts
+
+`sys.counter` adds its step on a press and resets when the key is **held** --
+`supports_long_press`, so a second key is not spent on something that happens
+once a session. `long_press()` returns True to claim the gesture; returning
+False would let the controller run the normal press as well, so holding it
+would reset the count and then add one.
+
+**The count is transient key state, kept beside `_toggle` and following exactly
+its lifecycle.** It travels with a key that moves (`_swap_key_state`), is
+dropped when the key's configuration is replaced (`key_config_changed`), is
+discarded with a folder's subtree, and is cleared wherever indices shift —
+which is why the test asserts `_counters.clear()` appears exactly as often as
+`_toggle.clear()`. It deliberately **survives a page or profile change**, since
+a tally is kept over a session and a page switch happens by accident.
+
+It is not persisted. A count written to the configuration on every press would
+be a file write plus a backup rotation per press, and the honest consequence is
+that a restart starts again from the configured value.
+
+`start` is read from the key's own parameters rather than stored, so changing
+it moves an untouched counter with it — and editing the key resets the count
+anyway, as it does every other piece of transient key state. A step of **zero**
+counts as the default rather than as a choice: it is a key that looks
+configured and never changes anything.
 
 ### Page navigation actions and migration
 
@@ -741,6 +796,49 @@ faking media keys: MPRIS and the mixer work identically on Wayland and X11 and
 need no privileges. Volume raises are capped at 1.0 so a key cannot push the sink
 past 100 %.
 
+`core/mixer.py` is the other half of that, and the half a stream needs: turning
+the game down without touching the microphone, muting the microphone without
+muting everything, and moving the session between speakers and a headset.
+**Everything in it goes through `pactl -f json`**, which is a requirement rather
+than a preference, for three separate reasons:
+
+- `wpctl` cannot list what is playing in any parseable form. Its `status` is a
+  tree drawn for a terminal.
+- **`pactl` without `-f json` answers in the user's own language.** On the
+  machine this was written on it says `Silenciado: no` and `Entrada del destino
+  #108`, so anything matching English words works until somebody who is not
+  English runs it. A pactl too old for `-f json` (before PulseAudio 15) is
+  reported as such rather than guessed at.
+- `pactl` covers PulseAudio and PipeWire alike through `pipewire-pulse`, so one
+  backend serves both.
+
+Four things about it are load-bearing:
+
+- **A raise is written as an absolute level, never as pactl's own `+5%`.**
+  pactl clamps nothing, so a relative change on a key pressed a dozen times
+  walks the sink to 160 %, where the sample is amplified in software and
+  distorts. `_level()` reads the current value first, which is what puts a
+  ceiling on it.
+- **Every stream of an application moves together.** A browser commonly owns
+  several, and acting on the first alone leaves one tab audible after the key
+  said it had muted it. For the same reason `_app_state()` calls an
+  application muted only when *all* of it is.
+- **An unanswerable state is `None`, never "not muted".** A microphone key
+  exists to be believed about exactly this, so a question that went unanswered
+  draws nothing rather than reassuring.
+- **One reading of the mixer serves every key.** `feedback()` runs on the
+  single render worker and each reading is four processes; without `STATE_TTL`
+  a page of fifteen mute keys would spawn sixty per repaint. `apply()` drops
+  the cached reading, so the repaint after a press cannot show the state from
+  before it.
+
+Only **mute** keys join `_live_loop`, at `MIXER_REFRESH_SECONDS`: the mixer can
+be changed from the desktop's own volume panel or a headset button, so that
+state has to keep up, while a volume key has none to show. The editor fills its
+two dropdowns from `audio_apps` and `audio_devices`, both in
+`LOCAL_CHOICE_SOURCES` since neither needs OBS. A device key stores the stable
+`name` and shows the `description`, exactly as an OBS hotkey does.
+
 `core/keystrokes.py` is the only place that injects input. Wayland blocks
 synthetic events, so it shells out to `ydotool` (preferred: it writes to uinput
 and therefore works on every compositor), `wtype` or `xdotool`. They are
@@ -757,6 +855,82 @@ therefore held canonically as its **Linux input name** (`esc`, `dot`, `sysrq`,
 giving the 1.x codes and `_XKB_NAMES` the X keysyms for the other two backends.
 Presets are adapted to Linux — Windows-only entries of the original catalogue are
 dropped — and always stay editable, because desktops rebind them.
+
+### What is playing, on a key
+
+`sys.media` gains an optional **Show what is playing**, off by default so a
+plain transport key costs nothing. `core/nowplaying.py` reads MPRIS through
+`playerctl`, which `media.py` already uses, so this adds no dependency.
+
+**A song title does not fit on a key, and that decided the whole design.**
+Measured at 96 px: as a label it wraps to two lines and is cut — "Wish You
+Were Here" becomes "Wish You Were" — and centered it is worse, because
+`compose()` fits centered text to the key width, so a short title is drawn
+huge and a long one unreadably small. The **artist** fits every time, because
+artist names are short by nature. So a key shows the **album art with the
+artist over it**: the picture is what makes it recognisable before anything is
+read, and the artist is what stays legible when there is no picture.
+
+Five things are load-bearing:
+
+- **The separator is `\x1f`.** Any punctuation would eventually land inside
+  somebody's song title and split it in half. Verified against playerctl
+  2.4, where a metadata key the player does not publish renders as *empty*
+  rather than as an error or as the literal template.
+- **Feedback may replace the label**, which is the only reason this works:
+  `_single_spec` reads `fb.get("label") or kc.label`. The fallback is what
+  makes the key show its own name again the moment nothing is playing, rather
+  than blanking or keeping a stale artist. A player that *is* playing but
+  publishes no metadata — a stream that has just started — takes the same
+  path.
+- **A `file://` cover is read on the calling thread; an `http(s)` one is not.**
+  A local read is the same one `compose()` already does for a custom icon, and
+  doing it in the background would blank the key for a refresh on every track
+  change. Spotify publishes an https address, and `feedback()` runs on the
+  single render worker, so that one goes through `webrequest.background()`.
+  Any other scheme is refused and remembered as "no cover", so it is not
+  examined again on every repaint.
+- **One reading serves every key**, at `STATE_TTL`: each is a process
+  (measured at ~7 ms). A press drops it, so the repaint after pausing does not
+  show the state from before.
+- **`No players found` is not a failure.** `playerctl` exits non-zero for it,
+  and it is the ordinary answer when nothing is playing.
+
+### A sound key others can hear
+
+`sys.audio` plays a file on the machine, which is right for a cue meant for
+the person at the deck and useless for a soundboard: nobody in the stream or
+the call hears it. `core/soundboard.py` is the missing piece, and it is not
+audio code at all — it is **one device**.
+
+`module-null-sink` creates an output that goes nowhere and exposes what was
+played into it as a *source*. OBS, Discord or a browser then picks
+`linuxstreamdeck.monitor` as an input and hears exactly what a key played,
+with nothing else from the machine mixed in. `play_audio(..., sink=)` routes
+one playback there through a `pulsesink`, leaving every existing key untouched.
+
+Four things are load-bearing:
+
+- **A `module-loopback` comes with the sink**, from its monitor back to the
+  normal output. Without it the person pressing the key hears nothing, which
+  is indistinguishable from a broken key. A loopback that fails to load is
+  logged and no more: the sound still reaches the stream, and losing the
+  monitoring must not lose the feature.
+- **The device is looked for before it is created.** It belongs to the audio
+  session rather than to this process, so it survives a restart — and creating
+  blindly would leave a day of restarts with a dozen of them.
+- **Shutdown deliberately leaves it alone.** Another application stores it by
+  name: OBS as an audio source, Discord as an input. Removing it on exit would
+  silently break their configuration every time this one closed, and the audio
+  session clears it at logout anyway. `remove()` exists but nothing calls it.
+- **A device that cannot be made reports, and plays nothing.** Falling back to
+  the default output would put a soundboard cue where the person pressing it
+  can hear it and the stream cannot — which looks like it worked and is not.
+  `_route_to()` raises for the same reason when the PulseAudio plugin is
+  missing.
+
+`AUDIO_LOCAL` stays the default, so no key already configured changes what it
+does by being loaded.
 
 ### Local audio action
 
@@ -854,7 +1028,8 @@ saved before it existed keep working untouched.
 The optional generation context is an explicit user opt-in. It contains only
 bounded OBS and page names collected by `collect_generation_context()`; never
 send passwords, commands, the full configuration, or other secrets. The action
-catalogue exposed to a provider always excludes `sys.command` and `obs.raw`.
+catalogue exposed to a provider always excludes `sys.command`, `obs.raw` and
+`web.request`.
 
 A provider response is untrusted data. It must pass local structural, action,
 parameter, choice and icon validation before becoming an `AIProposal`. Generation
@@ -1363,6 +1538,238 @@ Four things there are load-bearing:
   over a photograph, so a previewing key marks the live scene with an accent
   border instead.
 
+### Calling an HTTP endpoint from a key
+
+`web.request` is deliberately the widest action in the catalogue. A great many
+single-purpose plugins in the Stream Deck ecosystem are one REST call with an
+icon on top — home automation bridges, dashboards, webhooks, CI servers, uptime
+monitors — so an endpoint plus a value read out of its answer covers all of
+them at once, and covers the next one nobody has written yet.
+
+`core/webrequest.py` holds the network side; `web_actions.py` is the action.
+Four things about it are load-bearing:
+
+- **`feedback()` never performs a request.** It runs on the render worker, so
+  a round trip there would hold that worker for the latency of the internet on
+  every repaint — the same reason `TwitchClient.channel()` performs none.
+  `cached_value()` answers from the cache and schedules its own fetch on a
+  small executor of its own; `_pending` stops a burst of renders from starting
+  the same fetch several times.
+- **`min_age` is what keeps a repaint from being a request.** Repainting is
+  what makes the key ask again, and `_live_loop` is not the only thing that
+  repaints a key — an `obs.state` storm or a page change does too. The value is
+  only asked for again once it is older than the interval that key chose.
+- **Both staleness bounds do different jobs**, exactly as Twitch's do. The
+  chosen interval is when a value is worth replacing; `VALUE_STALE_SECONDS` is
+  when it stops being shown at all, so a blip keeps the last good reading and a
+  sustained outage blanks the key rather than leaving a number that stopped
+  being true. A failed fetch therefore keeps the previous value rather than
+  wiping it.
+- **A response is data from outside.** Only `http` and `https` can be reached
+  (a typo must not be able to open a local file), the body is capped before it
+  is read, and `extract()` reduces it to one short string — answering `""` for
+  anything that does not resolve rather than raising, because a key showing
+  nothing is a far better failure than a key that goes red every second.
+
+It is in `BLOCKED_ACTIONS` beside `sys.command` and `obs.raw`, and for the same
+reason: each can reach something outside this application on the strength of a
+string, and somebody reviewing an AI proposal cannot be expected to audit a URL.
+
+`webrequest.shutdown()` runs last in `_on_shutdown`, after the controller,
+since the controller's workers are what ask for a value.
+
+`webrequest.background()` is public for the same reason. Anything drawing a key
+has this module's problem — `feedback()` is on the single render worker — so
+one executor serves them all rather than each growing its own thing to remember
+to stop. `core/keylight.py` is its other user. It answers whether the work was
+accepted, so a caller can release its own marks when it was not.
+
+### Home Assistant
+
+The third service, and the smallest. `web.request` could already call these
+endpoints, so this exists for the one thing it cannot do: **fill a dropdown
+with the entities that server actually has**. Typing `light.kitchen_ceiling_2`
+from memory is where the real failures live — a key that saves cleanly, looks
+configured and does nothing when pressed.
+
+Only `base_url` lives in `Config`. The long-lived access token goes to Secret
+Service through `HomeAssistantTokenStore`, exactly as the OBS password, the AI
+provider keys and the Twitch tokens do, so it never reaches `config.json`, its
+backup or a `.lsdconfig` export. The **address does travel**, unlike the Twitch
+tokens and unlike autostart: a configuration moved to another computer in the
+same house still points at the right box.
+
+There is deliberately **no login flow**. Home Assistant's is built around a
+browser redirect to a registered address, which a desktop application on
+somebody's LAN cannot offer, and asking for the account password instead would
+be worse than asking for a token the user can revoke on its own.
+
+Five things are load-bearing:
+
+- **`cached_state()` performs no request**, like `TwitchClient.channel()` and
+  `web.request` before it. It runs on the single render worker, and the server
+  is a box in the house. `STATE_TTL` and `STATE_STALE` are the same pair of
+  bounds: a blip keeps the last state, an outage blanks the key, and a state
+  that never arrived draws **nothing** rather than off — a light that looks
+  switched off while it is lighting the room.
+- **A service call is addressed to the `homeassistant` domain**, not the
+  entity's own, which is what makes one key work on a light, a switch, a fan
+  and a media player without knowing which it is.
+- **"On" is an exclusion list, not an inclusion one.** `OFF_STATES` names what
+  counts as off and everything else is on, because no list of on states can be
+  complete: a media player is `playing`, `paused`, `idle` or `buffering`, a
+  vacuum is `cleaning`, a cover is `opening`. The first version enumerated the
+  on ones and read an idle Chromecast as switched off. Home Assistant's own
+  media player toggle settled on the same rule in 2025. Unknown counts as off,
+  so a key never claims a device is on because nothing answered.
+- **A toggle is resolved here, never sent as `homeassistant.toggle`.**
+  `_resolve_toggle()` reads the state and picks `turn_on` or `turn_off` from
+  `is_on()`. The generic service reads a media player sitting `idle` as off and
+  turns it on again, so a Chromecast key toggled on and never off. A **scene or
+  script is run rather than toggled** — it has nothing to toggle — and that
+  short-circuit is load-bearing for a second reason: a scene's state is *the
+  timestamp it last ran*, which `is_on()` reads as on, so without it a scene
+  that had ever run would resolve to `turn_off` and do nothing.
+- **The answer to a service call matters as much as the call.** Home Assistant
+  accepts `turn_on` for *any* entity and returns 200 whether or not the device
+  can do it — a Chromecast that cannot be woken is the case that found this —
+  so a key checking only for an error reported success while nothing happened.
+  The REST API hands back the states that changed while the service ran, and
+  `_new_state()` reports the target's. An empty list is deliberately **not**
+  called a failure: an entity already on does not change either, so the key
+  states the fact and leaves the verdict to whoever pressed it.
+- **`_clean_url()` accepts the three shapes people paste.** With a trailing
+  slash or an `/api` suffix left on, every path becomes
+  `http://box:8123/api/api/states`, which fails with a 404 that says nothing
+  about what went wrong.
+- **A refusal becomes a sentence.** `_explain()` turns a 401 into "create a new
+  token" and a 404 into "that address was not recognised"; the status code
+  alone sends somebody hunting.
+- **Listing entities also updates every state it carried.** The answer holds
+  them all, so refreshing the editor's dropdown is a free update of everything
+  a key on that page might be drawing.
+
+**A press shows its result at once, without a round trip.** The service call's
+own answer carries the state the entity ended in, so `act()` stores it rather
+than dropping the cache: without that the key blanked after every press and
+waited for a refetch, which is exactly the gap in which somebody presses again
+thinking it failed. When the server does *not* say, the read-back happens
+**on the action worker**, so the key keeps showing `RUN` until the answer is in
+instead of going blank mid-way.
+
+**A state that really changed repaints the deck at once.** `_remember()` calls
+`on_change` — wired in `app.py` to `controller.refresh` — but only on a *real*
+change: most polls find the same value, and refreshing per poll would redraw
+every key on the page for nothing. Without it a light switched from a phone
+took up to the full live-loop interval to show on the deck.
+
+**Both HA actions join `_live_loop`.** `ha.state` on its own interval,
+`ha.switch` on the fixed `HA_SWITCH_REFRESH_SECONDS`. Without that second one
+the switch key fetches its state in the background and then nothing ever
+repaints it, so the key never shows whether the entity is on — and it has to
+notice a light somebody turned off from their phone anyway. Its on state is
+**coloured**, not merely `active`: lightening alone rendered almost
+indistinguishable from an idle key at 96 px, and telling on from off at a
+glance is that key's whole job.
+
+Both actions set `requires_home_assistant`, the third service in
+`_action_blocked()` beside OBS and Twitch, so a key that cannot work fades
+rather than looking idle. `ENTITY_TTL` exists because the editor fetches that
+list on the GTK thread while building a row, and a house has hundreds of
+entities.
+
+### A machine measurement on a key
+
+`sys.stats` shows CPU, memory, GPU, temperatures, network throughput and free
+disk space, all read from `/proc` and `/sys` by `core/sysstats.py`. It lives in
+**System** rather than under OBS because a key showing GPU temperature has
+nothing to do with OBS and must not have to be looked for there, and it shares
+`STAT_METRICS`'s table shape: one entry per measurement rather than a branch in
+three methods.
+
+**The two overlapping metrics stay in `obs.stats` as well.** Moving them would
+silently change what every key already configured with them shows, and a
+duplicate dropdown entry costs nothing next to that.
+
+Six things here are load-bearing, and each is a way of being wrong that looks
+right:
+
+- **Memory used comes from `MemAvailable`, never `MemFree`.** Free memory on a
+  healthy Linux box is nearly zero because the kernel spends it on cache, so a
+  key built on `MemFree` reads 98 % on a machine doing nothing at all.
+- **Throughput is a difference between two readings**, like `cpu_percent()`, so
+  the first call answers None rather than an average since boot. A counter that
+  went backwards — an interface reset or replaced — counts as no traffic, since
+  reporting that jump as a rate shows an absurd spike.
+- **The temperature is the processor *package*, not the hottest core.** One
+  core spiking is normal and says nothing. The package input is found by label,
+  and the fallback matters: `sorted()` puts `temp10_input` *before*
+  `temp1_input` (because `0` sorts before `_`), so a version that simply took
+  the first labelled input looks correct on a tidy fixture and reports a core
+  on real hardware.
+- **A measurement the machine does not report answers None, and the key shows a
+  dash.** A zero is a claim: it says the GPU is idle rather than absent. An
+  integrated chip has no busy counter and plenty of desktop boards have no
+  package sensor.
+- **A metric with no threshold is never painted**, not even green. Green reads
+  as "checked, and fine", which is a claim nothing measured.
+- **Throughput is shown in bits.** A connection is sold in megabits, so bytes
+  invite exactly the wrong conclusion about whether a line is keeping up.
+- **The interface dropdown shows what the device is, not its name.**
+  `enx00e04c3676eb` is derived from a MAC address and tells nobody anything.
+  `interface_label()` prefers the USB product string the device publishes
+  ("Realtek USB 10/100 LAN"), falls back to the kind of link read from the
+  kernel — the `wireless` directory or the uevent `DEVTYPE`, never the name —
+  and keeps the interface on the label either way, since two adapters of one
+  model would otherwise be identical in the list. A PCI card publishes only
+  numeric vendor and device ids, which would need a hardware database to
+  read, so those get the link kind. The key still stores the interface name:
+  it is what `/proc/net/dev` is keyed by.
+
+`nvidia-smi` is a process (measured at ~30 ms), so its reading is shared for
+`GPU_INTERVAL` exactly as the disk one is: a page of keys must not each spawn
+one. AMD is read from `gpu_busy_percent` in sysfs instead, and an integrated
+Intel chip reports neither, which is why every field is optional.
+
+### Elgato Key Lights
+
+The other half of the Elgato desk with no Linux software at all, and whoever
+owns a Stream Deck very often owns a Key Light. They run an unauthenticated
+HTTP server on port 9123 answering `GET`/`PUT` on `/elgato/lights`, so this
+needs no account, no cloud service and no vendor library.
+
+Two things about the protocol are silent when wrong:
+
+- **Temperature is in mireds, not kelvin.** The device takes 143 to 344, which
+  is `1000000 / kelvin`, so a *higher* number is a *warmer* light. The actions
+  speak kelvin and `kelvin_to_device()` converts. `LightTemperature` therefore
+  inverts twice — "warmer" is *fewer* kelvin, and the device's unit runs the
+  other way again — and both inversions are deliberately in one place. The two
+  ends are **written down** rather than derived: `1000000/7000` is 142.86 and
+  the firmware's floor is 143, so the formula is off by one at exactly the end
+  a "coolest" key lands on.
+- **A `PUT` replaces the fields it names.** `apply()` sends only what it was
+  asked to change; resending a whole light object would push back whatever was
+  last read, turning a light on again because a brightness key remembered it
+  that way.
+
+`discover()` shells out to `avahi-browse -rpt _elg._tcp`, whose parseable form
+is `=;iface;protocol;name;type;domain;host;address;port;txt`. Only resolved
+(`=`) IPv4 lines are kept: a link-local IPv6 address cannot go in a URL without
+a zone index, so a light with no published host name must not fall back to one.
+A key stores the **published host name**, since an address comes from DHCP and
+changes; avahi resolving it is guaranteed by having found the light at all.
+Without `avahi-utils` discovery answers nothing, the field stays a plain text
+entry, and an address can still be typed by hand.
+
+Three bounds matter. `DISCOVERY_TTL` exists because the editor fills that
+dropdown **on the GTK thread** and `avahi-browse -t` takes about a second even
+when nothing answers. `STATE_TTL` and `STATE_STALE` are the pair `web.request`
+and the Twitch snapshot both use: a light behind a slow access point keeps its
+last state rather than flickering, and one that stopped answering goes unknown
+rather than being drawn as off — a light that looks switched off while it is
+lighting the room is worse than a key showing nothing.
+
 ### Live OBS statistics on a key
 
 `obs.stats` draws a live measurement — dropped frames, bitrate, congestion,
@@ -1558,10 +1965,12 @@ an action can do anything without the connection, and
 overrides it, since free disk space and system CPU come from the kernel.
 `_mark_obs_dependency()` in `obs/actions.py` sets the flag from the **category**
 rather than on each class, so an action added later cannot forget it.
-`DeckController._needs_obs()` fades a key only when **every** action of it needs
-OBS: one that mixes an OBS action with a local one still does half its job, and
-an unregistered action is unknowable, so neither is faded.
-`compose(unavailable=True)` blends the finished key toward black last, so
+`DeckController._unavailable()` fades a key only when **every** action of it is
+blocked — by a missing OBS connection or, since `_action_blocked()` also checks
+Twitch and Home Assistant (see **The unavailable fade covers three services**
+below), by either of those: one that mixes an OBS action with a local one still
+does half its job, and an unregistered action is unknowable, so neither is
+faded. `compose(unavailable=True)` blends the finished key toward black last, so
 nothing on it can escape the fade and look usable. The keys come back on
 `obs.state`, which the client emits on connect and disconnect alike.
 
@@ -1673,11 +2082,10 @@ meters take is exactly the gap it needs.
 
 ### Twitch
 
-The second service this application talks to, and the only other one. It is in
-the tree rather than behind some extension mechanism because a deck built
-around OBS is built for people who stream, and Twitch is where most of them
-stream: it is the other half of the core use case, not a peripheral
-integration.
+The second service this application talks to. It is in the tree rather than
+behind some extension mechanism because a deck built around OBS is built for
+people who stream, and Twitch is where most of them stream: it is the other
+half of the core use case, not a peripheral integration.
 
 **The authorization is the device code flow, and that choice decides the rest.**
 Twitch offers it for clients that cannot keep a secret, which is exactly a
@@ -1745,11 +2153,13 @@ Service through `TwitchTokenStore`,
 never in `Config`, `config.json`, its backup or a `.lsdconfig` export.
 `TwitchSettings` holds the Client ID and nothing else.
 
-**`TwitchTokenStore` is synchronous, unlike the other two secret stores.** Its
-caller is not the GTK thread: the client reads and rewrites tokens from its own
-worker while renewing them, and a callback-based lookup there would need a main
-loop it does not have. It stores the pair as one JSON item so a refresh
-replaces both together.
+**`TwitchTokenStore` is synchronous, unlike `SecretStore` and `ApiKeyStore`.**
+Its caller is not the GTK thread: the client reads and rewrites tokens from its
+own worker while renewing them, and a callback-based lookup there would need a
+main loop it does not have. It stores the pair as one JSON item so a refresh
+replaces both together. `HomeAssistantTokenStore` is synchronous for the same
+reason — the client reads it from its own worker too — so there are now two
+synchronous stores and two asynchronous ones, not one exception among three.
 
 **`channel()` never performs a request.** It is called from `feedback()` while
 a key image is being composed, on a render worker, so a Helix round trip there
@@ -1878,15 +2288,20 @@ looking like it had worked.
 `requires_twitch()` is true and no account is linked. It exists because the
 deck's own answer — a faded key that does nothing — is only half a message: the
 fix lived in a dialog under the profile menu, which is the last place someone
-configuring a key would look.
+configuring a key would look. `ha_banner` follows the same shape for
+`requires_home_assistant()`, and `_refresh_service_banners()` decides both
+together through the shared `_draft_needs(predicate)`, since a key can equally
+be missing an unconfigured Home Assistant server — there the message matters
+more, because the failure is a silently empty entity dropdown rather than
+anything on the deck.
 
-Three details keep it honest. It sits **above** `scroller`, not inside `body`,
-so rebuilding the body for a new key type cannot destroy it mid-edit. It is
-decided from the **draft** rather than the stored key, so picking a Twitch
-action offers the connection immediately instead of after a save. And **any one
-action is enough**, unlike the fade, which needs all of them: a key that is half
-local still cannot do the Twitch half, and the person editing it is the one who
-can fix that.
+Three details keep it honest. Both banners sit **above** `scroller`, not inside
+`body`, so rebuilding the body for a new key type cannot destroy them mid-edit.
+Each is decided from the **draft** rather than the stored key, so picking a
+Twitch or Home Assistant action offers the connection immediately instead of
+after a save. And **any one action is enough**, unlike the fade, which needs
+all of them: a key that is half local still cannot do the other half, and the
+person editing it is the one who can fix that.
 
 `_on_step_changed()` is the single handler behind every `on_change=` in the
 editor, so the icon preview and the banner follow the chosen action together.
@@ -2163,20 +2578,22 @@ in the detail, as every check here does: they establish that something is set,
 never that it is the right thing for today. Left on yesterday's game is the
 classic mistake and it is not decidable from here.
 
-### The unavailable fade covers both services
+### The unavailable fade covers three services
 
 `DeckController._unavailable()` replaced `_needs_obs()`. The documented rule is
 unchanged — a key fades only when **every** one of its actions is blocked, and
 an unregistered action is unknowable rather than unavailable — but the question
 is now asked per action rather than per connection, because a single key can
-mix the two. `_action_blocked()` combines `Action.requires_obs(params)` against
-the OBS connection with `Action.requires_twitch(params)` against the linked
-account.
+mix them. `_action_blocked()` combines `Action.requires_obs(params)` against
+the OBS connection, `Action.requires_twitch(params)` against the linked
+account, and `Action.requires_home_assistant(params)` against the configured
+server — three services, one rule.
 
 The consequence worth knowing: a key holding a Twitch marker and an OBS chapter
 marker does **not** fade when OBS is closed, because it still places the Twitch
-marker. It fades only when neither service is there. Conflating the two
-conditions would fade Twitch keys whenever OBS happened to be closed.
+marker. It fades only when none of the services a key needs is there.
+Conflating the conditions would fade a Twitch key whenever OBS merely happened
+to be closed.
 
 `twitch.stats` repaints on the same `_live_loop()` that drives `obs.stats` and
 the scene previews, at `TWITCH_REFRESH_SECONDS`, and asks for nothing while no
@@ -2343,7 +2760,12 @@ and the password is session-only. OpenAI and Claude API keys are also stored onl
 in Secret Service, under separate provider identities; AI preferences in config
 never contain either key. The Twitch access and refresh tokens follow the same
 rule under their own schema, as one JSON item so a renewal replaces both
-together; `TwitchSettings` in config holds only the public Client ID.
+together; `TwitchSettings` in config holds only the public Client ID. The Home
+Assistant long-lived access token is the fourth, under its own schema as one
+plain string, because nothing about it is ever renewed;
+`HomeAssistantSettings` holds only the server address, which travels with an
+export on purpose so a configuration moved to another computer in the same
+house still points at the right box.
 
 The profiles menu exports `.lsdconfig` ZIP format v4 with the full JSON
 configuration, including screen-saver and clean-exit display settings, available
@@ -2494,7 +2916,9 @@ ignored and you will chase a ghost.
 6. **AI output is an untrusted proposal, never an action.** Keep provider API
    keys in `ApiKeyStore`; a display mask must never become a request credential.
    Keep context optional and limited to bounded OBS/page names, and exclude
-   `sys.command` and `obs.raw` from the provider catalogue. Validate every response
+   `sys.command`, `obs.raw` and `web.request` from the provider catalogue: each
+   reaches something outside this application on the strength of a string.
+   Validate every response
    locally. Generation must not execute or save anything; only the user's explicit
    **Save** from the existing editor persists the key.
 
@@ -2640,7 +3064,13 @@ ignored and you will chase a ghost.
    backend must surface as a status message, never an exception that breaks a
    multi-action sequence. Keep `ydotool_syntax()` detection: emitting 1.x key
    codes to the 0.x binary that Debian and Ubuntu ship fails silently for the
-   user.
+   user. `core/mixer.py` follows the same rules and adds one of its own: read
+   the mixer only through `pactl -f json`, because plain `pactl` answers in the
+   user's language and `wpctl` cannot be parsed at all. Write an absolute level
+   rather than pactl's relative `+5%`, which clamps nothing; move every stream
+   of an application together; answer `None` rather than "not muted" when the
+   question could not be answered; and keep one cached reading serving all the
+   keys, since `feedback()` runs on the single render worker.
 
 21. **The clean-exit display must be the final HID state.** Keep
    `device_default` as a firmware reset, `blank` as black tiles followed by

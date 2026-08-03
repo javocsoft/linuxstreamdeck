@@ -268,11 +268,13 @@ def _default_icon(kc: KeyConfig) -> str:
         steps = kc.steps
     else:
         action = action_registry.get(kc.action)
-        return action.default_icon if action is not None else ""
+        return action.icon_for(kc.params) if action is not None else ""
     for step in steps:
         action = action_registry.get(step.action)
-        if action is not None and action.default_icon:
-            return action.default_icon
+        if action is None:
+            continue
+        if icon := action.icon_for(step.params):
+            return icon
     return ""
 
 

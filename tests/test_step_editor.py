@@ -1345,3 +1345,56 @@ class StepNamePersistenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EmptyChoiceSourceTests(unittest.TestCase):
+    """An empty option list is only final when it really is an answer.
+
+    `ha_entities` went into LOCAL_CHOICE_SOURCES because it fills without OBS,
+    and that silently also claimed an empty list was the final word -- so with
+    no Home Assistant set up the editor drew a dropdown with no entries and no
+    way past it. The two questions are separate and are now separate constants.
+    """
+
+    def setUp(self) -> None:
+        from linuxstreamdeck.ui.steps import StepEditor
+
+        self.editor = StepEditor(fake_app(FakeObs(connected=False)))
+
+    def test_a_source_that_could_not_be_asked_stays_typable(self) -> None:
+        for source in ("ha_entities", "key_lights", "audio_apps",
+                       "audio_devices", "network_interfaces"):
+            with self.subTest(source=source):
+                self.assertFalse(self.editor._choices_known(source))
+
+    def test_a_source_that_always_answers_stays_a_dropdown(self) -> None:
+        for source in ("pages", "deck_profiles", "applications"):
+            with self.subTest(source=source):
+                self.assertTrue(self.editor._choices_known(source))
+
+    def test_an_obs_source_follows_the_connection(self) -> None:
+        self.assertFalse(self.editor._choices_known("scenes"))
+
+        self.editor.app.obs.connected = True
+
+        self.assertTrue(self.editor._choices_known("scenes"))
+
+    def test_every_settled_source_is_also_a_local_one(self) -> None:
+        from linuxstreamdeck.ui.steps import (
+            LOCAL_CHOICE_SOURCES, SETTLED_CHOICE_SOURCES,
+        )
+
+        self.assertTrue(SETTLED_CHOICE_SOURCES <= LOCAL_CHOICE_SOURCES)
+
+    def test_an_entity_can_be_typed_when_the_server_is_not_set_up(self) -> None:
+        """The failure this whole split exists for: a key that cannot be
+        configured at all because the dropdown has nothing in it."""
+        from gi.repository import Gtk
+
+        from linuxstreamdeck.core.actions import Param
+
+        widget = self.editor._param_widget(
+            Param("entity", "Entity", choices_source="ha_entities"), ""
+        )
+
+        self.assertIsInstance(widget, Gtk.Entry)

@@ -18,6 +18,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk  # noqa: E402
 
 from linuxstreamdeck import basic_actions as _basic_actions  # noqa: E402,F401
+from linuxstreamdeck import ha_actions as _ha_actions  # noqa: E402,F401
 from linuxstreamdeck.core import actions as action_registry  # noqa: E402
 from linuxstreamdeck.core.config import (  # noqa: E402
     KIND_MULTI,
@@ -56,16 +57,25 @@ class FakeContainer:
         return self.keys.get(index)
 
 
-@unittest.skipUnless(HAS_DISPLAY, "needs a display")
-class TwitchBannerTests(unittest.TestCase):
-    def build(self, linked: bool = False):
+class _BannerHarness:
+    """Build an editor over fake services. A mixin rather than a base test
+    class: subclassing one test case from another lets a same-named method
+    silently replace the parent's, deleting the coverage it looked like it was
+    adding to."""
+
+    def build(self, linked: bool = False, ha_ready: bool = True):
         from linuxstreamdeck.ui.editor import EditorPanel
 
+        self.ha_ready = ha_ready
         self.container = FakeContainer()
         self.twitch = FakeTwitch(linked=linked)
+        self.home = SimpleNamespace(
+            configured=lambda: self.ha_ready, entities=lambda: []
+        )
         app = SimpleNamespace(
             obs=FakeObs(),
             twitch=self.twitch,
+            home_assistant=self.home,
             config=Config(),
             bus=EventBus(),
             controller=SimpleNamespace(
@@ -80,6 +90,9 @@ class TwitchBannerTests(unittest.TestCase):
         self.container.keys[index] = kc
         editor.load(index)
 
+
+@unittest.skipUnless(HAS_DISPLAY, "needs a display")
+class TwitchBannerTests(_BannerHarness, unittest.TestCase):
     # ---------- when it shows ----------
 
     def test_a_twitch_key_offers_the_connection(self) -> None:
@@ -201,7 +214,7 @@ class TwitchBannerTests(unittest.TestCase):
         self.load(editor, KeyConfig(kind=KIND_SINGLE, action="twitch.stats"))
 
         self.twitch.linked = True
-        editor._refresh_twitch_banner()
+        editor._refresh_service_banners()
 
         self.assertFalse(editor.twitch_banner.get_revealed())
 
@@ -210,7 +223,7 @@ class TwitchBannerTests(unittest.TestCase):
         self.load(editor, KeyConfig(kind=KIND_SINGLE, action="twitch.stats"))
 
         self.twitch.linked = False
-        editor._refresh_twitch_banner()
+        editor._refresh_service_banners()
 
         self.assertTrue(editor.twitch_banner.get_revealed())
 
@@ -265,3 +278,90 @@ class TwitchBannerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAS_DISPLAY, "needs a display")
+class HomeAssistantBannerTests(_BannerHarness, unittest.TestCase):
+    """The same offer for the third service, and here it matters more.
+
+    A Twitch key at least renders faded on the deck. A Home Assistant key
+    shows an entity dropdown that is simply **empty**, which reads as a broken
+    editor rather than as a server that was never set up -- and the dialog
+    that fixes it is under the profile menu, the last place anyone would look.
+    """
+
+    def test_a_key_needing_the_server_offers_to_set_it_up(self) -> None:
+        editor = self.build(ha_ready=False)
+
+        self.load(editor, KeyConfig(kind=KIND_SINGLE, action="ha.switch"))
+
+        self.assertTrue(editor.ha_banner.get_revealed())
+
+    def test_it_stays_hidden_once_the_server_is_set_up(self) -> None:
+        editor = self.build(ha_ready=True)
+
+        self.load(editor, KeyConfig(kind=KIND_SINGLE, action="ha.switch"))
+
+        self.assertFalse(editor.ha_banner.get_revealed())
+
+    def test_a_key_that_needs_nothing_never_offers_it(self) -> None:
+        editor = self.build(ha_ready=False)
+
+        self.load(editor, KeyConfig(kind=KIND_SINGLE, action="sys.stopwatch"))
+
+        self.assertFalse(editor.ha_banner.get_revealed())
+
+    def test_choosing_the_action_offers_it_at_once(self) -> None:
+        """The path somebody actually walks: the offer has to appear when the
+        action is picked, not after saving and wondering why nothing works."""
+        editor = self.build(ha_ready=False)
+        self.load(editor, KeyConfig(kind=KIND_SINGLE, action="sys.stopwatch"))
+        self.assertFalse(editor.ha_banner.get_revealed())
+
+        editor.single_editor.select_action("ha.state")
+
+        self.assertTrue(editor.ha_banner.get_revealed())
+
+    def test_choosing_something_else_takes_it_back_down(self) -> None:
+        editor = self.build(ha_ready=False)
+        self.load(editor, KeyConfig(kind=KIND_SINGLE, action="ha.switch"))
+        self.assertTrue(editor.ha_banner.get_revealed())
+
+        editor.single_editor.select_action("sys.stopwatch")
+
+        self.assertFalse(editor.ha_banner.get_revealed())
+
+    def test_one_step_of_a_list_is_enough(self) -> None:
+        editor = self.build(ha_ready=False)
+
+        self.load(editor, KeyConfig(kind=KIND_MULTI, steps=[
+            ActionStep(action="sys.stopwatch"),
+            ActionStep(action="ha.switch"),
+        ]))
+
+        self.assertTrue(editor.ha_banner.get_revealed())
+
+    def test_clearing_the_editor_takes_it_down(self) -> None:
+        editor = self.build(ha_ready=False)
+        self.load(editor, KeyConfig(kind=KIND_SINGLE, action="ha.switch"))
+
+        editor.clear()
+
+        self.assertFalse(editor.ha_banner.get_revealed())
+
+    def test_a_session_with_no_client_still_offers_it(self) -> None:
+        """Rather than crashing, or silently deciding the server is fine."""
+        editor = self.build(ha_ready=False)
+        editor.app.home_assistant = None
+
+        self.load(editor, KeyConfig(kind=KIND_SINGLE, action="ha.switch"))
+
+        self.assertTrue(editor.ha_banner.get_revealed())
+
+    def test_the_two_banners_are_independent(self) -> None:
+        editor = self.build(linked=False, ha_ready=False)
+
+        self.load(editor, KeyConfig(kind=KIND_SINGLE, action="ha.switch"))
+
+        self.assertTrue(editor.ha_banner.get_revealed())
+        self.assertFalse(editor.twitch_banner.get_revealed())

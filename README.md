@@ -65,8 +65,11 @@ on the same hardware as the scene switches.
   a whole page on them. Give the folder a name and an icon, nest folders up to
   five levels deep, and go back with the reserved first key that every folder
   provides.
-- 🔊 **Local audio playback** — play WAV, MP3, OGG, FLAC or Opus files at a chosen
-  volume, for the full file or an optional maximum duration.
+- 🔊 **Audio playback and soundboard** — play WAV, MP3, OGG, FLAC or Opus files at a
+  chosen volume, for the full file or an optional maximum duration. Send a key to
+  the **virtual microphone** and it becomes a soundboard: pick
+  *Monitor of LinuxStreamDeck* as an input in OBS, Discord or a call and everyone
+  hears it — you included, so a key never feels dead.
 - ⏱️ **On-key timer and stopwatch** — show a live `HH:MM:SS` value in the
   center of a key. Timers can play an optional completion sound, and both clocks
   keep counting while you visit another page or profile.
@@ -217,7 +220,7 @@ on the same hardware as the scene switches.
 | --- | --- |
 | **Scenes** | Switch program / preview · **live scene preview on the key** · studio mode · transitions (type & duration) |
 | **Before going live** | Pre-flight check: nothing muted and audio arriving, capture devices held by OBS, disk space, recording folder, machine load, which scene collection is loaded, stream key set, and your Twitch title, category and account |
-| **Recording & streaming** | Record (start, stop or toggle) · pause recording · add a chapter marker · split the recording file · stream start/stop · virtual camera |
+| **Recording & streaming** | Record (start, stop or toggle) · pause recording · add a chapter marker · split the recording file · stream (start, stop or toggle) · virtual camera |
 | **Replay & capture** | Enable & save replay buffer · source screenshots to PNG |
 | **Audio** | Mute (with feedback) · raise/lower volume · set volume in dB. Pick a scene and the list narrows to its audio inputs, plus Desktop Audio and Mic/Aux |
 | **Sources & filters** | Show/hide sources per scene (including sources inside groups) · enable/disable filters · **set a text source** · **refresh a browser source** · move/scale/rotate a source |
@@ -257,15 +260,79 @@ press it on air. A category set before this existed is left alone.
 | Category | What you get |
 | --- | --- |
 | **Run & open** | Run a command · open a URL · **Open** a file, folder or program · **Open application** from the installed list · **Close application** (politely or forced) |
-| **Media** | **Media action**: previous track, play/pause, next track, stop, mute, volume up and volume down |
+| **Media** | **Media action**: previous track, play/pause, next track, stop, mute, volume up and volume down — and optionally **album art and artist live on the key** |
+| **Audio** | **Volume and mute** for the speakers, the microphone or one application on its own · **Switch audio device**, or move between two on one key |
 | **Keyboard** | **Keyboard shortcut** with editable presets · **Shortcut switch** alternating between two shortcuts |
 | **Timing** | Wait · countdown timer · stopwatch · play a local audio file |
+| **Counting** | **Counter**: press to add, hold to reset — deaths, takes, attempts; a negative step counts down |
+| **Web** | **Web request**: call any HTTP endpoint and optionally show a value from its answer on the key |
+| **Monitor** | **System monitor**: CPU, memory, GPU, CPU/GPU temperature, network throughput or free disk space, live on the key |
+| **Lights** | **Light on/off**, **Light brightness** and **Light temperature** for Elgato Key Lights on your network |
+| **Home Assistant** | **Switch or run** any entity, scene or script · **Show a value** live on the key |
 | **Navigation** | Next page · previous page · go to page · **Page indicator** · **Change profile** |
 
 Media control goes through **MPRIS** (`playerctl`) and the session mixer
 (`wpctl` or `pactl`), so it works the same on Wayland and X11 without simulating
 media keys. **Open application** can also close the app on a long press, and
 shows a lit key while it is running.
+
+Turn on **Show what is playing** and a media key becomes a now-playing key:
+the album art fills it with the artist over the top, and a border marks it
+while something is actually playing. It works with anything that speaks MPRIS
+— Spotify, VLC, Firefox, mpv — so one key covers them all. The song *title*
+deliberately is not shown: at 96 px it either gets cut or is drawn too small
+to read, while the artist fits every time and the cover is recognisable before
+you read anything. When nothing is playing the key goes back to the icon and
+label you gave it.
+
+**Volume and mute** is the one built for streaming: point a key at the
+microphone, at the speakers, or at **one application on its own**, so you can
+mute the game without muting Discord or turn the music down without touching
+the mic. A mute key lights up red while whatever it points at is muted, and
+keeps that up to date even when you change it from the desktop's own volume
+panel. **Switch audio device** makes a device the one in use; give it a second
+device and one key moves between them, which is what speakers and a headset
+want. Both need `pactl` (from `pipewire-pulse` or `pulseaudio-utils`), which
+almost every desktop already has; without it the key says what to install
+instead of failing silently.
+
+**Web request** is the one that covers whatever is not in this list. Give it a
+URL, a method, optional headers and a body, and it calls it on press. Turn on
+**Show the answer on the key** and it also reads one value out of the response
+— `state`, or `data.0.name` to reach into a list — and keeps it up to date on
+an interval you choose. That is enough for a home automation bridge, a webhook,
+an uptime monitor, a build server or your own API, without a plugin for each.
+It never blocks the key drawing on the network: the key shows the last good
+value while the next one is fetched in the background, and blanks if the
+endpoint stays unreachable rather than showing a number that stopped being
+true.
+
+**Elgato Key Lights** work too — Key Light, Key Light Air and Ring Light. They
+are found automatically on your network (through `avahi-utils`; without it just
+type the address), and three keys cover them: on/off, brighter/dimmer, and
+warmer/cooler between 2900K and 7000K. An on/off key lights up while the light
+is on. No account and no cloud service: the lights speak plain HTTP on your own
+LAN, which is the only reason this can exist on Linux at all, since Elgato
+ships no software for them here either.
+
+**System monitor** puts a live machine reading on a key and needs OBS for
+none of it: CPU, memory, GPU load, GPU memory, CPU and GPU temperature,
+network up/down, free disk space. The key colours itself amber and then red as
+a value gets into trouble, so a glance is enough. Anything your machine does
+not report — an integrated graphics chip has no load counter, some boards have
+no package sensor — shows a dash rather than a zero, because a zero would be a
+claim. The network keys name the interface the way you would: *Wi-Fi*,
+*Ethernet*, or the adapter's own product name, rather than `enx00e04c3676eb`.
+
+**Home Assistant** gets two keys of its own. Point them at an entity picked
+from a dropdown of what your server really has — a light, a switch, a fan, a
+media player, a scene, a script — and one key turns it on, off or over, while
+the other shows what it reports: a temperature, a door, whether the washing
+machine is running. Set it up once from the ⋮ menu → **Home Assistant…** with
+your server address and a long-lived access token, which is stored in your
+desktop keyring and never in the configuration file or an export. Keys that
+need it are faded until it is set up, so a key that cannot work never looks
+idle.
 
 ## 🎛️ Supported devices
 

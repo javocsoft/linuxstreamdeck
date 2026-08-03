@@ -148,6 +148,19 @@ class EditorPanel(Gtk.Box):
         # Linking from anywhere has to take the banner down again.
         self.app.bus.subscribe("twitch.state", self._on_twitch_state)
 
+        # The same for the third service. Without it the entity dropdown is
+        # simply empty, which says nothing at all about why -- and the dialog
+        # that fixes it is under the profile menu, the last place somebody
+        # configuring a key would look.
+        self.ha_banner = Adw.Banner(
+            title="This key needs a Home Assistant server",
+            button_label="Set up",
+            revealed=False,
+        )
+        self.ha_banner.add_css_class("service-banner")
+        self.ha_banner.connect("button-clicked", self._open_ha_settings)
+        self.append(self.ha_banner)
+
         # scrollable body: grows to fill the available space and scrolls its
         # content when steps are added, without enlarging the window
         self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -202,6 +215,7 @@ class EditorPanel(Gtk.Box):
         self._baseline = None
         self._folder = None
         self.twitch_banner.set_revealed(False)
+        self.ha_banner.set_revealed(False)
 
     def load(self, index: int) -> None:
         self.index = index
@@ -426,7 +440,7 @@ class EditorPanel(Gtk.Box):
                 kc.label,
                 kc.icon,
                 kc.bg_color,
-                self._action_icon(kc.action),
+                self._action_icon(kc.action, kc.params),
                 kc.font_size,
                 kc.text_color,
             )
@@ -581,7 +595,7 @@ class EditorPanel(Gtk.Box):
         # The one place every rebuild passes through — selecting a key,
         # switching key type and loading an AI proposal all land here — so the
         # banner cannot be left showing for a key that no longer needs it.
-        self._refresh_twitch_banner()
+        self._refresh_service_banners()
 
     def _append_error_policy(self, kc: KeyConfig) -> None:
         """What a failing action does to the rest of the key.
@@ -611,14 +625,14 @@ class EditorPanel(Gtk.Box):
         return values[index]
 
     @staticmethod
-    def _action_icon(action_id: str) -> str:
+    def _action_icon(action_id: str, params: dict | None = None) -> str:
         action = action_registry.get(action_id)
-        return action.default_icon if action is not None else ""
+        return action.icon_for(params or {}) if action is not None else ""
 
     @classmethod
     def _steps_icon(cls, steps: list[ActionStep], fallback: str) -> str:
         for step in steps:
-            if icon := cls._action_icon(step.action):
+            if icon := cls._action_icon(step.action, step.params):
                 return icon
         return fallback if steps else ""
 
@@ -627,7 +641,7 @@ class EditorPanel(Gtk.Box):
     def _on_twitch_state(self, _topic, _data) -> None:
         from gi.repository import GLib
 
-        GLib.idle_add(self._refresh_twitch_banner)
+        GLib.idle_add(self._refresh_service_banners)
 
     def _on_step_changed(self, update_preview) -> None:
         """Everything that reacts to a step being edited, in one place.
@@ -636,38 +650,44 @@ class EditorPanel(Gtk.Box):
         are refreshed together rather than each hooking the change separately.
         """
         update_preview()
-        self._refresh_twitch_banner()
+        self._refresh_service_banners()
 
-    def _refresh_twitch_banner(self) -> bool:
-        """Offer to connect Twitch while editing a key that needs it.
+    def _refresh_service_banners(self) -> bool:
+        """Offer the connection a key needs, while editing that key.
 
         Without this the only way in is a dialog in the profile menu, which is
         the last place someone configuring a key would look: the key renders
         faded on the deck, does nothing when pressed, and nothing anywhere says
-        what is missing. The banner appears exactly where the choice was made.
+        what is missing. For Home Assistant it is worse still -- the entity
+        dropdown is simply empty, which looks like a broken editor rather than
+        a service that was never set up. The banner appears exactly where the
+        choice was made.
         """
         twitch = getattr(self.app, "twitch", None)
         linked = bool(twitch is not None and twitch.linked)
-        wanted = (
-            self.index is not None
-            and not linked
-            and self._draft_needs_twitch()
+        self.twitch_banner.set_revealed(
+            not linked and self._draft_needs("requires_twitch")
         )
-        self.twitch_banner.set_revealed(wanted)
+        home = getattr(self.app, "home_assistant", None)
+        ready = bool(home is not None and home.configured())
+        self.ha_banner.set_revealed(
+            not ready and self._draft_needs("requires_home_assistant")
+        )
         return False
 
-    def _draft_needs_twitch(self) -> bool:
-        """Whether the key as it currently stands would need an account.
+    def _draft_needs(self, predicate: str) -> bool:
+        """Whether the key as it currently stands needs some service.
 
-        Asked of the draft rather than of the stored key, so picking a Twitch
-        action offers the connection immediately instead of after a save. Any
-        one action is enough: a key that is half local still cannot do that
-        half.
+        Asked of the draft rather than of the stored key, so picking an action
+        offers the connection immediately instead of after a save. Any one
+        action is enough: a key that is half local still cannot do that half.
         """
+        if self.index is None:
+            return False
         try:
             kc = self.current_key_config()
         except Exception:
-            log.debug("Could not inspect the draft for Twitch actions", exc_info=True)
+            log.debug("Could not inspect the draft for %s", predicate, exc_info=True)
             return False
         pairs = [(kc.action, kc.params)] if kc.kind == KIND_SINGLE else [
             (step.action, step.params)
@@ -678,7 +698,7 @@ class EditorPanel(Gtk.Box):
             if not action_id:
                 continue
             action = action_registry.get(action_id)
-            if action is not None and action.requires_twitch(params or {}):
+            if action is not None and getattr(action, predicate)(params or {}):
                 return True
         return False
 
@@ -689,10 +709,20 @@ class EditorPanel(Gtk.Box):
         if window is not None:
             TwitchSettingsDialog(window, self.app).present()
 
+    def _open_ha_settings(self, _banner) -> None:
+        from .ha_settings import HomeAssistantSettingsDialog
+
+        window = self.get_root()
+        if window is not None:
+            HomeAssistantSettingsDialog(window, self.app).present()
+
     def _update_single_icon_preview(self) -> None:
         if self.single_editor is not None and self.app_main is not None:
+            step = self.single_editor.get_step()
+            # The parameters matter: one action id can be several buttons, and
+            # the preview has to agree with what the deck will draw.
             self.app_main.set_fallback_icon(
-                self._action_icon(self.single_editor.get_step().action)
+                self._action_icon(step.action, step.params)
             )
 
     def _update_multi_icon_preview(self) -> None:

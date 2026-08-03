@@ -44,6 +44,14 @@ _TWITCH_SCHEMA = Secret.Schema.new(
 _TWITCH_ATTRIBUTES = {"account": "twitch"}
 _TWITCH_LABEL = "LinuxStreamDeck Twitch account"
 
+_HA_SCHEMA = Secret.Schema.new(
+    f"{APP_ID}.HomeAssistant",
+    Secret.SchemaFlags.NONE,
+    {"service": Secret.SchemaAttributeType.STRING},
+)
+_HA_ATTRIBUTES = {"service": "home-assistant"}
+_HA_LABEL = "LinuxStreamDeck Home Assistant token"
+
 
 class SecretStore:
     """Asynchronous access to the desktop user's secure password collection."""
@@ -251,4 +259,55 @@ class TwitchTokenStore:
             )
         except Exception:
             log.debug("Could not clear the Twitch tokens", exc_info=True)
+            return False
+
+
+class HomeAssistantTokenStore:
+    """The long-lived access token for a Home Assistant server.
+
+    Synchronous for the same reason `TwitchTokenStore` is: the client reads it
+    from its own worker while fetching entity states, and a callback-based
+    lookup there would need a main loop it does not have. It is one plain
+    string rather than a JSON blob, because nothing here is ever renewed --
+    Home Assistant long-lived tokens last ten years and are replaced only by a
+    person deciding to.
+    """
+
+    def __init__(self, backend=Secret) -> None:
+        self._backend = backend
+
+    def load(self) -> str:
+        try:
+            return self._backend.password_lookup_sync(
+                _HA_SCHEMA, _HA_ATTRIBUTES, None
+            ) or ""
+        except Exception:
+            log.debug("Could not read the Home Assistant token", exc_info=True)
+            return ""
+
+    def save(self, token: str) -> bool:
+        try:
+            return bool(
+                self._backend.password_store_sync(
+                    _HA_SCHEMA,
+                    _HA_ATTRIBUTES,
+                    Secret.COLLECTION_DEFAULT,
+                    _HA_LABEL,
+                    str(token or ""),
+                    None,
+                )
+            )
+        except Exception:
+            log.exception("Could not store the Home Assistant token")
+            return False
+
+    def clear(self) -> bool:
+        try:
+            return bool(
+                self._backend.password_clear_sync(
+                    _HA_SCHEMA, _HA_ATTRIBUTES, None
+                )
+            )
+        except Exception:
+            log.debug("Could not clear the Home Assistant token", exc_info=True)
             return False

@@ -6,7 +6,7 @@ import logging
 import subprocess
 import webbrowser
 
-from .core import apps, keystrokes, media
+from .core import apps, keystrokes, media, mixer, nowplaying, soundboard
 from .core.actions import Action, Param, apply_default_icons, parse_duration, register
 from .core.audio import SUPPORTED_AUDIO_EXTENSIONS, play_audio
 
@@ -19,6 +19,51 @@ CAT_NAV = "Navigation"
 # prevents a mistaken value from holding an action worker indefinitely.
 MAX_WAIT_SECONDS = 3600
 TIMER_FINISHED_COLOR = "#8a4b08"
+# A muted key is lit in the same red OBS uses for a muted input, so the two
+# read as the same state whichever of them a key is pointed at.
+MUTED_COLOR = "#a51d2d"
+
+# Bounds for a counter. Neither is a real limit anyone would reach; they
+# only stop a hand-edited configuration from producing a value too wide to
+# draw on a key.
+# Where a sound key plays. "Shared" routes it through the virtual output other
+# applications listen to, which is the whole of what makes a soundboard: the
+# default keeps every key already configured playing exactly as it did.
+# Whether a media key also shows what is playing. Off by default: a key that
+# does not ask costs nothing, and every key already configured keeps the icon
+# and label it was given.
+# One icon per media action. Without this every one of the seven inherits the
+# play/pause picture, and a row of transport keys is unreadable. The volume
+# three share a silhouette and differ by x, - and +, which read as actions --
+# unlike a speaker with more or fewer waves, which reads as a level.
+MEDIA_ICONS = {
+    "previous": "mdi:skip-previous",
+    "play_pause": "mdi:play-pause",
+    "next": "mdi:skip-next",
+    "stop": "mdi:stop",
+    "mute": "mdi:volume-mute",
+    "volume_up": "mdi:volume-plus",
+    "volume_down": "mdi:volume-minus",
+}
+
+NOW_PLAYING_NO = "no"
+NOW_PLAYING_YES = "yes"
+NOW_PLAYING_CHOICES = (NOW_PLAYING_NO, NOW_PLAYING_YES)
+NOW_PLAYING_LABELS = {
+    NOW_PLAYING_NO: "No",
+    NOW_PLAYING_YES: "Album art and artist",
+}
+
+AUDIO_LOCAL = "local"
+AUDIO_SHARED = "shared"
+AUDIO_OUTPUTS = (AUDIO_LOCAL, AUDIO_SHARED)
+AUDIO_OUTPUT_LABELS = {
+    AUDIO_LOCAL: "Only this computer",
+    AUDIO_SHARED: "This computer and the virtual microphone",
+}
+
+MAX_COUNTER_STEP = 1000
+MAX_COUNTER_VALUE = 999999
 
 # Page indicator display modes.
 PAGE_SHOW_POSITION = "Number and total"
@@ -84,7 +129,9 @@ class PlayAudio(Action):
     name = "Play audio file"
     category = CAT_SYSTEM
     description = (
-        "Play a local WAV, MP3, OGG, FLAC or Opus file. A multiple-action "
+        "Play a local WAV, MP3, OGG, FLAC or Opus file. Send it to the "
+        "virtual microphone and it becomes a soundboard: OBS, Discord or a "
+        "call can pick that up and everyone hears it. A multiple-action "
         "sequence continues after playback finishes or reaches its time limit."
     )
     params = [
@@ -110,16 +157,35 @@ class PlayAudio(Action):
             kind="optional_duration",
             default="",
         ),
+        Param(
+            "output",
+            "Who hears it",
+            kind="choice",
+            default=AUDIO_LOCAL,
+            choices=list(AUDIO_OUTPUTS),
+            choice_labels=dict(AUDIO_OUTPUT_LABELS),
+        ),
     ]
     running_feedback = True
     restart_on_repress = True
 
     def execute(self, ctx, p):
+        sink = ""
+        if str(p.get("output") or AUDIO_LOCAL) == AUDIO_SHARED:
+            try:
+                sink = soundboard.ensure()
+            except soundboard.SoundboardError as error:
+                # Reported rather than played locally: a cue that came out of
+                # the speakers while the stream heard nothing would look like
+                # it had worked.
+                ctx.bus.emit("status", text=str(error))
+                return
         play_audio(
             p.get("file", ""),
             p.get("volume", 100),
             parse_duration(p.get("duration")),
             stop_requested=ctx.stop_requested,
+            sink=sink,
         )
 
 
@@ -270,6 +336,14 @@ class MediaControl(Action):
             choices=list(media.MEDIA_ACTION_LABELS),
             default=media.label_for(media.DEFAULT_MEDIA_ACTION),
         ),
+        Param(
+            "show",
+            "Show what is playing",
+            kind="choice",
+            default=NOW_PLAYING_NO,
+            choices=list(NOW_PLAYING_CHOICES),
+            choice_labels=dict(NOW_PLAYING_LABELS),
+        ),
     ]
     immediate = True
 
@@ -279,6 +353,237 @@ class MediaControl(Action):
             media.perform(identifier)
         except ValueError as error:
             ctx.bus.emit("status", text=str(error))
+            return
+        # The press just changed what is playing, so the reading taken before
+        # it must not be what the key repaints with.
+        if shows_now_playing(p):
+            nowplaying.forget()
+
+    def icon_for(self, params):
+        """The picture for the transport action this key was pointed at."""
+        chosen = media.identifier_for(str((params or {}).get("action", "") or ""))
+        return MEDIA_ICONS.get(chosen, self.default_icon)
+
+    def feedback(self, ctx, p):
+        if not shows_now_playing(p):
+            return {}
+        track = nowplaying.current()
+        # Nothing playing: the key goes back to being the key that was
+        # configured, with its own icon and its own label.
+        if track is None or not track.caption:
+            return {}
+        return {
+            "label": track.caption,
+            "image": nowplaying.artwork(track.art_url),
+            "active": track.playing,
+        }
+
+
+def shows_now_playing(p: dict) -> bool:
+    return str((p or {}).get("show") or NOW_PLAYING_NO) == NOW_PLAYING_YES
+
+
+@register
+class Counter(Action):
+    id = "sys.counter"
+    name = "Counter"
+    category = CAT_SYSTEM
+    description = (
+        "Count something on the key: deaths, takes, attempts. A press adds, "
+        "and holding the key resets it. Give it a negative step to count down."
+    )
+    params = [
+        Param(
+            "step",
+            "Each press adds",
+            kind="int",
+            default=1,
+            minimum=-MAX_COUNTER_STEP,
+            maximum=MAX_COUNTER_STEP,
+        ),
+        Param(
+            "start",
+            "Starts at",
+            kind="int",
+            default=0,
+            minimum=-MAX_COUNTER_VALUE,
+            maximum=MAX_COUNTER_VALUE,
+        ),
+    ]
+    # Adding to a number in memory. Occupying an action worker for that would
+    # make it the slowest key on the deck to answer.
+    immediate = True
+    # Holding it resets. A second key just to reset a counter is a key spent on
+    # something that happens once a session.
+    supports_long_press = True
+
+    def execute(self, ctx, p):
+        value = ctx.controller.bump_counter(
+            ctx.key, _counter_step(p), _counter_start(p)
+        )
+        ctx.bus.emit("status", text=f"Counter: {value}")
+
+    def long_press(self, ctx, p) -> bool:
+        start = _counter_start(p)
+        ctx.controller.reset_counter(ctx.key, start)
+        ctx.bus.emit("status", text=f"Counter reset to {start}")
+        return True
+
+    def feedback(self, ctx, p):
+        return {
+            "display": str(
+                ctx.controller.counter_value(ctx.key, _counter_start(p))
+            )
+        }
+
+
+def _counter_step(p: dict) -> int:
+    try:
+        step = int((p or {}).get("step", 1))
+    except (TypeError, ValueError):
+        return 1
+    # A step of zero is a key that looks like it works and never changes
+    # anything, so it counts as the default rather than as a choice.
+    return max(-MAX_COUNTER_STEP, min(MAX_COUNTER_STEP, step)) or 1
+
+
+def _counter_start(p: dict) -> int:
+    try:
+        start = int((p or {}).get("start", 0))
+    except (TypeError, ValueError):
+        return 0
+    return max(-MAX_COUNTER_VALUE, min(MAX_COUNTER_VALUE, start))
+
+
+@register
+class VolumeControl(Action):
+    id = "sys.volume"
+    name = "Volume and mute"
+    category = CAT_SYSTEM
+    description = (
+        "Change the volume of the speakers, the microphone or one application "
+        "on its own. A mute key lights up while whatever it points at is "
+        "muted."
+    )
+    params = [
+        Param(
+            "target",
+            "What to change",
+            kind="choice",
+            default=mixer.TARGET_OUTPUT,
+            choices=list(mixer.TARGETS),
+            choice_labels=dict(mixer.TARGET_LABELS),
+        ),
+        Param(
+            "application",
+            "Application",
+            choices_source="audio_apps",
+            placeholder="An application that is playing audio",
+            depends_on="target",
+            depends_values=[mixer.TARGET_APP],
+        ),
+        Param(
+            "mode",
+            "Do what",
+            kind="choice",
+            default=mixer.MODE_TOGGLE,
+            choices=list(mixer.MODES),
+            choice_labels=dict(mixer.MODE_LABELS),
+        ),
+        Param(
+            "amount",
+            "By how much",
+            kind="int",
+            default=mixer.DEFAULT_STEP_PERCENT,
+            minimum=0,
+            maximum=mixer.MAX_VOLUME_PERCENT,
+            step=5,
+            depends_on="mode",
+            depends_values=list(mixer.VOLUME_MODES),
+        ),
+    ]
+    # Two short local commands. Occupying an action worker for that would make
+    # a volume key feel slower than the media keys beside it.
+    immediate = True
+
+    def execute(self, ctx, p):
+        try:
+            done = mixer.apply(
+                str(p.get("target") or mixer.TARGET_OUTPUT),
+                str(p.get("application") or ""),
+                str(p.get("mode") or mixer.MODE_TOGGLE),
+                int(p.get("amount") or mixer.DEFAULT_STEP_PERCENT),
+            )
+        except mixer.MixerError as error:
+            # A missing backend or an application that stopped playing is a
+            # message, never an exception that would abandon the rest of a
+            # multi-action key.
+            ctx.bus.emit("status", text=str(error))
+            return
+        ctx.bus.emit("status", text=done)
+
+    def feedback(self, ctx, p):
+        if str(p.get("mode") or "") not in mixer.MUTE_MODES:
+            return {}
+        current = mixer.state(
+            str(p.get("target") or mixer.TARGET_OUTPUT),
+            str(p.get("application") or ""),
+        )
+        # None means the question went unanswered, which must not be drawn as
+        # "not muted": the whole reason a microphone key exists is to be
+        # believed about exactly this.
+        if current is None:
+            return {}
+        muted, _level = current
+        return {"active": muted, "color": MUTED_COLOR if muted else None}
+
+
+@register
+class AudioDevice(Action):
+    id = "sys.audio_device"
+    name = "Switch audio device"
+    category = CAT_SYSTEM
+    description = (
+        "Make a device the one the session uses. Choose a second device too "
+        "and one key moves between them, which is what speakers and a headset "
+        "want. The key lights up while its device is the one in use."
+    )
+    params = [
+        Param("device", "Device", choices_source="audio_devices"),
+        Param(
+            "device_alt",
+            "And back to",
+            choices_source="audio_devices",
+            placeholder="Leave empty to always switch to the one above",
+        ),
+    ]
+    immediate = True
+
+    def execute(self, ctx, p):
+        first = str(p.get("device") or "")
+        second = str(p.get("device_alt") or "")
+        try:
+            if second:
+                done = mixer.toggle_between(first, second)
+            else:
+                done = mixer.switch_to(first)
+        except mixer.MixerError as error:
+            ctx.bus.emit("status", text=str(error))
+            return
+        ctx.bus.emit("status", text=f"Audio device: {done}")
+
+    def feedback(self, ctx, p):
+        wanted = str(p.get("device") or "")
+        if not wanted:
+            return {}
+        try:
+            data = mixer.snapshot()
+        except mixer.MixerError:
+            return {}
+        defaults = {
+            data.get("default-sink", ""), data.get("default-source", "")
+        }
+        return {"active": wanted in defaults}
 
 
 @register
@@ -543,6 +848,9 @@ apply_default_icons({
     "sys.timer": "mdi:timer-outline",
     "sys.stopwatch": "mdi:clock-outline",
     "sys.media": "mdi:play-pause",
+    "sys.counter": "mdi:counter",
+    "sys.volume": "mdi:volume-high",
+    "sys.audio_device": "mdi:speaker-multiple",
     "sys.open": "mdi:folder-open",
     "sys.app.open": "mdi:rocket-launch",
     "sys.app.close": "mdi:close-box",

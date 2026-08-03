@@ -102,6 +102,10 @@ DEFAULT_CLOSE_ACTION = CLOSE_ACTION_TRAY
 # from a much wider screen is harmless rather than something to strip out. The
 # lower bound is what the panel's own contents need; the upper one only stops a
 # hand-edited file asking for a panel nobody could drag back.
+# Bound on a stored server address. Not a real limit -- it only stops a
+# hand-edited configuration carrying something absurd into a request.
+MAX_URL_CHARS = 300
+
 DEFAULT_EDITOR_WIDTH = 440
 MIN_EDITOR_WIDTH = 380
 MAX_EDITOR_WIDTH = 1600
@@ -752,6 +756,21 @@ class TwitchSettings:
 
 
 @dataclass
+class HomeAssistantSettings:
+    """What is worth persisting about the Home Assistant server.
+
+    Deliberately only the address. The long-lived access token lives in Secret
+    Service, exactly like the OBS password, the AI provider keys and the Twitch
+    tokens, so it never reaches `config.json`, its backup or a `.lsdconfig`
+    export. An address on somebody's own network travels harmlessly, and a
+    configuration moved to another computer in the same house still points at
+    the right box.
+    """
+
+    base_url: str = ""
+
+
+@dataclass
 class ScreenSaverSettings:
     enabled: bool = False
     style: str = DEFAULT_SCREENSAVER
@@ -772,6 +791,9 @@ class Config:
     obs: ObsSettings = field(default_factory=ObsSettings)
     ai: AISettings = field(default_factory=AISettings)
     twitch: TwitchSettings = field(default_factory=TwitchSettings)
+    home_assistant: HomeAssistantSettings = field(
+        default_factory=lambda: HomeAssistantSettings()
+    )
     screensaver: ScreenSaverSettings = field(default_factory=ScreenSaverSettings)
     exit_display: ExitDisplaySettings = field(default_factory=ExitDisplaySettings)
     brightness: int = 80
@@ -884,6 +906,11 @@ class Config:
             twitch = TwitchSettings(
                 client_id=str(raw_twitch.get("client_id", "") or "").strip()
             )
+            home_assistant = HomeAssistantSettings(
+                base_url=str(
+                    (raw.get("home_assistant") or {}).get("base_url", "") or ""
+                ).strip()[:MAX_URL_CHARS]
+            )
             screen_style = str(
                 raw_screensaver.get("style", DEFAULT_SCREENSAVER)
             )
@@ -930,6 +957,7 @@ class Config:
             obs=obs,
             ai=ai,
             twitch=twitch,
+            home_assistant=home_assistant,
             screensaver=screensaver,
             exit_display=exit_display,
             brightness=brightness,
@@ -1102,6 +1130,7 @@ class Config:
         self.obs = replacement.obs
         self.ai = replacement.ai
         self.twitch = replacement.twitch
+        self.home_assistant = replacement.home_assistant
         self.screensaver = replacement.screensaver
         self.exit_display = replacement.exit_display
         self.brightness = replacement.brightness
@@ -1418,6 +1447,7 @@ class Config:
         # computer's keyring, so an imported configuration always has to link
         # its own account, exactly as it has to enter its own OBS password.
         self.twitch = replacement.twitch
+        self.home_assistant = replacement.home_assistant
         self.screensaver = replacement.screensaver
         self.exit_display = replacement.exit_display
         self.brightness = replacement.brightness

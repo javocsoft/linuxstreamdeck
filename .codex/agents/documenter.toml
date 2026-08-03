@@ -40,8 +40,12 @@ Never trust a documentation claim without checking its source. Verify at least:
 - **Module map and structure:** the actual `linuxstreamdeck/` tree.
 - **EventBus topics:** `bus.emit(`, `subscribe(` and `unsubscribe(` calls against
   the documented topics, payloads and temporary-subscriber lifecycle.
-- **Action catalogue:** `linuxstreamdeck/obs/actions.py` and
-  `linuxstreamdeck/basic_actions.py` against the user-facing action tables.
+- **Action catalogue:** every action-registering module —
+  `linuxstreamdeck/obs/actions.py`, `linuxstreamdeck/twitch/actions.py`,
+  `linuxstreamdeck/basic_actions.py`, `linuxstreamdeck/web_actions.py`,
+  `linuxstreamdeck/light_actions.py`, `linuxstreamdeck/system_stats.py` and
+  `linuxstreamdeck/ha_actions.py` — against the user-facing action tables and
+  category lists in README.md and AGENTS.md.
 - **Key types and config:** `linuxstreamdeck/core/config.py`, config paths,
   `LSD_CONFIG_DIR`, backups, import/export versions and limits, portable audio
   and exit images, timer-sound deduplication, legacy page-action migration,

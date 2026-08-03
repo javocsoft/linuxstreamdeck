@@ -1105,3 +1105,116 @@ class WindowStylesheetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MediaIconTests(unittest.TestCase):
+    """One action id, seven different buttons.
+
+    `sys.media` is previous, play/pause, next, stop, mute and the two volume
+    steps behind a single parameter. Before this they all inherited the
+    play/pause picture, so a row of transport keys was unreadable.
+    """
+
+    def _icon(self, label: str) -> str:
+        return EditorPanel._action_icon("sys.media", {"action": label})
+
+    def test_each_transport_action_has_its_own_picture(self) -> None:
+        from linuxstreamdeck.core import media
+
+        icons = {self._icon(label) for label in media.MEDIA_ACTION_LABELS}
+
+        self.assertEqual(len(icons), len(media.MEDIA_ACTION_LABELS))
+
+    def test_they_are_the_ones_meant(self) -> None:
+        self.assertEqual(self._icon("Previous track"), "mdi:skip-previous")
+        self.assertEqual(self._icon("Next track"), "mdi:skip-next")
+        self.assertEqual(self._icon("Stop"), "mdi:stop")
+        self.assertEqual(self._icon("Mute"), "mdi:volume-mute")
+        self.assertEqual(self._icon("Volume up"), "mdi:volume-plus")
+        self.assertEqual(self._icon("Volume down"), "mdi:volume-minus")
+
+    def test_play_pause_is_unchanged(self) -> None:
+        """It was already right, and changing it would alter every key
+        configured before this existed."""
+        self.assertEqual(self._icon("Play / Pause"), "mdi:play-pause")
+
+    def test_a_key_with_no_choice_yet_shows_the_default(self) -> None:
+        self.assertEqual(EditorPanel._action_icon("sys.media"), "mdi:play-pause")
+
+    def test_an_unknown_choice_falls_back_rather_than_blanking(self) -> None:
+        """`identifier_for` already normalises anything it does not know back
+        to the default action, so the lookup below it cannot miss. The `.get`
+        default is belt and braces for the day the two tables diverge, which
+        `test_there_is_one_for_every_media_action` is what really prevents."""
+        self.assertEqual(self._icon("Explode"), "mdi:play-pause")
+
+    def test_a_step_in_a_list_keeps_its_own_picture(self) -> None:
+        """The list resolver has to pass the step's parameters too, or a
+        multi key whose first step is "next track" inherits play/pause."""
+        steps = [ActionStep(action="sys.media", params={"action": "Next track"})]
+
+        self.assertEqual(
+            EditorPanel._steps_icon(steps, "mdi:playlist-play"), "mdi:skip-next"
+        )
+
+    def test_the_deck_and_the_editor_agree_on_a_step(self) -> None:
+        """Two resolvers, one answer: a key must not preview one picture and
+        draw another."""
+        from linuxstreamdeck.core.controller import DeckController
+
+        steps = [ActionStep(action="sys.media", params={"action": "Mute"})]
+
+        self.assertEqual(
+            DeckController._first_step_icon(steps),
+            EditorPanel._steps_icon(steps, ""),
+        )
+
+    def test_every_icon_exists_in_the_library(self) -> None:
+        from linuxstreamdeck.core import icons
+        from linuxstreamdeck.basic_actions import MEDIA_ICONS
+
+        for identifier, ref in MEDIA_ICONS.items():
+            with self.subTest(action=identifier):
+                self.assertTrue(icons.library.get(ref.split(":", 1)[1]))
+
+    def test_there_is_one_for_every_media_action(self) -> None:
+        from linuxstreamdeck.basic_actions import MEDIA_ICONS
+        from linuxstreamdeck.core import media
+
+        self.assertEqual(
+            sorted(MEDIA_ICONS), sorted(media.MEDIA_ACTION_IDS)
+        )
+
+    def test_an_ordinary_action_still_answers_its_one_icon(self) -> None:
+        """`icon_for` defaults to `default_icon`, so nothing else changes."""
+        self.assertEqual(
+            EditorPanel._action_icon("sys.timer", {"duration": "05:00"}),
+            "mdi:timer-outline",
+        )
+
+
+class InheritedIconTests(unittest.TestCase):
+    """Every place a key inherits an icon has to ask the same question.
+
+    Five of them resolve it -- the deck, a step list, the editor preview, the
+    printable sheet and the dial row -- and one still reading `default_icon`
+    would draw a different picture from the rest.
+    """
+
+    def _sources(self) -> str:
+        import inspect
+
+        from linuxstreamdeck.core import controller
+        from linuxstreamdeck.device import layout_sheet
+        from linuxstreamdeck.ui import dials, editor
+
+        return "\n".join(
+            inspect.getsource(module)
+            for module in (controller, layout_sheet, dials, editor)
+        )
+
+    def test_none_of_them_reads_the_plain_attribute(self) -> None:
+        self.assertNotIn("action.default_icon", self._sources())
+
+    def test_all_of_them_ask_with_the_parameters(self) -> None:
+        self.assertIn("icon_for", self._sources())

@@ -43,7 +43,11 @@ ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 
 TOOL_NAME = "propose_key_configuration"
-BLOCKED_ACTIONS = {"sys.command", "obs.raw"}
+# Never offered to a provider. Each of these can reach something outside this
+# application on the strength of a string: a shell, a raw obs-websocket call,
+# or an arbitrary address on the network. A proposal is untrusted text, and a
+# user reviewing one cannot be expected to audit a URL.
+BLOCKED_ACTIONS = {"sys.command", "obs.raw", "web.request"}
 MAX_PROMPT_CHARS = 4000
 MAX_MODEL_CHARS = 160
 MAX_STEPS = 12

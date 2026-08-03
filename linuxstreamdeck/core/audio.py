@@ -31,6 +31,23 @@ class AudioPlaybackError(RuntimeError):
     """A user-facing local audio playback failure."""
 
 
+def _route_to(Gst, player, sink: str) -> None:
+    """Send this playback to a named output rather than the default one.
+
+    A failure here is reported rather than ignored: falling back to the
+    default output would play a soundboard cue out of the speakers while the
+    stream heard nothing, which looks like it worked and is not.
+    """
+    output = Gst.ElementFactory.make("pulsesink", "linuxstreamdeck-output")
+    if output is None:
+        raise AudioPlaybackError(
+            "GStreamer cannot reach the audio server (install its "
+            "PulseAudio plugin) so the sound cannot be sent to the stream"
+        )
+    output.set_property("device", str(sink))
+    player.set_property("audio-sink", output)
+
+
 def _load_gst():
     global _gst_initialized
 
@@ -81,10 +98,16 @@ def play_audio(
     maximum_seconds=0,
     stop_requested: Callable[[], bool] | None = None,
     *,
+    sink: str = "",
     gst=None,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> None:
-    """Play a local file until EOS, a time limit, or an explicit stop request."""
+    """Play a local file until EOS, a time limit, or an explicit stop request.
+
+    `sink` names an output to play into instead of the default one, which is
+    how a soundboard key reaches the virtual device other applications listen
+    to. Blank keeps the behaviour every existing key already has.
+    """
     path = _audio_path(file_path)
     volume = _volume_fraction(volume_percent)
     try:
@@ -104,6 +127,8 @@ def play_audio(
 
     player.set_property("uri", path.as_uri())
     player.set_property("volume", volume)
+    if sink:
+        _route_to(Gst, player, sink)
     deadline = monotonic() + limit if limit > 0 else None
 
     try:

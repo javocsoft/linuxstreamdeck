@@ -29,18 +29,26 @@ style.
    - `name` and `category`: reuse an existing category string exactly.
    - `params: list[Param]`, `description` and optionally `default_icon`.
 2. **Declare parameters with `Param`.** Pick the appropriate `kind` (`string`,
-   `int`, `float`, `choice`, `duration`, `optional_duration` or `file`). Use
-   `minimum` / `maximum` / `step` for bounded numbers and `extensions` /
-   `file_filter_name` for a filtered local file chooser. For options loaded live,
-   use one of the existing `choices_source` values: `scenes`, `inputs`,
-   `media_inputs`, `transitions`, `scene_collections`, `profiles`,
-   `sources_in_scene`, `audio_sources_in_scene`, `filters_of_source`,
-   `text_inputs`, `browser_inputs`, `hotkeys`, `pages`, `deck_profiles` or
-   `applications`. Never hardcode live OBS lists. `pages`, `deck_profiles` and
-   `applications` are `LOCAL_CHOICE_SOURCES` in `ui/steps.py` and must stay
-   filled even when OBS is disconnected; `sources_in_scene`,
-   `audio_sources_in_scene` and `filters_of_source` depend on a sibling
-   parameter (`scene`, `scene` and `source`) and are rebuilt through
+   `int`, `float`, `choice`, `duration`, `optional_duration`, `file` or
+   `color`). Use `minimum` / `maximum` / `step` for bounded numbers and
+   `extensions` / `file_filter_name` for a filtered local file chooser; a
+   `color` parameter needs `default_color` or `default_color_source` (added to
+   `COLOR_SOURCE_PARENTS` when it depends on a sibling) so its swatch shows the
+   right inherited value. For options loaded live, use one of the existing
+   `choices_source` values: `scenes`, `inputs`, `media_inputs`, `transitions`,
+   `scene_collections`, `profiles`, `sources_in_scene`, `audio_sources_in_scene`,
+   `filters_of_source`, `text_inputs`, `browser_inputs`, `hotkeys`, `pages`,
+   `deck_profiles`, `applications`, `audio_apps`, `audio_devices`, `key_lights`,
+   `network_interfaces` or `ha_entities`. Never hardcode live OBS lists or
+   system lists. `pages`, `deck_profiles`, `applications`, `audio_apps`,
+   `audio_devices`, `key_lights`, `network_interfaces` and `ha_entities` are
+   `LOCAL_CHOICE_SOURCES` in `ui/steps.py` and must stay filled even when OBS is
+   disconnected; only `pages`, `deck_profiles` and `applications` are also
+   `SETTLED_CHOICE_SOURCES`, whose empty answer really means nothing to pick —
+   the rest can answer empty for an unrelated reason (missing backend, nothing
+   discovered yet) and must fall back to a plain text field instead. And
+   `sources_in_scene`, `audio_sources_in_scene` and `filters_of_source` depend on
+   a sibling parameter (`scene`, `scene` and `source`) and are rebuilt through
    `_repopulate()` when it changes. The `pages` source is dynamic and scoped to
    the active profile; an action that persists a page name must account for
    rename, deletion and uniqueness in the controller/config model.

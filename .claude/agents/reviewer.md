@@ -125,9 +125,9 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    never enter config or exports. A saved-key mask is read-only display state and
    must never be sent as a credential; replacement, saved-key reuse and forgetting
    must remain explicit. Context must be opt-in and limited to bounded OBS/page
-   names. `sys.command` and `obs.raw` must remain excluded, every provider response
-   locally validated, and generation must never execute or save a key before
-   explicit editor review and user save.
+   names. `sys.command`, `obs.raw` and `web.request` must remain excluded, every
+   provider response locally validated, and generation must never execute or save
+   a key before explicit editor review and user save.
 19. **Grid drag/drop reliability.** Keep one grid-level source/target pair using
    CAPTURE propagation, primary-button dragging, preload and an internal typed
    string payload. Pointer resolution must walk through child widgets to the key

@@ -193,8 +193,10 @@ class DialDialog(Adw.Window):
         for field in ("steps_press", "steps_right", "steps_left"):
             for step in getattr(dial, field, []):
                 action = registry.get(step.action)
-                if action is not None and action.default_icon:
-                    return action.default_icon
+                if action is None:
+                    continue
+                if icon := action.icon_for(step.params):
+                    return icon
         return "mdi:knob"
 
     def current_dial(self) -> KeyConfig:

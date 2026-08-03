@@ -133,6 +133,31 @@ TWITCH_STATS_ACTION_ID = "twitch.stats"
 # somebody has been waiting, which changes with nothing happening.
 ALERT_ACTION_ID = "twitch.alert"
 ALERT_REFRESH_SECONDS = 1.0
+# A key showing a value from an HTTP endpoint. Its interval is chosen per key
+# rather than fixed here, because the endpoint is somebody else's server and
+# only its owner knows what it will tolerate.
+WEB_ACTION_ID = "web.request"
+# A mute key has to be believed, and the mixer can be changed from anywhere --
+# the desktop's own volume panel, a headset button. Only mute keys ask for it,
+# and one cached reading of the mixer serves all of them at once.
+MIXER_ACTION_ID = "sys.volume"
+# A machine measurement on a key. It shares the OBS statistics interval: both
+# are numbers that change with nothing happening, and both are local reads.
+SYSTEM_STATS_ACTION_ID = "sys.stats"
+# A key showing what a Home Assistant entity reports. Its interval is per key,
+# because the server is somebody's own and only they know what it will take.
+HA_STATE_ACTION_ID = "ha.state"
+# A switch key draws whether its entity is on, so it has to keep up with a
+# light somebody turned off from their phone. It has no interval of its own --
+# an on/off key is not something anybody wants to tune -- and the client's own
+# cache decides when a repaint becomes a request.
+# A media key that also shows what is playing. Only then: a plain transport
+# key has no state to draw and must cost nothing.
+MEDIA_ACTION_ID = "sys.media"
+MEDIA_REFRESH_SECONDS = 2.0
+HA_SWITCH_ACTION_ID = "ha.switch"
+HA_SWITCH_REFRESH_SECONDS = 10.0
+MIXER_REFRESH_SECONDS = 2.0
 # How long each half of an alert key's breath lasts. The activity thread's own
 # phase only advances while something is running, so a key that breathes
 # without running needs one derived from the clock instead.
@@ -244,14 +269,17 @@ class DeckController:
         obs,
         deck: DeckManager,
         twitch=None,
+        home_assistant=None,
     ) -> None:
         self.config = config
         self.bus = bus
         self.obs = obs
         self.deck = deck
         self.twitch = twitch
+        self.home_assistant = home_assistant
         self.ctx = ActionContext(
-            obs=obs, controller=self, bus=bus, twitch=twitch
+            obs=obs, controller=self, bus=bus, twitch=twitch,
+            home_assistant=home_assistant,
         )
         # Which folder of the active page is open. View state only: it is never
         # persisted, so the deck always starts at the page root.
@@ -297,6 +325,11 @@ class DeckController:
         self._flashing = threading.Event()
         # ON/OFF state of toggle keys, keyed by RuntimeKey
         self._toggle: dict[RuntimeKey, bool] = {}
+        # What each counter key is showing. Transient exactly like the
+        # toggle state beside it: a count is a tally kept during a session,
+        # and writing it to the configuration on every press would be a
+        # file write plus a backup rotation per press.
+        self._counters: dict[RuntimeKey, int] = {}
         # Number of queued/running feedback-enabled invocations for each key.
         self._running: dict[RuntimeKey, int] = {}
         # Keys whose last run failed, and when that mark stops being shown.
@@ -577,6 +610,7 @@ class DeckController:
         # no need to discard the deleted profile's ON/OFF states individually:
         # clear them all and re-render whichever profile becomes active.
         self._toggle.clear()
+        self._counters.clear()
         self._clear_time_actions()
         # Those keys are gone, or their indices have shifted under it.
         self.forget_undo()
@@ -663,6 +697,7 @@ class DeckController:
             return
         pages.insert(target, pages.pop(index))
         self._toggle.clear()
+        self._counters.clear()
         self._clear_time_actions()
         self.forget_undo()
         self._leave_folders()
@@ -696,6 +731,7 @@ class DeckController:
         pages.insert(index + 1, source.clone(name))
         # Indices at and after the insertion now mean a different page.
         self._toggle.clear()
+        self._counters.clear()
         self._clear_time_actions()
         self.forget_undo()
         self._leave_folders()
@@ -715,6 +751,7 @@ class DeckController:
         # the ON/OFF states of toggle keys reference the page index, which shifts
         # after deletion; they are transient, so clear them and re-render.
         self._toggle.clear()
+        self._counters.clear()
         self._clear_time_actions()
         # Those keys are gone, or their indices have shifted under it.
         self.forget_undo()
@@ -797,6 +834,7 @@ class DeckController:
 
     def _adopt_replaced_configuration(self) -> None:
         self._toggle.clear()
+        self._counters.clear()
         self._clear_time_actions()
         # Those keys are gone, or their indices have shifted under it.
         self.forget_undo()
@@ -943,6 +981,13 @@ class DeckController:
             self._toggle[a] = sb
         if sa is not None:
             self._toggle[b] = sa
+        # A count travels with its key for the same reason a toggle does: it
+        # belongs to that key, not to the position it happened to sit in.
+        ca, cb = self._counters.pop(a, None), self._counters.pop(b, None)
+        if cb is not None:
+            self._counters[a] = cb
+        if ca is not None:
+            self._counters[b] = ca
         self._clocks.swap(a, b)
         for key in (a, b):
             self._cancel_timer_sound(key)
@@ -1047,6 +1092,7 @@ class DeckController:
         """
         key = self._tkey(index)
         self._toggle.pop(key, None)
+        self._counters.pop(key, None)
         self._clocks.reset(key, refresh=False)
         self._cancel_timer_sound(key)
         self._cancel_gesture(key)
@@ -1075,6 +1121,8 @@ class DeckController:
 
         for key in [key for key in self._toggle if inside(key)]:
             self._toggle.pop(key, None)
+        for key in [key for key in self._counters if inside(key)]:
+            self._counters.pop(key, None)
         with self._running_lock:
             for key in [key for key in self._failed if inside(key)]:
                 self._failed.pop(key, None)
@@ -1702,6 +1750,42 @@ class DeckController:
             return 0.0
         if kc.action == ALERT_ACTION_ID:
             return ALERT_REFRESH_SECONDS if self._twitch_linked() else 0.0
+        if kc.action == MEDIA_ACTION_ID:
+            from ..basic_actions import shows_now_playing
+            from .nowplaying import available as player_tool
+
+            if not shows_now_playing(kc.params) or not player_tool():
+                return 0.0
+            return MEDIA_REFRESH_SECONDS
+        if kc.action == HA_SWITCH_ACTION_ID:
+            if self.home_assistant is None or not self.home_assistant.configured():
+                return 0.0
+            return HA_SWITCH_REFRESH_SECONDS
+        if kc.action == HA_STATE_ACTION_ID:
+            from ..ha_actions import refresh_seconds as ha_refresh
+
+            if self.home_assistant is None or not self.home_assistant.configured():
+                return 0.0
+            return ha_refresh(kc.params.get("refresh"))
+        if kc.action == SYSTEM_STATS_ACTION_ID:
+            # Every reading is the kernel's, so it never waits on anything and
+            # never depends on a connection.
+            return STATS_REFRESH_SECONDS
+        if kc.action == MIXER_ACTION_ID:
+            from .mixer import MUTE_MODES, available
+
+            if not available() or str(kc.params.get("mode") or "") not in MUTE_MODES:
+                return 0.0
+            return MIXER_REFRESH_SECONDS
+        if kc.action == WEB_ACTION_ID:
+            from ..web_actions import refresh_seconds, shows_value
+
+            # Repainting is what makes the key ask again; the cache's own
+            # minimum age decides when that becomes a request, so a key that
+            # shows nothing costs nothing at all.
+            if not shows_value(kc.params):
+                return 0.0
+            return refresh_seconds(kc.params.get("refresh"))
         if kc.action == TWITCH_STATS_ACTION_ID:
             # Repainting is what makes the key ask for a fresh snapshot; the
             # client's own cache decides when that becomes a request, so this
@@ -1732,6 +1816,35 @@ class DeckController:
         except RuntimeError:
             if not self._stopping.is_set():
                 raise
+
+    # ---------- counter state ----------
+
+    def counter_value(self, key: RuntimeKey | None, start: int = 0) -> int:
+        """What this counter is showing, or its starting value.
+
+        `start` is the key's own configuration rather than something stored,
+        so changing it in the editor moves an untouched counter with it -- and
+        editing the key resets the count anyway, as it does every other piece
+        of transient key state.
+        """
+        if key is None:
+            return int(start)
+        return self._counters.get(key, int(start))
+
+    def bump_counter(self, key: RuntimeKey | None, step: int, start: int) -> int:
+        if key is None:
+            return int(start)
+        value = self.counter_value(key, start) + int(step)
+        self._counters[key] = value
+        self._refresh_runtime_keys((key,))
+        return value
+
+    def reset_counter(self, key: RuntimeKey | None, start: int = 0) -> int:
+        if key is None:
+            return int(start)
+        self._counters.pop(key, None)
+        self._refresh_runtime_keys((key,))
+        return int(start)
 
     # ---------- timer and stopwatch state ----------
 
@@ -2218,7 +2331,10 @@ class DeckController:
         twitch_blocked = action.requires_twitch(params) and not self._twitch_allows(
             action
         )
-        return obs_blocked or twitch_blocked
+        home_blocked = action.requires_home_assistant(params) and not (
+            self.home_assistant is not None and self.home_assistant.configured()
+        )
+        return obs_blocked or twitch_blocked or home_blocked
 
     def _twitch_linked(self) -> bool:
         return bool(self.twitch is not None and self.twitch.linked)
@@ -2317,8 +2433,10 @@ class DeckController:
     def _first_step_icon(steps) -> str:
         for step in steps:
             action = action_registry.get(step.action)
-            if action is not None and action.default_icon:
-                return action.default_icon
+            if action is None:
+                continue
+            if icon := action.icon_for(step.params):
+                return icon
         return ""
 
     @staticmethod
@@ -2346,12 +2464,19 @@ class DeckController:
         # the key's own icon, or the action's default icon. Only the label the
         # user set explicitly is shown (without it the icon stays centered; the
         # action name is not used, which used to push the icon upwards).
-        icon = kc.icon or (action.default_icon if action else "")
+        icon = kc.icon or (action.icon_for(kc.params) if action else "")
         busy, phase = self._busy_state(index)
         pulse = bool(fb.get("pulse", False))
         return {
             "size": size,
-            "label": kc.label,
+            # An action may replace the label, falling back to the one the user
+            # typed. Only "what is playing" uses it, and it needs exactly this
+            # mechanism: the label is the one place that wraps to two lines at
+            # a constant size, while centered text is fitted to the key width
+            # and so is drawn huge or unreadably small depending on its length.
+            # The fallback is what makes a media key show its own name again
+            # the moment nothing is playing.
+            "label": fb.get("label") or kc.label,
             "icon_path": icon,
             "bg": fb.get("color") or kc.bg_color,
             "active": fb.get("active", False),

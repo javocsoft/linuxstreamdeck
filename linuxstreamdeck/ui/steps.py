@@ -37,13 +37,29 @@ log = logging.getLogger(__name__)
 CATEGORY_ORDER = [
     "OBS · Scenes", "OBS · Recording & Streaming", "OBS · Audio",
     "OBS · Sources & Filters", "OBS · Media", "OBS · Advanced",
-    "System", "Navigation",
+    "System", "Web", "Lights", "Home Assistant", "Navigation",
 ]
 
 # Option sources answered locally, without OBS. They are the same ones
 # `_fetch_choices` resolves above its `obs.connected` guard: keep both in sync,
 # or a local dropdown stops filling while OBS is closed.
-LOCAL_CHOICE_SOURCES = frozenset({"pages", "deck_profiles", "applications"})
+LOCAL_CHOICE_SOURCES = frozenset({
+    "pages", "deck_profiles", "applications", "audio_apps", "audio_devices",
+    "key_lights", "network_interfaces", "ha_entities",
+})
+
+# Of those, the ones whose *empty* answer is a real answer. Everything else
+# coming back empty means the question could not be asked -- no mixer
+# installed, no avahi, no Home Assistant set up, nothing playing audio yet --
+# which is not the same as "there is nothing to pick", and the editor must
+# leave a text field so a value can still be typed by hand.
+#
+# Conflating the two is a mistake that has already been made: `ha_entities`
+# went into the set above because it fills without OBS, and that silently also
+# claimed an empty list was final, leaving a dropdown with no entries and no
+# way past it. `audio_apps` is the clearest case of why it matters -- a "mute
+# Discord" key is configured while Discord is not playing anything.
+SETTLED_CHOICE_SOURCES = frozenset({"pages", "deck_profiles", "applications"})
 
 # Which parameter a `Param.default_color_source` reads to work out the colour
 # an inherited swatch should show. Listing it here is what lets the editor
@@ -510,6 +526,48 @@ def _display_options(source: str, options: list[str]) -> tuple[list[str], dict[s
     are what the protocol takes but not what anyone wants to read. Everything
     else already lists real names, so it maps to itself.
     """
+    if source == "network_interfaces":
+        # `enx00e04c3676eb` is derived from a MAC address and tells nobody
+        # anything. The key still stores the interface name, which is what
+        # /proc/net/dev is keyed by.
+        from ..core.sysstats import interface_label
+
+        return (
+            [interface_label(name) for name in options],
+            {interface_label(name): name for name in options},
+        )
+    if source == "ha_entities":
+        # The key stores the entity id, which is what the API takes; the editor
+        # shows the friendly name, which is the only part anyone knows.
+        from ..core.homeassistant import entity_label
+
+        return (
+            [entity_label(entity) for entity in options],
+            {entity_label(entity): entity for entity in options},
+        )
+    if source == "key_lights":
+        from ..core import keylight
+
+        return (
+            [keylight.light_label(name) for name in options],
+            {keylight.light_label(name): name for name in options},
+        )
+    if source == "audio_devices":
+        # The key stores the stable device name; the editor shows the
+        # description, which is the only part anyone can recognise.
+        from ..core import mixer
+
+        labels: list[str] = []
+        values: dict[str, str] = {}
+        for name in options:
+            label = mixer.device_label(name)
+            if label in values and values[label] != name:
+                label = f"{label} ({name})"
+            if label in values:
+                continue
+            labels.append(label)
+            values[label] = name
+        return labels, values
     if source != "hotkeys":
         return list(options), {}
     labels: list[str] = []
@@ -1053,8 +1111,14 @@ class StepEditor(Gtk.Box):
         fills in as soon as its parent changes. With OBS unreachable the list
         says nothing at all, so it falls back to a text field that can still be
         filled in by hand.
+
+        A local source is only final when it is in `SETTLED_CHOICE_SOURCES`.
+        The rest answer empty for a reason that has nothing to do with there
+        being nothing to pick, and a dropdown with no entries is a dead end.
         """
-        return source in LOCAL_CHOICE_SOURCES or bool(self.app.obs.connected)
+        if source in LOCAL_CHOICE_SOURCES:
+            return source in SETTLED_CHOICE_SOURCES
+        return bool(self.app.obs.connected)
 
     # When the SCENE changes, the source list is repopulated (and, in cascade,
     # the filter list). When the SOURCE changes, only the filter list is
@@ -1132,6 +1196,34 @@ class StepEditor(Gtk.Box):
                 from ..core.apps import application_choices
 
                 return application_choices()
+            if source == "ha_entities":
+                client = getattr(self.app, "home_assistant", None)
+                if client is None:
+                    return []
+                return [entity for entity, _name in client.entities()]
+            if source == "network_interfaces":
+                from ..core.sysstats import network_interfaces
+
+                return network_interfaces()
+            if source == "key_lights":
+                from ..core import keylight
+
+                return keylight.light_choices()
+            if source in ("audio_apps", "audio_devices"):
+                from ..core import mixer
+
+                if not mixer.available():
+                    return []
+                try:
+                    return (
+                        mixer.playing_applications()
+                        if source == "audio_apps"
+                        else mixer.device_choices()
+                    )
+                except mixer.MixerError:
+                    # A mixer that cannot answer leaves a plain text field, so
+                    # a key configured earlier still shows what it holds.
+                    return []
             if not obs.connected:
                 log.debug("[editor] _fetch_choices(%s): OBS disconnected", source)
                 return []

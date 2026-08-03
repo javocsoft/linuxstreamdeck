@@ -13,7 +13,7 @@ from gi.repository import Adw, GLib  # noqa: E402
 
 from . import APP_ID  # noqa: E402
 from .ai.service import AIService  # noqa: E402
-from .core import autostart  # noqa: E402
+from .core import autostart, keylight, webrequest  # noqa: E402
 from .core.config import (  # noqa: E402
     CLOSE_ACTION_TRAY,
     CLOSE_ACTIONS,
@@ -26,7 +26,13 @@ from .core.config import (  # noqa: E402
 )
 from .core.controller import DeckController  # noqa: E402
 from .core.events import EventBus  # noqa: E402
-from .core.secrets import ApiKeyStore, SecretStore, TwitchTokenStore  # noqa: E402
+from .core.homeassistant import HomeAssistantClient  # noqa: E402
+from .core.secrets import (  # noqa: E402
+    ApiKeyStore,
+    HomeAssistantTokenStore,
+    SecretStore,
+    TwitchTokenStore,
+)
 from .core.starter import is_first_run  # noqa: E402
 from .device.manager import DeckManager  # noqa: E402
 from .obs.client import OBSClient  # noqa: E402
@@ -35,6 +41,10 @@ from .twitch.eventsub import EventSubSession  # noqa: E402
 
 # register the action catalogs (the @register decorators run on import)
 from . import basic_actions  # noqa: E402,F401
+from . import ha_actions as _ha_actions  # noqa: E402,F401
+from . import light_actions as _light_actions  # noqa: E402,F401
+from . import system_stats as _system_stats  # noqa: E402,F401
+from . import web_actions as _web_actions  # noqa: E402,F401
 from .obs import actions as _obs_actions  # noqa: E402,F401
 from .twitch import actions as _twitch_actions  # noqa: E402,F401
 
@@ -75,6 +85,11 @@ class LinuxStreamDeckApp:
             store=TwitchTokenStore(),
             client_id=self.config.twitch.client_id,
         )
+        self.ha_tokens = HomeAssistantTokenStore()
+        self.home_assistant = HomeAssistantClient(
+            store=self.ha_tokens,
+            base_url=self.config.home_assistant.base_url,
+        )
         screen = self.config.screensaver
         exit_display = self.config.exit_display
         self.deck = DeckManager(
@@ -88,8 +103,13 @@ class LinuxStreamDeckApp:
             exit_display_image=exit_display.image_path,
         )
         self.controller = DeckController(
-            self.config, self.bus, self.obs, self.deck, twitch=self.twitch
+            self.config, self.bus, self.obs, self.deck, twitch=self.twitch,
+            home_assistant=self.home_assistant,
         )
+        # A state that changed while nobody was looking repaints the deck at
+        # once, rather than waiting out the live loop's interval. Wired after
+        # the controller exists, and only fires on a real change.
+        self.home_assistant.on_change = self.controller.refresh
         # The live event feed. It only reaches the deck through the
         # controller's attention runtime, so nothing here knows about keys.
         self.events = EventSubSession(
@@ -152,6 +172,10 @@ class LinuxStreamDeckApp:
         # waiting on something that has already gone.
         self.events.stop()
         self.twitch.stop()
+        # Last, and after the controller: its workers are what ask for a key's
+        # value, so nothing can queue a fetch once they have stopped.
+        keylight.forget_states()
+        webrequest.shutdown()
         log.info("Shutdown complete")
 
     # ---------- status icon and window lifetime ----------
