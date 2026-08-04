@@ -88,7 +88,12 @@ def catalogue() -> dict:
                 ) if wanted
             ],
         })
-    actions.sort(key=lambda a: (a["category"], a["name"]))
+    # This is the only place the catalogue order is decided. app.js renders the
+    # file as it comes, so the list a crawler reads and the list a visitor sees
+    # cannot disagree. Case-folded because a plain sort puts every capitalised
+    # name above every lowercase one: "Open URL" landed above "Open
+    # application", which reads as no order at all.
+    actions.sort(key=lambda a: (a["category"].lower(), a["name"].lower()))
     return {"version": VERSION, "actions": actions}
 
 

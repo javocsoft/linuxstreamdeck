@@ -1055,22 +1055,6 @@
    "needs": []
   },
   {
-   "id": "sys.url",
-   "name": "Open URL",
-   "category": "System",
-   "description": "Open a web address in the default browser.",
-   "icon": "mdi:web",
-   "params": [
-    {
-     "name": "url",
-     "label": "URL",
-     "kind": "string",
-     "choices": []
-    }
-   ],
-   "needs": []
-  },
-  {
    "id": "sys.app.open",
    "name": "Open application",
    "category": "System",
@@ -1101,6 +1085,22 @@
       "Close the application",
       "Force close the application"
      ]
+    }
+   ],
+   "needs": []
+  },
+  {
+   "id": "sys.url",
+   "name": "Open URL",
+   "category": "System",
+   "description": "Open a web address in the default browser.",
+   "icon": "mdi:web",
+   "params": [
+    {
+     "name": "url",
+     "label": "URL",
+     "kind": "string",
+     "choices": []
     }
    ],
    "needs": []

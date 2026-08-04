@@ -1,28 +1,61 @@
 # landing/
 
 The presentation and manual site for LinuxStreamDeck. Plain HTML, CSS and one
-JavaScript file: no build step, no Node, no package manager, no external
-request at run time. Copy the folder onto any static host and it works.
+JavaScript file: no build step, no Node to serve it, no package manager, no
+external request at run time. Copy the folder onto any static host and it
+works.
 
 ```
 landing/
-├── index.html          the whole page
+├── index.html          the whole page (parts of it generated - see below)
 ├── generate.py         rebuilds everything derived from the application
-├── assets/
-│   ├── style.css       dark by default, light theme follows the visitor
-│   ├── app.js          action search and guide navigation
-│   ├── actions.json    generated: the full action catalogue
-│   └── img/
-│       ├── keys-*.png  generated: composed by the real key renderer
-│       ├── app-window.png  the application window (docs/screenshot.png)
-│       └── logo.svg    the application icon
+├── check.mjs           asserts index.html and app.js agree (needs Node)
+├── robots.txt          generated
+├── sitemap.xml         generated
+└── assets/
+    ├── style.css       dark by default, light theme follows the visitor
+    ├── app.js          action search and guide navigation
+    ├── actions.json    generated: the full action catalogue
+    └── img/
+        ├── keys-*.png      generated: composed by the real key renderer
+        ├── og-card.png     generated: the 1200x630 social sharing card
+        ├── favicon-*.png   generated: rasterized from logo.svg
+        ├── app-window.png  the application window (docs/screenshot.png)
+        └── logo.svg        the application icon
 ```
+
+## Set the address before you deploy
+
+**This is the one thing you must not skip.** Facebook, WhatsApp, X, LinkedIn,
+Slack and Discord all refuse a relative `og:image`, so the sharing card only
+appears if the page carries the absolute address it is really served from.
+Search engines need the same for the canonical link.
+
+```bash
+LSD_CONFIG_DIR="$(mktemp -d)" .venv/bin/python landing/generate.py \
+    --site-url https://your.domain/
+```
+
+That rewrites the canonical link, `og:url`, `og:image`, `twitter:image`, the
+structured data, `robots.txt` and `sitemap.xml` together - they are all built
+from the one `<link rel="canonical">` in `index.html`, so they cannot drift
+apart. The default is `https://javocsoft.github.io/linuxstreamdeck/`, which is
+a guess at where this repository would publish, not a verified address.
+
+After deploying, force the caches to re-read it, or an old preview sticks
+around for days:
+
+- Facebook / WhatsApp: <https://developers.facebook.com/tools/debug/>
+- LinkedIn: <https://www.linkedin.com/post-inspector/>
+- X: <https://cards-dev.twitter.com/validator>
+- Google: Search Console, URL inspection, Request indexing
 
 ## Rebuilding the generated parts
 
-`actions.json` and every `keys-*.png` come from the code, so the site cannot
-drift from what the software actually does. Rerun after adding an action,
-changing an action's name or description, or changing how a key is drawn:
+`actions.json`, every `keys-*.png`, `og-card.png`, the favicons, and the action
+cards inside `index.html` all come from the code, so the site cannot drift from
+what the software does. Rerun after adding an action, changing an action's name
+or description, or changing how a key is drawn:
 
 ```bash
 LSD_CONFIG_DIR="$(mktemp -d)" .venv/bin/python landing/generate.py
@@ -30,13 +63,43 @@ LSD_CONFIG_DIR="$(mktemp -d)" .venv/bin/python landing/generate.py
 
 `LSD_CONFIG_DIR` is not optional and the script refuses to start without it:
 importing the package reaches configuration code, and this must never touch the
-real configuration. See AGENTS.md §6.
+real configuration. See AGENTS.md section 6.
 
-The key pictures go through `renderer.compose()` **offscreen** — they are never
+The key pictures go through `renderer.compose()` **offscreen** - they are never
 screenshots of a running window. The application is single-instance, so
-launching it to photograph it leaves a stale, cached view (AGENTS.md §5.5).
-`app-window.png` is the one exception: it is the repository's own
+launching it to photograph it leaves a stale, cached view (AGENTS.md section
+5.5). `app-window.png` is the one exception: it is the repository's own
 `docs/screenshot.png`, taken by hand.
+
+The favicons are rasterized from `logo.svg` through GdkPixbuf, which comes with
+PyGObject and is therefore already a dependency; no standalone rasterizer
+(rsvg-convert, Inkscape, ImageMagick) is assumed to be installed.
+
+## Why part of index.html is generated
+
+The action catalogue is the most useful thing on the page and it arrives over
+`fetch`, so to anything that does not run JavaScript the page had no content at
+all - which is most social scrapers and every crawler that only reads the
+served HTML. `generate.py` writes the unsearched list of cards between
+`<!-- generated:cards -->` markers, and `app.js` replaces it with **identical**
+markup on its first render.
+
+That coupling is silent when it breaks: the list simply reshuffles or reflows
+the instant the script runs. It has already broken twice - once on
+indentation, once because the two sides sorted the catalogue differently and
+"Open URL" swapped places with "Open application". So it is pinned:
+
+```bash
+node landing/check.mjs
+```
+
+Run that after touching `card()` in `app.js` or `_card_html()` in
+`generate.py`. Node is only needed for this check, never to build or serve the
+site.
+
+The generated regions are `generated:cards`, `generated:count`, and the
+`[data-version]` / `[data-action-count]` elements. Everything else in
+`index.html` is written by hand.
 
 ## Checking it locally
 
@@ -48,48 +111,35 @@ Then open <http://127.0.0.1:8765/>. A server is required rather than opening
 `index.html` from disk: `app.js` fetches `actions.json`, which `file://`
 refuses. The page says so if that happens rather than showing an empty list.
 
+## Releasing
+
+`index.html` and `assets/actions.json` both record the version, so
+`check_hardcoded_versions()` in `packaging/build-deb.sh` will **fail the next
+release build** until this site is regenerated. That is the scan doing its job,
+not a false positive: a site still naming the previous version while the
+package ships the new one is exactly the staleness it exists to catch.
+
+Regenerate with the target version *before* building, because the scan runs
+before `build-deb.sh` syncs `pyproject.toml`:
+
+```bash
+LSD_CONFIG_DIR="$(mktemp -d)" .venv/bin/python landing/generate.py --version X.Y.Z
+./packaging/build-deb.sh X.Y.Z
+```
+
+Without `--version` the script stamps the package's current version, which is
+the right thing every other time.
+
 ## Deploying
 
-Upload the folder as it is. Nothing needs a specific path, every reference is
-relative, and the site works from a subdirectory. If you serve it from GitHub
-Pages, point Pages at this folder on the default branch.
+Upload the folder as it is. Every reference except the social and canonical
+metadata is relative, so the site works from a subdirectory. For GitHub Pages,
+point Pages at this folder on the default branch.
 
 There is no analytics, no font from a CDN and no third-party script. That is
 deliberate: the page is meant to be droppable anywhere, and a documentation
 page that stops working because someone else's host is down is worse than a
 plain one.
-
-## Editing
-
-- **Copy, layout and the guide** live in `index.html`.
-- **Anything about actions** comes from `assets/actions.json` — edit the action
-  in the Python source and regenerate; do not edit the JSON.
-- `app.js` expects these ids: `#q`, `#cards`, `#count`, `#filters`, `#year`,
-  plus `[data-version]` and `[data-action-count]` elements to fill in, and the
-  `.guide aside a` / `.guide .step` pairing for the sidebar highlight.
-
-The search is deliberately written by hand rather than pulling in a library.
-The catalogue is 65 short entries, so a dependency would be more code than the
-feature, and fuzzy matching at this size invents matches instead of admitting
-there are none.
-
-## Releasing
-
-`assets/actions.json` records the version it was generated from, so
-`check_hardcoded_versions()` in `packaging/build-deb.sh` will **fail the next
-release build** until this site is regenerated. That is the scan doing its job,
-not a false positive: a site still naming the previous version while the
-package ships the new one is exactly the staleness it exists to catch. The
-release order is therefore:
-
-```bash
-LSD_CONFIG_DIR="$(mktemp -d)" .venv/bin/python landing/generate.py
-./packaging/build-deb.sh X.Y.Z
-```
-
-`index.html` deliberately carries **no** version literal — `app.js` fills the
-two `[data-version]` elements from the JSON, and a hardcoded fallback would
-have failed that same scan for nothing.
 
 ## Keeping it honest
 
@@ -98,7 +148,7 @@ Two claims on this page are written out by hand and nothing enforces them:
 - The **hardware table** says only the 15-key Original has been run on real
   hardware. Update it when that stops being true, not before.
 - The **"29 OBS actions"** figure in the differentiators section, which appears
-  twice. Re-count from `actions.json` if OBS actions are added:
+  twice. Re-count if OBS actions are added:
 
   ```bash
   python3 -c "import json,collections;d=json.load(open('landing/assets/actions.json'));\

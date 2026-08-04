@@ -130,16 +130,12 @@
         .sort((a, b) => b.s - a.s || a.e.action.name.localeCompare(b.e.action.name))
         .map((x) => x.e);
     }
-    // Unsearched, this is a catalogue rather than a result list, so it is
-    // grouped by category. Registration order is an implementation detail and
-    // reads as no order at all.
-    else {
-      found = [...found].sort(
-        (a, b) =>
-          a.action.category.localeCompare(b.action.category) ||
-          a.action.name.localeCompare(b.action.name)
-      );
-    }
+    // Unsearched, this is a catalogue rather than a result list, and it is
+    // already grouped by category: generate.py sorts actions.json and writes
+    // the same list into index.html for crawlers. Re-sorting here would be a
+    // second opinion on the order, and it was — localeCompare disagreed with
+    // Python's sort about "Open URL" against "Open application", so the list
+    // visibly reshuffled the moment the script ran.
     tally.textContent =
       found.length === ACTIONS.length
         ? `${ACTIONS.length} actions`
