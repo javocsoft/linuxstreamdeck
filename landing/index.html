@@ -65,7 +65,7 @@
     <a class="brand" href="#top"><img src="assets/img/logo.svg" alt=""><span>LinuxStreamDeck</span></a>
     <nav>
       <a href="#different" class="hide-s">Why this one</a>
-      <a href="#features">Features</a>
+      <a href="#features" class="hide-xs">Features</a>
       <a href="#actions">Actions</a>
       <a href="#guide">Guide</a>
       <a class="ghost" href="https://github.com/javocsoft/linuxstreamdeck">GitHub</a>
@@ -90,7 +90,13 @@
     <a class="btn plain" href="#actions">Browse the actions</a>
   </div>
   <div class="shot">
-    <img src="assets/img/app-window.png" alt="The LinuxStreamDeck window: a 15-key virtual deck on the left and the key editor on the right." width="980" height="560">
+    <!-- On a phone the full window scales its keys down to about 30 px, where
+         it reads as a grey smudge. The narrow source is the deck half of the
+         same screenshot, which puts them back at a legible size. -->
+    <picture>
+      <source media="(max-width: 620px)" srcset="assets/img/app-window-narrow.png" width="578" height="560">
+      <img src="assets/img/app-window.png" alt="The LinuxStreamDeck window: a 15-key virtual deck on the left and the key editor on the right." width="980" height="560">
+    </picture>
   </div>
 </div>
 

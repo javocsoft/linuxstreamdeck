@@ -17,6 +17,7 @@
   --live: #26a269;
   --rec: #e0405a;
   --warn: #e0a03a;
+  --header-h: 64px;
   --radius: 14px;
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
   --mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
@@ -44,7 +45,22 @@
 
 * { box-sizing: border-box; }
 
-html { scroll-behavior: smooth; scroll-padding-top: 84px; }
+/* Grid and flex children default to `min-width: auto`, which is the widest
+   thing inside them that cannot be broken. One <pre> holding
+   "sudo apt install ./linux-stream-deck-X.Y.Z.deb" measured 542 px inside a
+   453 px column, so the column refused to shrink and the whole page scrolled
+   sideways on every phone. `overflow-x: auto` on the <pre> does not help:
+   the minimum is decided by the grid item above it. */
+.guide > *, .feature > *, .card, .hero, footer .wrap { min-width: 0; }
+
+/* A path, a URL or a command has no spaces to break at, so a long one sets
+   that same unbreakable minimum from inside a paragraph. Inline code may
+   break anywhere; a block of code keeps its lines intact and scrolls, which
+   is what `pre` already does. */
+code { overflow-wrap: anywhere; }
+pre code { overflow-wrap: normal; }
+
+html { scroll-behavior: smooth; scroll-padding-top: calc(var(--header-h) + 20px); }
 
 body {
   margin: 0;
@@ -93,7 +109,10 @@ header.top {
   display: flex;
   align-items: center;
   gap: 22px;
-  height: 64px;
+  /* min-height, not height: if the nav ever does wrap - a longer link, a
+     visitor with a larger minimum font - the bar grows and pushes the page
+     down instead of drawing the links on top of it. */
+  min-height: var(--header-h);
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -0.01em; }
 .brand img { width: 26px; height: 26px; }
@@ -193,7 +212,8 @@ h3 { font-size: 1.12rem; margin: 0 0 8px; font-weight: 640; letter-spacing: -0.0
 
 /* minmax is 320 rather than 258 so six cards land as 3 + 3 at full width
    instead of 4 + 2, which reads as two of them having been left over. */
-.diff { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.diff { display: grid; gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); }
 .diff article {
   background: var(--bg-card);
   border: 1px solid var(--line);
@@ -243,7 +263,7 @@ h3 { font-size: 1.12rem; margin: 0 0 8px; font-weight: 640; letter-spacing: -0.0
 
 /* ------------------------------------------------------------- explorer */
 
-.finder { position: sticky; top: 64px; z-index: 20; padding: 16px 0 18px; background: var(--bg); }
+.finder { position: sticky; top: var(--header-h); z-index: 20; padding: 16px 0 18px; background: var(--bg); }
 .searchbox { position: relative; }
 .searchbox input {
   width: 100%;
@@ -276,7 +296,10 @@ h3 { font-size: 1.12rem; margin: 0 0 8px; font-weight: 640; letter-spacing: -0.0
 }
 .count { color: var(--ink-faint); font-size: 0.86rem; margin: 14px 0 4px; }
 
-.cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+/* min() matters here: below a 320 px viewport a bare minmax(320px, 1fr)
+   track is wider than the page and everything scrolls sideways. */
+.cards { display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); }
 .card {
   background: var(--bg-card);
   border: 1px solid var(--line);
@@ -313,7 +336,7 @@ h3 { font-size: 1.12rem; margin: 0 0 8px; font-weight: 640; letter-spacing: -0.0
 /* ----------------------------------------------------------------- guide */
 
 .guide { display: grid; grid-template-columns: 232px 1fr; gap: 48px; align-items: start; }
-.guide aside { position: sticky; top: 86px; }
+.guide aside { position: sticky; top: calc(var(--header-h) + 22px); }
 .guide aside ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .guide aside a {
   display: block;
@@ -389,7 +412,92 @@ footer nav { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; }
   .feature:nth-child(even) .text { order: 0; }
   .guide { grid-template-columns: 1fr; gap: 22px; }
   .guide aside { position: static; }
-  .guide aside ol { display: flex; flex-wrap: wrap; gap: 6px; }
-  .top nav { gap: 14px; }
   .top nav a.hide-s { display: none; }
+
+  /* Everything from here down is a touch device, tablets included, so every
+     link has to be reachable with a thumb. Padding rather than gap, because
+     gap is dead space: a bare text link is 23 px tall and a finger needs
+     about 44. The header still measures 64 px, which is where the height
+     comes from. */
+  .top nav { gap: 4px; }
+  .top nav a { padding: 11px 8px; }
+  .ghost { padding: 9px 12px; }
+  .brand { padding: 9px 0; }
+  footer nav { gap: 4px; }
+  footer nav a { padding: 10px 8px; }
+  .filters button { padding: 9px 14px; }
+
+  section { padding: 52px 0; }
+  .hero { padding: 46px 0 44px; }
+  .shot { margin-top: 34px; }
+
+  /* The guide contents becomes a row of chips rather than a column, and each
+     one has to be tappable: 6 px of padding is a 26 px target, under the
+     44 px anyone can reliably hit. */
+  .guide aside ol { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .guide aside a {
+    border: 1px solid var(--line);
+    border-left-width: 1px;
+    border-radius: 999px;
+    padding: 8px 14px;
+    background: var(--bg-soft);
+  }
+  .guide aside a.on {
+    border-color: var(--accent);
+    border-left-color: var(--accent);
+  }
+}
+
+/* One line of header, all the way down. Measured on the real page: the bar
+   needs 506 px for brand plus links and a phone offers 358, so the nav wrapped
+   to a second line inside a header whose height is fixed — the links were
+   drawn over the page below it. The brand wordmark is 139 px of that and the
+   logo still says whose site this is, so it is the thing that goes. */
+@media (max-width: 620px) {
+  .brand span { display: none; }
+  .top .wrap { gap: 12px; }
+  /* Only the sizes change here; the tap targets are already set above. */
+  .top nav a { font-size: 0.88rem; }
+  .ghost { font-size: 0.86rem; }
+
+  /* Measured at 390 px: at the desktop minimum of 2.1rem the headline broke
+     after "Stream", leaving "Deck," alone on a line of its own. The first
+     line is 24 characters, so it needs about 28 px to fit 358 px of column -
+     and the floor has to come down too, or a 320 px screen overflows. */
+  .hero h1 { font-size: clamp(1.4rem, 7vw, 2.2rem); }
+  .hero p.lead { font-size: 1rem; }
+
+  .cta { flex-direction: column; align-items: stretch; }
+  .cta .btn { justify-content: center; }
+
+  /* A row of chips reads as one block of clutter when it is most of the
+     screen; the pictures are what carry these sections on a phone. */
+  .tagrow { display: none; }
+
+  /* These already sit in a .scroll-x container, but `width: 100%` made them
+     fit the phone instead of using it: the explanation column of the
+     troubleshooting table was squeezed to five words a line. A minimum width
+     lets them scroll sideways, which is what the container is for. */
+  table.spec { min-width: 470px; }
+  /* No scroll-shadow here on purpose. The first attempt pinned both gradients
+     with `background-attachment: local`, so they scrolled away with the
+     content instead of marking the box edges - it looked like an affordance
+     and was not one. A row cut mid-word at the edge already says the table
+     continues, and a gradient over that text would only make it harder to
+     read. */
+
+
+  /* The narrowest phones still in use are 320 px. Measured there, the four
+     links plus the button need 312 px against 288 available, so one has to
+     go, and Features is the one nobody navigates to: it is the section you
+     land in by scrolling. Actions and Guide are destinations. */
+  @media (max-width: 400px) {
+    .top nav a.hide-xs { display: none; }
+  }
+  .card { padding: 14px 15px 16px; }
+  /* The category is nowrap and pushed right, so beside a long action name it
+     was the thing that made a card overflow. On a narrow card it belongs
+     under the name. */
+  .card header { display: block; }
+  .card .cat { display: block; margin: 2px 0 0; }
 }

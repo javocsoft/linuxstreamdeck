@@ -280,6 +280,22 @@ def _logo(size: int):
     ).convert("RGBA")
 
 
+def narrow_screenshot() -> None:
+    """The deck half of the application window, for a phone.
+
+    The full 980x560 window scaled into a 358 px column draws its keys at
+    about 30 px, where it reads as a grey smudge rather than as software. The
+    key grid ends at x=578 (measured off the image itself), and cropping to it
+    puts the keys back at roughly 60 px, which is legible. The editor panel is
+    what gets dropped: it is a column of labelled fields, the least
+    recognisable part of the window at any size.
+    """
+    from PIL import Image
+
+    window = Image.open(IMG / "app-window.png")
+    window.crop((0, 0, 578, window.height)).save(IMG / "app-window-narrow.png")
+
+
 def favicons() -> list[str]:
     """A PNG icon beside the SVG one, and one for an iOS home screen.
 
@@ -511,6 +527,8 @@ if __name__ == "__main__":
         print("  keys-screensaver.png")
     except Exception as error:  # pragma: no cover - decorative only
         print(f"  (screen saver frame skipped: {error})")
+    narrow_screenshot()
+    print("  app-window-narrow.png")
     for name in favicons():
         print(f"  {name}")
     social_card(data["version"], len(data["actions"]))
