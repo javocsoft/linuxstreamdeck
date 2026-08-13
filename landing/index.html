@@ -363,23 +363,47 @@
       <div>
         <div class="step" id="install">
           <h3><span class="n">1</span> Install</h3>
-          <p>Download the <code>.deb</code> from the releases page and install it:</p>
-<pre><code>sudo apt install ./linux-stream-deck-X.Y.Z.deb
-sudo ./packaging/refresh-appstream.sh   # so software centres see it</code></pre>
           <p>
-            The package is <code>Architecture: all</code> — the pure-Python app
-            plus two vendored dependencies, with GTK4, GStreamer, Pillow and
-            the keyring coming from apt. It recommends <code>ydotool</code>,
-            <code>playerctl</code>, <code>pulseaudio-utils</code> and
-            <code>avahi-utils</code>; each one that is missing simply disables
-            the keys that need it and says so.
+            Three formats on the
+            <a href="https://github.com/javocsoft/linuxstreamdeck/releases">releases
+            page</a>. The <code>.deb</code> is a Debian package and will
+            <b>not</b> install on Fedora, Arch or openSUSE, whatever you do to
+            it — those want the Flatpak or the AppImage.
           </p>
+          <div class="scroll-x"><table class="spec">
+            <tr><th>Your system</th><th>Use</th></tr>
+            <tr><td>Debian, Ubuntu, Pop!_OS, Mint</td><td><code>.deb</code></td></tr>
+            <tr><td>Fedora, Arch, openSUSE Tumbleweed</td><td>AppImage or Flatpak</td></tr>
+            <tr><td>Debian 12, Ubuntu 22.04, RHEL 9</td><td>Flatpak — the AppImage needs glibc 2.39</td></tr>
+            <tr><td>Anything else</td><td>Flatpak</td></tr>
+          </table></div>
+<pre><code># Debian family
+sudo apt install ./linux-stream-deck-X.Y.Z.deb
+
+# Any distribution: brings its own GTK4, GStreamer and Python
+flatpak install ./linuxstreamdeck-X.Y.Z.flatpak
+
+# One file, nothing installed (glibc 2.39 or newer)
+chmod +x LinuxStreamDeck-X.Y.Z-x86_64.AppImage &amp;&amp; ./LinuxStreamDeck-X.Y.Z-x86_64.AppImage</code></pre>
           <div class="note">
-            <b>USB permissions.</b> Run <code>sudo ./install-udev.sh</code> once
-            (the package does it for you) and replug the deck, or it will not
-            open. Building from source instead? <code>./build.sh --apt</code>
-            then <code>./run.sh</code>.
+            <b>USB permissions, whichever you chose.</b> Linux does not give
+            ordinary users access to a USB device, and no package format can
+            install a system rule for you — the <code>.deb</code> is the one
+            exception, because apt runs as root. Without it the deck is never
+            opened and the application looks broken. The exact command for each
+            format is in
+            <a href="https://github.com/javocsoft/linuxstreamdeck/blob/main/INSTALL.md">INSTALL.md</a>,
+            which also ships beside the files. Then <b>unplug the deck and plug
+            it back in</b>.
           </div>
+          <p>
+            The four desktop tools below — <code>ydotool</code>,
+            <code>playerctl</code>, <code>pulseaudio-utils</code>,
+            <code>avahi-utils</code> — stay optional in every format. Each one
+            missing disables only its own keys, and the key says what to
+            install. Building from source instead?
+            <code>./build.sh --apt</code> then <code>./run.sh</code>.
+          </p>
         </div>
 
         <div class="step" id="connect-obs">
@@ -549,7 +573,7 @@ sudo ./packaging/refresh-appstream.sh   # so software centres see it</code></pre
           <h3><span class="n">11</span> If something is wrong</h3>
           <div class="scroll-x"><table class="spec">
             <tr><th>What you see</th><th>What it means</th></tr>
-            <tr><td>The deck never appears</td><td>USB permissions. <code>sudo ./install-udev.sh</code>, then replug it. The status bar says so after the second failed attempt.</td></tr>
+            <tr><td>The deck never appears</td><td>USB permissions: the rule is not installed. See <a href="#install">step 1</a> — from a source checkout it is <code>sudo ./install-udev.sh</code>. Replug the deck afterwards. The status bar says so after the second failed attempt.</td></tr>
             <tr><td>A faded key</td><td>Every action on it needs a connection that is not there — OBS closed, no Twitch account, no Home Assistant.</td></tr>
             <tr><td>A key outlined in red</td><td>Its action failed just now. The status bar says why, and the full reason is in the log.</td></tr>
             <tr><td>A key showing <code>--</code></td><td>The measurement is not available on this machine. A zero would be a claim; a dash is the truth.</td></tr>
