@@ -17,6 +17,8 @@ import shutil
 import subprocess
 from functools import lru_cache
 
+from . import host
+
 log = logging.getLogger(__name__)
 
 INSTALL_HINT = (
@@ -177,7 +179,7 @@ def parse(shortcut: str) -> tuple[list[str], str]:
 def backend() -> str:
     """Name of the injection tool available, or an empty string."""
     for tool in ("ydotool", "wtype", "xdotool"):
-        if shutil.which(tool):
+        if host.which(tool):
             return tool
     return ""
 
@@ -196,7 +198,7 @@ def ydotool_syntax(executable: str) -> str:
     """
     try:
         result = subprocess.run(
-            [executable, "key", "--help"],
+            host.argv([executable, "key", "--help"]),
             capture_output=True,
             text=True,
             timeout=5,
@@ -212,7 +214,7 @@ def ydotool_syntax(executable: str) -> str:
 
 
 def _ydotool_command(modifiers: list[str], key: str) -> list[str]:
-    executable = shutil.which("ydotool") or "ydotool"
+    executable = host.which("ydotool") or "ydotool"
     if ydotool_syntax(executable) == "names":
         sequence = "+".join([_MODIFIER_NAMES[m] for m in modifiers] + [key])
         return ["ydotool", "key", sequence]
@@ -260,7 +262,9 @@ def send(shortcut: str) -> None:
     """Send one shortcut to the focused application."""
     command = command_for(shortcut)
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            host.argv(command), capture_output=True, text=True, timeout=5
+        )
     except FileNotFoundError as error:
         raise ValueError(INSTALL_HINT) from error
     except (OSError, subprocess.SubprocessError) as error:

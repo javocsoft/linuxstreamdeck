@@ -1,0 +1,188 @@
+# LinuxStreamDeck as a Flatpak.
+#
+# Build and install it with packaging/build-flatpak.sh, which explains the
+# commands and their order.
+#
+# The GNOME runtime is what makes this tractable: GTK4, libadwaita, PyGObject,
+# GStreamer and libsecret all come from it, so the only things built here are
+# hidapi and the four Python packages that are not in it. Building GTK4 from
+# source would be a different project entirely.
+app-id: com.javocsoft.LinuxStreamDeck
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+command: linuxstreamdeck
+
+finish-args:
+  # --- display and input -------------------------------------------------
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+
+  # The Stream Deck is a USB HID device that hidapi opens directly. There is no
+  # narrower permission that works: --device=usb covers only what the portal
+  # enumerates, and a device claimed through hidraw is not among it. The udev
+  # rule still has to be installed on the host, because a Flatpak cannot
+  # install one - build-flatpak.sh says so at the end of every run.
+  - --device=all
+
+  # --- network -----------------------------------------------------------
+  # obs-websocket, Twitch, Home Assistant, Elgato Key Lights and the generic
+  # HTTP action. Two of those are on the LAN rather than the internet.
+  - --share=network
+
+  # --- audio -------------------------------------------------------------
+  # sys.audio plays through GStreamer inside the sandbox. The soundboard's null
+  # sink is created on the host, through the spawn permission below.
+  - --socket=pulseaudio
+
+  # --- the keyring -------------------------------------------------------
+  # The OBS password, the AI provider keys, the Twitch tokens and the Home
+  # Assistant token live in Secret Service and never in config.json.
+  - --talk-name=org.freedesktop.secrets
+
+  # --- the status icon ---------------------------------------------------
+  # ui/tray.py publishes StatusNotifierItem on the session bus itself, so it
+  # needs to own its own name as well as talk to the watcher. The name carries
+  # the process id (org.kde.StatusNotifierItem-<pid>-1), which cannot be known
+  # in advance - and flatpak only accepts a wildcard that replaces a whole
+  # trailing element, so "StatusNotifierItem-*" is rejected outright. Owning
+  # the org.kde subtree is the narrowest form it will take.
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --own-name=org.kde.*
+  - --talk-name=com.canonical.indicator.application
+  - --talk-name=org.ayatana.indicator.application
+
+  # --- media transport ---------------------------------------------------
+  - --talk-name=org.mpris.MediaPlayer2.*
+
+  # --- host tools --------------------------------------------------------
+  # THIS ONE SHOULD BE UNDERSTOOD BEFORE IT IS GRANTED.
+  #
+  # Several features work by running a program that belongs to the desktop
+  # rather than to this application: pactl (per-application volume, mute, the
+  # default device, the soundboard sink), playerctl (transport and what is
+  # playing), ydotool (keyboard shortcuts), avahi-browse (finding Key Lights),
+  # nvidia-smi (GPU load) and pgrep (whether an application is running).
+  #
+  # None is in the sandbox and bundling them would not help: ydotool needs
+  # /dev/uinput, pactl needs the host's own PulseAudio session, avahi-browse
+  # needs the host daemon. core/host.py routes them through
+  # `flatpak-spawn --host`, which is what this permission is for - and an
+  # application that can spawn host processes is not meaningfully confined.
+  # It is the same permission a terminal emulator or an IDE asks for, and the
+  # reason Flathub would be unlikely to take this manifest as it stands.
+  #
+  # Delete this line if you would rather keep the confinement. The application
+  # then behaves exactly as it does on a machine without those tools: the
+  # affected keys report what is missing rather than failing silently, and
+  # everything built on the network - OBS, Twitch, Home Assistant, Key Lights
+  # by IP address - is unaffected.
+  - --talk-name=org.freedesktop.Flatpak
+
+  # --- files -------------------------------------------------------------
+  # Custom key icons, audio for sound keys and the custom exit image are picked
+  # from anywhere; the layout sheet and screenshots are written back out.
+  - --filesystem=home
+  # core/apps.py lists desktop applications through Gio.AppInfo. The host's
+  # own entries reach the sandbox as /run/host/share, which the runtime
+  # already has in XDG_DATA_DIRS, so host-os is what exposes them. Naming
+  # /usr/share/applications directly is not an option and not a preference:
+  # Flatpak reserves /usr and prints "path /usr is reserved" on every run.
+  - --filesystem=host-os:ro
+  - --filesystem=xdg-data/applications:ro
+
+build-options:
+  # The Python packages are installed straight from PyPI rather than being
+  # pinned as individual sources. That trades reproducibility for a manifest
+  # that does not go stale every time one of four packages is released, which
+  # is the right trade for something you build and install yourself. A Flathub
+  # submission would need flatpak-pip-generator output here instead.
+  build-args:
+    - --share=network
+
+modules:
+  # hidapi's libusb backend needs this, and the GNOME SDK has no libusb.
+  # Building only the hidraw backend instead would be smaller and is not an
+  # option: StreamDeck/Transport/LibUSBHIDAPI.py searches Linux for exactly
+  # ["libhidapi-libusb.so", "libhidapi-libusb.so.0"] and never falls back to
+  # the hidraw one, so a hidraw-only build produces a Flatpak that starts
+  # cleanly and never finds a deck.
+  - name: libusb
+    config-opts:
+      - --disable-static
+      - --disable-udev
+    sources:
+      - type: archive
+        url: https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.tar.bz2  # version-check: ignore
+        sha256: ffaa41d741a8a3bee244ac8e54a72ea05bf2879663c098c82fc5757853441575
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+
+  # What python-elgato-streamdeck opens the device through. Pinned, because
+  # this one is a C library and a surprise version is a surprise ABI.
+  #
+  # 0.15.0 rather than 0.14.0 for a specific reason: the SDK ships CMake 4,   version-check: ignore
+  # which refuses a bare `cmake_minimum_required(VERSION 3.1.3)`. 0.15.0      version-check: ignore
+  # declares the range form `3.1.3...3.25` that CMake 4 accepts, which fixes  version-check: ignore
+  # it properly rather than by forcing -DCMAKE_POLICY_VERSION_MINIMUM.
+  - name: hidapi
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DHIDAPI_WITH_HIDRAW=ON
+      - -DHIDAPI_WITH_LIBUSB=ON
+      - -DBUILD_SHARED_LIBS=ON
+      # Without this CMake's GNUInstallDirs picks lib64 on a 64-bit build and
+      # the libraries land in /app/lib64, which is on no search path Flatpak
+      # sets. The build succeeds, the application starts, and no deck is ever
+      # found - verified by ctypes.util.find_library answering None inside the
+      # finished sandbox.
+      - -DCMAKE_INSTALL_LIBDIR=lib
+    sources:
+      - type: archive
+        url: https://github.com/libusb/hidapi/archive/refs/tags/hidapi-0.15.0.tar.gz  # version-check: ignore
+        sha256: 5d84dec684c27b97b921d2f3b73218cb773cf4ea915caee317ac8fc73cef8136
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+      - /lib/cmake
+      - /lib64
+
+  # Pillow, StreamDeck and obsws-python are not in the GNOME runtime. Pillow's
+  # own build dependencies - zlib, libjpeg, freetype - are.
+  - name: python-dependencies
+    buildsystem: simple
+    build-commands:
+      - pip3 install --prefix=${FLATPAK_DEST} --no-compile
+        "pillow>=10.0" "streamdeck>=0.9.5" "obsws-python>=1.7"
+
+  - name: linuxstreamdeck
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-deps --no-compile --prefix=${FLATPAK_DEST} .
+      - install -Dm644 packaging/com.javocsoft.LinuxStreamDeck.desktop
+        ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
+      - install -Dm644 packaging/com.javocsoft.LinuxStreamDeck.svg
+        ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
+      - install -Dm644 packaging/com.javocsoft.LinuxStreamDeck.metainfo.xml
+        ${FLATPAK_DEST}/share/metainfo/${FLATPAK_ID}.metainfo.xml
+      # The udev rule travels inside the Flatpak so somebody who was handed
+      # only the .flatpak file can still get at it:
+      #   flatpak run --command=cat com.javocsoft.LinuxStreamDeck \
+      #       /app/share/linuxstreamdeck/70-linuxstreamdeck.rules | sudo tee ...
+      # A Flatpak cannot install it, and without it the deck is never opened -
+      # which is the likeliest reason a new install looks broken.
+      - install -Dm644 data/udev/70-linuxstreamdeck.rules
+        ${FLATPAK_DEST}/share/linuxstreamdeck/70-linuxstreamdeck.rules
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - .venv
+          - build
+          - dist
+          - landing

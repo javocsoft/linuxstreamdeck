@@ -115,6 +115,43 @@ than a plausible number, or they trip the scan. After installing or upgrading th
 package, run `sudo ./packaging/refresh-appstream.sh` to refresh the system
 AppStream cache for software centres, then reopen the software centre.
 
+**Flatpak:** `./packaging/build-flatpak.sh [--bundle] [--clean]`, from
+`packaging/flatpak/com.javocsoft.LinuxStreamDeck.yml`. It sits on
+`org.gnome.Platform`, which supplies GTK4, libadwaita, PyGObject, GStreamer and
+libsecret, so the only things built are **libusb**, **hidapi** and three pip
+packages. `runtime-version` must stay on a runtime GNOME still supports — 48
+reached end of life in March 2026, and `flatpak install` says so on every run
+rather than failing, which is exactly how a manifest quietly stops getting
+security updates.
+
+Two things about it are load-bearing:
+
+- **hidapi must be built with the libusb backend, and therefore libusb must be
+  built first.** `StreamDeck/Transport/LibUSBHIDAPI.py` searches Linux for
+  exactly `["libhidapi-libusb.so", "libhidapi-libusb.so.0"]` and never falls
+  back to the hidraw one. A hidraw-only build is smaller, configures cleanly
+  and produces a Flatpak that starts perfectly and never finds a deck. The
+  GNOME SDK has no libusb, so leaving it out fails the build outright — which
+  is the good failure; the silent one is worse.
+- **`--talk-name=org.freedesktop.Flatpak` is a deliberate hole.** See
+  `core/host.py`: nine features run a host program, and an application that can
+  spawn host processes is not meaningfully confined. Removing that line leaves
+  a confined Flatpak in which those keys report what is missing, exactly as on
+  a machine without the tools, and everything network-based is unaffected.
+
+**AppImage:** `./packaging/build-appimage.sh`, built in a container from
+`packaging/appimage/Dockerfile`. The base is Ubuntu 24.04 and that is not a
+preference: the UI uses `Adw.Dialog` and `Adw.ToolbarView`, which need
+libadwaita 1.5, and 24.04 is the oldest Ubuntu carrying it. An AppImage cannot
+run on an older glibc than it was built against, so the base sets the floor at
+**glibc 2.39** — Fedora 40+, Ubuntu 24.04+, Arch and Tumbleweed work; Debian 12,
+Ubuntu 22.04 and RHEL 9 do not and want the Flatpak. Do not "fix" that by
+moving to an older base without first checking every `Adw.*` the UI uses.
+
+Neither format can install the udev rule or the optional host tools, so both
+scripts print those two reminders when they finish. Never drop them: without
+the rule the deck is simply never opened.
+
 ---
 
 ## 3. Architecture
@@ -2864,6 +2901,19 @@ ignored and you will chase a ghost.
    for the same reason: keep them expressed as `FONT_SIZE_DIVISORS` of the key
    height rather than absolute point sizes, so no choice can grow into an
    oversized mask.
+   **Where the font is found is a separate trap, and it is silent.** Every
+   renderer used to carry its own list of font paths and all four lists held
+   Debian and Arch locations only. Pillow answers a missing font with
+   `ImageFont.load_default()` rather than raising, so Fedora, openSUSE and the
+   Flatpak runtime — which keeps DejaVu at `/usr/share/fonts/dejavu/`, a path
+   none of the lists had — drew every key label, the startup title and the
+   screen saver at roughly 40% size with nothing logged. Measured: "Record" at
+   size 20 is 79 px wide with a real font and 32 px with the default one.
+   `core/fonts.py` is now the one list, and it ends with a copy the package
+   carries so an AppImage can run on a machine with no fonts at all. Keep the
+   bundled entry **last**, or it overrides the font the machine actually has.
+   *Guarded by* `tests/test_fonts.py`.
+
    *Guarded by* `BasicFontLayoutTests`, which records every `ImageFont.truetype`
    call made while rendering an icon, key images, four screen-saver styles, the
    startup sequence and the exit tiles, and fails if any of them omitted

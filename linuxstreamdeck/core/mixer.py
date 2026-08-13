@@ -30,6 +30,8 @@ import subprocess
 import threading
 import time
 
+from . import host
+
 log = logging.getLogger(__name__)
 
 PACTL = "pactl"
@@ -96,7 +98,7 @@ class Device:
 # ---------- talking to pactl ----------
 
 def available() -> bool:
-    return shutil.which(PACTL) is not None
+    return host.which(PACTL) is not None
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess:
@@ -104,7 +106,8 @@ def _run(args: list[str]) -> subprocess.CompletedProcess:
         raise MixerError(MISSING_BACKEND)
     try:
         return subprocess.run(
-            [PACTL, *args], capture_output=True, text=True, timeout=TIMEOUT
+            host.argv([PACTL, *args]),
+            capture_output=True, text=True, timeout=TIMEOUT,
         )
     except (OSError, subprocess.SubprocessError) as error:
         raise MixerError(f"The audio mixer did not respond: {error}") from error

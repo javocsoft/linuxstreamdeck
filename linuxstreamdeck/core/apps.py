@@ -16,6 +16,8 @@ import subprocess
 
 from gi.repository import Gio, GLib
 
+from . import host
+
 log = logging.getLogger(__name__)
 
 # How long a polite terminate is given before a forced close may follow.
@@ -119,13 +121,13 @@ def running_pids(reference: str) -> list[int]:
     if not names:
         return []
     pids: list[int] = []
-    pgrep = shutil.which("pgrep")
+    pgrep = host.which("pgrep")
     if pgrep is None:
         return []
     for name in names:
         try:
             result = subprocess.run(
-                [pgrep, "-u", str(os.getuid()), "-x", name],
+                host.argv([pgrep, "-u", str(os.getuid()), "-x", name]),
                 capture_output=True,
                 text=True,
                 timeout=5,

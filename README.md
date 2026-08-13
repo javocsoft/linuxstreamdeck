@@ -374,7 +374,21 @@ hand actually turned. Tapping a panel on the strip presses the dial under it.
 
 ## ⚙️ Installation
 
-### Option A — Install the `.deb` (recommended)
+> Handing the files to somebody else? [**INSTALL.md**](INSTALL.md) is written
+> for them rather than for you, and both build scripts drop a copy into `dist/`
+> beside the artefact — a double click shows none of what follows.
+
+> **Which one?** The `.deb` is a Debian package: it will not install on Fedora,
+> openSUSE, Arch or anything else, whatever you do to it. For those, use the
+> **Flatpak** (option C) or the **AppImage** (option D).
+>
+> | | Debian / Ubuntu / Pop!\_OS | Fedora 40+, Arch, Tumbleweed | Debian 12, Ubuntu 22.04, RHEL 9 |
+> | --- | --- | --- | --- |
+> | `.deb` | yes | no | no |
+> | Flatpak | yes | yes | yes |
+> | AppImage | yes | yes | no (needs glibc 2.39) |
+
+### Option A — Install the `.deb` (Debian family only)
 
 On Debian/Ubuntu/Pop!_OS, download the latest `linux-stream-deck-<version>.deb`
 from the [**Releases page**](https://github.com/javocsoft/linuxstreamdeck/releases/latest)
@@ -460,6 +474,65 @@ sudo ./packaging/refresh-appstream.sh
 
 Close and reopen the software centre afterwards to load the refreshed cache.
 </details>
+
+### Option C — Flatpak (any distribution)
+
+The Flatpak brings its own GTK4, libadwaita, GStreamer and PyGObject, so it does
+not care what the host has. It is the option for Fedora, openSUSE, Arch and for
+anything too old for the AppImage.
+
+```bash
+./packaging/build-flatpak.sh            # build and install for this user
+./packaging/build-flatpak.sh --bundle   # also write a single .flatpak file
+```
+
+The `--bundle` file is the one to hand to somebody else:
+`flatpak install ./linuxstreamdeck-<version>.flatpak`.
+
+Two things still have to happen on the host, because a Flatpak cannot do
+either: install the udev rule (`sudo install -m644
+data/udev/70-linuxstreamdeck.rules /etc/udev/rules.d/`, then replug the deck),
+and install any of `ydotool`, `playerctl`, `pulseaudio-utils` or `avahi-utils`
+whose keys you want. The build script prints both reminders when it finishes.
+
+<details>
+<summary>What the sandbox means for the system-integration keys</summary>
+
+Several features run a program that belongs to the desktop rather than to this
+application — `pactl` for per-application audio and the soundboard, `playerctl`
+for media transport and what is playing, `ydotool` for keyboard shortcuts,
+`avahi-browse` to find Key Lights. None of those exists inside a sandbox.
+
+The manifest therefore asks for `--talk-name=org.freedesktop.Flatpak`, which
+lets the application run them on the host through `flatpak-spawn`. **That is a
+deliberate hole and it should be understood as one:** an application that can
+spawn host processes is not meaningfully confined. It is the same permission a
+terminal emulator or an IDE asks for, and the reason this manifest is unlikely
+to be accepted on Flathub as it stands.
+
+Delete that line from
+`packaging/flatpak/com.javocsoft.LinuxStreamDeck.yml` if you would rather keep
+the confinement. Everything built on the network — OBS, Twitch, Home Assistant,
+Key Lights entered by IP address — is unaffected, and the keys that need a host
+tool report what is missing instead of failing silently.
+</details>
+
+### Option D — AppImage (one file, no install)
+
+```bash
+./packaging/build-appimage.sh    # -> dist/LinuxStreamDeck-<version>-x86_64.AppImage
+chmod +x dist/LinuxStreamDeck-*.AppImage && ./dist/LinuxStreamDeck-*.AppImage
+```
+
+The build runs in a container (podman or docker), on Ubuntu 24.04. That base is
+not arbitrary: the application uses `Adw.Dialog` and `Adw.ToolbarView`, which
+need libadwaita 1.5, and 24.04 is the oldest Ubuntu that ships it. An AppImage
+cannot run on an older glibc than it was built against, so this sets the floor
+at **glibc 2.39** — Fedora 40+, Ubuntu 24.04+, Arch and openSUSE Tumbleweed are
+fine; Debian 12, Ubuntu 22.04 and RHEL 9 are not, and want the Flatpak.
+
+The udev rule travels inside the image, and the script prints how to extract and
+install it.
 
 ## 🕹️ Usage
 

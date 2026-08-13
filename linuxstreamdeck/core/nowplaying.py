@@ -28,6 +28,8 @@ from urllib.parse import unquote, urlsplit
 
 from . import webrequest
 
+from . import host
+
 log = logging.getLogger(__name__)
 
 PLAYERCTL = "playerctl"
@@ -90,7 +92,7 @@ class Track:
 
 
 def available() -> bool:
-    return shutil.which(PLAYERCTL) is not None
+    return host.which(PLAYERCTL) is not None
 
 
 # ---------- the reading, shared by every key ----------
@@ -122,7 +124,7 @@ def _read() -> Track | None:
         return None
     try:
         result = subprocess.run(
-            [PLAYERCTL, "metadata", "--format", FORMAT],
+            host.argv([PLAYERCTL, "metadata", "--format", FORMAT]),
             capture_output=True, text=True, timeout=TIMEOUT,
         )
     except (OSError, subprocess.SubprocessError) as error:

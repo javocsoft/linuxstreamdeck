@@ -28,6 +28,7 @@ from ..core.config import (
     KeyConfig,
 )
 from ..core.icons import RENDER_LOCK
+from ..core import fonts
 from . import renderer
 
 # Rendered larger than the hardware so the sheet stays readable on paper.
@@ -46,12 +47,7 @@ SUBTITLE_COLOR = "#9aa0b0"
 CAPTION_COLOR = "#c8ccd8"
 RULE_COLOR = "#2a2a34"
 
-_FONT_CANDIDATES = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/firasans/FiraSans-Regular.ttf",
-    "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
-]
+_FONT_CANDIDATES = fonts.SANS_REGULAR
 _BOLD_CANDIDATES = renderer._FONT_CANDIDATES
 
 

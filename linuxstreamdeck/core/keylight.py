@@ -28,6 +28,8 @@ import time
 
 from . import webrequest
 
+from . import host
+
 log = logging.getLogger(__name__)
 
 PORT = 9123
@@ -257,7 +259,7 @@ _discovery: tuple[float, list[Light]] = (0.0, [])
 
 
 def discovery_available() -> bool:
-    return shutil.which(DISCOVERY_TOOL) is not None
+    return host.which(DISCOVERY_TOOL) is not None
 
 
 def discover(now: float | None = None) -> list[Light]:
@@ -287,7 +289,7 @@ def forget_discovery() -> None:
 def _browse() -> list[Light]:
     try:
         result = subprocess.run(
-            [DISCOVERY_TOOL, "-rpt", SERVICE],
+            host.argv([DISCOVERY_TOOL, "-rpt", SERVICE]),
             capture_output=True, text=True, timeout=DISCOVERY_TIMEOUT,
         )
     except (OSError, subprocess.SubprocessError) as error:

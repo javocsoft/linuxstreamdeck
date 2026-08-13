@@ -13,6 +13,8 @@ import logging
 import shutil
 import subprocess
 
+from . import host
+
 log = logging.getLogger(__name__)
 
 VOLUME_STEP_PERCENT = 5
@@ -55,18 +57,20 @@ def identifier_for(label: str) -> str:
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(command, capture_output=True, text=True, timeout=5)
+    return subprocess.run(
+        host.argv(command), capture_output=True, text=True, timeout=5
+    )
 
 
 def transport_available() -> bool:
-    return shutil.which("playerctl") is not None
+    return host.which("playerctl") is not None
 
 
 def mixer_command() -> list[str] | None:
     """The mixer front end available on this session, if any."""
-    if shutil.which("wpctl"):
+    if host.which("wpctl"):
         return ["wpctl"]
-    if shutil.which("pactl"):
+    if host.which("pactl"):
         return ["pactl"]
     return None
 

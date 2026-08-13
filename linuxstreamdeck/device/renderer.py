@@ -15,6 +15,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from ..core.icons import RENDER_LOCK, library as icon_library
+from ..core import fonts
 
 log = logging.getLogger(__name__)
 
@@ -165,12 +166,9 @@ def _pulse_blend(color, amount: float) -> tuple[int, int, int]:
     return _blend(color, PULSE_TOWARDS, amount)
 
 
-_FONT_CANDIDATES = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/firasans/FiraSans-Bold.ttf",
-    "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-]
+# One shared list, covering every distribution and the Flatpak runtime, and
+# ending in the font the package carries. See core/fonts.py for why.
+_FONT_CANDIDATES = fonts.SANS_BOLD
 
 
 @lru_cache(maxsize=32)

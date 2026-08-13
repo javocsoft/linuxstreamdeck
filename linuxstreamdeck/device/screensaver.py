@@ -12,6 +12,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from ..core.config import DEFAULT_SCREENSAVER, SCREENSAVER_IDS
 from ..core.icons import RENDER_LOCK
+from ..core import fonts
 from .startup_animation import title_layout
 
 GRID_COLUMNS = 5
@@ -23,27 +24,12 @@ TITLE = "LinuxStreamDeck"
 HAL_BREATH_CYCLES = 0.11
 HAL_DOT_CYCLES = 0.23
 
-_FONT_CANDIDATES = (
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/firasans/FiraSans-Bold.ttf",
-    "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-)
+_FONT_CANDIDATES = fonts.SANS_BOLD
 
 # Fonts that may carry half-width katakana, for the Matrix Code rain. None of
 # them is a dependency: `_matrix_alphabet()` falls back to Latin and digits when
 # the machine has no Japanese font, so the style always renders.
-_CJK_FONT_CANDIDATES = (
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansJP-Regular.otf",
-    "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
-    "/usr/share/fonts/truetype/vlgothic/VL-Gothic-Regular.ttf",
-    "/usr/share/fonts/truetype/takao-gothic/TakaoPGothic.ttf",
-    "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf",
-    "/usr/share/fonts/OTF/NotoSansCJK-Regular.ttc",
-)
+_CJK_FONT_CANDIDATES = fonts.CJK
 
 # The film's glyph set: half-width katakana, digits and a few symbols.
 MATRIX_KATAKANA = "".join(chr(code) for code in range(0xFF66, 0xFF9E))

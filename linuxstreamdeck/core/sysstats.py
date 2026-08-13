@@ -22,6 +22,8 @@ import threading
 import time
 from pathlib import Path
 
+from . import host
+
 log = logging.getLogger(__name__)
 
 PROC_STAT = Path("/proc/stat")
@@ -459,12 +461,12 @@ def _read_gpu() -> dict:
 
 
 def _read_nvidia() -> dict:
-    if shutil.which(NVIDIA_TOOL) is None:
+    if host.which(NVIDIA_TOOL) is None:
         return {}
     try:
         result = subprocess.run(
-            [NVIDIA_TOOL, f"--query-gpu={NVIDIA_FIELDS}",
-             "--format=csv,noheader,nounits"],
+            host.argv([NVIDIA_TOOL, f"--query-gpu={NVIDIA_FIELDS}",
+                       "--format=csv,noheader,nounits"]),
             capture_output=True, text=True, timeout=5,
         )
     except (OSError, subprocess.SubprocessError):

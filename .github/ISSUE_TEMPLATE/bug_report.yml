@@ -33,7 +33,7 @@ body:
     attributes:
       label: LinuxStreamDeck version
       description: See the About dialog, or run `linuxstreamdeck --version`.
-      placeholder: "0.3.4"
+      placeholder: "X.Y.Z"
     validations:
       required: true
   - type: dropdown

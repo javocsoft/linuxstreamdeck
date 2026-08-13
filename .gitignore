@@ -64,3 +64,6 @@ Thumbs.db
 #   linuxstreamdeck/assets/icons/*.ttf, *.json, LICENSE-MDI.txt
 #   data/udev/*.rules
 # they are part of the project and must be versioned.
+
+# flatpak-builder scratch tree
+.flatpak-builder/

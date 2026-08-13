@@ -10,6 +10,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from ..core.icons import RENDER_LOCK
+from ..core import fonts
 
 GRID_COLUMNS = 5
 TITLE = "LinuxStreamDeck"
@@ -18,12 +19,7 @@ TITLE = "LinuxStreamDeck"
 # "LinuxS" that simply cutting the name produced.
 TITLE_FORMS = (TITLE, "LinuxDeck", "Linux", "Deck")
 
-_FONT_CANDIDATES = (
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/firasans/FiraSans-Bold.ttf",
-    "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-)
+_FONT_CANDIDATES = fonts.SANS_BOLD
 
 
 @dataclass(frozen=True)

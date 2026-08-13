@@ -80,7 +80,7 @@ class FakeHttp:
 DEFAULT_ANSWERS = {
     "/api/states": STATES,
     "/api/": {"message": "API running."},
-    "/api/config": {"version": "2025.7.1"},
+    "/api/config": {"version": "2025.7.1"},  # version-check: ignore (HA's)
     "/api/states/light.kitchen": STATES[0],
     "/api/states/sensor.office_temp": STATES[2],
 }
@@ -225,7 +225,7 @@ class RequestTests(ClientTestCase):
         self.assertIn("not like Home Assistant", str(caught.exception))
 
     def test_the_check_confirms_both_halves_and_names_the_version(self) -> None:
-        self.assertEqual(self.client().check(), "2025.7.1")
+        self.assertEqual(self.client().check(), "2025.7.1")  # version-check: ignore
 
 
 class ServiceTests(ClientTestCase):
