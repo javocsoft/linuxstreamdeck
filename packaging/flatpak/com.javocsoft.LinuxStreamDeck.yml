@@ -167,7 +167,15 @@ modules:
         ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
       - install -Dm644 packaging/com.javocsoft.LinuxStreamDeck.svg
         ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
-      - install -Dm644 packaging/com.javocsoft.LinuxStreamDeck.metainfo.xml
+      # The repository file is deliberately a template shared by every
+      # package format. Render its release here instead of shipping literal
+      # @VERSION@ and @DATE@ markers in the installed Flatpak.
+      - install -d ${FLATPAK_DEST}/share/metainfo
+      - >-
+        version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml) &&
+        release_date=$(date -u +%F) &&
+        sed -e "s/@VERSION@/${version}/g" -e "s/@DATE@/${release_date}/g"
+        packaging/com.javocsoft.LinuxStreamDeck.metainfo.xml >
         ${FLATPAK_DEST}/share/metainfo/${FLATPAK_ID}.metainfo.xml
       # The udev rule travels inside the Flatpak so somebody who was handed
       # only the .flatpak file can still get at it:

@@ -49,8 +49,16 @@ install -Dm644 "$SRC/packaging/$APPID.desktop" \
 install -Dm644 "$SRC/packaging/$APPID.svg" \
     "$APPDIR/usr/share/icons/hicolor/scalable/apps/$APPID.svg"
 install -Dm644 "$SRC/packaging/$APPID.svg" "$APPDIR/$APPID.svg"
-install -Dm644 "$SRC/packaging/$APPID.metainfo.xml" \
-    "$APPDIR/usr/share/metainfo/$APPID.metainfo.xml" 2>/dev/null || true
+# Keep the source metainfo templated so every package derives its release from
+# the same version source.  appimagetool still discovers the legacy .appdata.xml
+# filename, while AppStream consumers use .metainfo.xml, so carry both names.
+RELEASE_DATE="$(date -u +%F)"
+mkdir -p "$APPDIR/usr/share/metainfo"
+sed -e "s/@VERSION@/$VERSION/g" -e "s/@DATE@/$RELEASE_DATE/g" \
+    "$SRC/packaging/$APPID.metainfo.xml" \
+    > "$APPDIR/usr/share/metainfo/$APPID.metainfo.xml"
+cp "$APPDIR/usr/share/metainfo/$APPID.metainfo.xml" \
+    "$APPDIR/usr/share/metainfo/$APPID.appdata.xml"
 
 # The udev rule travels inside the image so the user can install it without
 # having to find the repository. An AppImage cannot install it itself.
