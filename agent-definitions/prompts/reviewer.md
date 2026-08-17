@@ -156,7 +156,19 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    in-flight prime cannot overwrite the disconnect reset.
    `DeckManager.stop()` must wake and join the saver thread before joining the
    monitor and applying the clean-exit display.
-21. **Clean-exit display lifecycle.** Preserve the three physical-device modes:
+21. **Built-in game ownership.** A live game must consume physical press and
+   release edges before configured actions, including the release after a Back
+   press made the session inactive, and suppress virtual actions, dials,
+   touchscreen input, normal rendering, alert flashes, editing and DnD. Screen-
+   saver suppression must compose named OBS/game reasons without one releasing
+   the other; game ownership must also beat manual preview. Layouts must derive
+   from live geometry, Plus HUD use must stay gated on dials, game rendering must
+   share `RENDER_LOCK`/BASIC layout, audio work must be bounded and cancellable,
+   and shutdown must join the game before HID closes. Every exit path must
+   restore configured keys without reviving a delayed report overlay.
+   Configuration import/backup restore must also replace the game manager's
+   settings reference, so new preferences and records reach the active Config.
+22. **Clean-exit display lifecycle.** Preserve the three physical-device modes:
    `device_default` calls the firmware reset, `blank` writes every key black
    before setting brightness to 0, and `custom` validates and center-crops one
    full-grid image before writing it at normal configured brightness. Apply the
@@ -165,9 +177,9 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    default. Clean shutdown during provisional startup must apply it too. Never
    claim a forced termination, crash or power loss can guarantee these final HID
    writes.
-22. **English-only.** Flag Spanish or accented text introduced in any versioned
+23. **English-only.** Flag Spanish or accented text introduced in any versioned
    user-facing string, comment, log or document.
-23. **General correctness.** Report proven bugs, resource leaks and broken error
+24. **General correctness.** Report proven bugs, resource leaks and broken error
    handling beyond the specialist checklist.
 
 ## Output

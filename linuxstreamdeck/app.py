@@ -107,6 +107,7 @@ class LinuxStreamDeckApp:
             self.config, self.bus, self.obs, self.deck, twitch=self.twitch,
             home_assistant=self.home_assistant,
         )
+        self.bus.subscribe("game.settings", self._save_game_settings)
         # A state that changed while nobody was looking repaints the deck at
         # once, rather than waiting out the live loop's interval. Wired after
         # the controller exists, and only fires on a real change.
@@ -125,6 +126,10 @@ class LinuxStreamDeckApp:
         self.deck.set_screensaver_suppressed(
             bool(_data["recording"] or _data["streaming"])
         )
+
+    def _save_game_settings(self, _topic, _data) -> None:
+        """Persist a lobby choice or a high score on the GTK main thread."""
+        self.config.save()
 
     def _on_activate(self, _app) -> None:
         if self.window is None:
@@ -203,6 +208,9 @@ class LinuxStreamDeckApp:
             on_quit=self.request_quit,
             on_select_profile=self.select_profile,
             profiles=self._tray_profiles,
+            on_start_game=self.request_game,
+            on_stop_game=self.controller.stop_game,
+            game_active=lambda: self.controller.games.active,
         )
         if not tray.start():
             return
@@ -210,6 +218,7 @@ class LinuxStreamDeckApp:
         # Adding, renaming, deleting or switching a profile all publish this
         # event, so the icon's profile list never goes stale.
         self.bus.subscribe("profile.changed", lambda *_a: tray.refresh())
+        self.bus.subscribe("game.state", lambda *_a: tray.refresh())
 
     def _tray_profiles(self) -> tuple[list[str], int]:
         return (
@@ -243,6 +252,13 @@ class LinuxStreamDeckApp:
             self.window.request_profile(index)
         else:
             self.controller.set_profile(index)
+
+    def request_game(self) -> None:
+        """Start a game through the window's unsaved-key guard."""
+        if self.window is None:
+            self.controller.start_game()
+            return
+        self.window.request_game()
 
     def request_quit(self) -> None:
         """Quit from the status icon, giving the window a chance to confirm."""

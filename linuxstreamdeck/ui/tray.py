@@ -42,6 +42,9 @@ PROFILES_ID = 2
 QUIT_ID = 3
 SEPARATOR_BEFORE_PROFILES_ID = 4
 SEPARATOR_BEFORE_QUIT_ID = 5
+GAMES_ID = 6
+MOLE_SMASH_ID = 7
+STOP_GAME_ID = 8
 PROFILE_ID_BASE = 100
 
 # Status areas choose their closest representation rather than scaling one
@@ -274,7 +277,11 @@ def is_supported() -> bool:
         return False
 
 
-def menu_items(profiles: list[str], current_profile: int) -> list[dict]:
+def menu_items(
+    profiles: list[str],
+    current_profile: int,
+    game_active: bool = False,
+) -> list[dict]:
     """Flat description of the menu, used to build the layout and for tests."""
     items: list[dict] = [
         {"id": OPEN_ID, "label": "Open"},
@@ -282,7 +289,7 @@ def menu_items(profiles: list[str], current_profile: int) -> list[dict]:
         {
             "id": PROFILES_ID,
             "label": "Profile",
-            "enabled": bool(profiles),
+            "enabled": bool(profiles) and not game_active,
             "children": [
                 {
                     "id": PROFILE_ID_BASE + index,
@@ -291,6 +298,16 @@ def menu_items(profiles: list[str], current_profile: int) -> list[dict]:
                     "toggled": index == current_profile,
                 }
                 for index, name in enumerate(profiles)
+            ],
+        },
+        {
+            "id": GAMES_ID,
+            "label": "Games",
+            "children": [
+                {
+                    "id": STOP_GAME_ID if game_active else MOLE_SMASH_ID,
+                    "label": "Stop Mole Smash" if game_active else "Mole Smash",
+                }
             ],
         },
         {"id": SEPARATOR_BEFORE_QUIT_ID, "separator": True},
@@ -361,11 +378,17 @@ class TrayIcon:
         on_select_profile: Callable[[int], None],
         profiles: Callable[[], tuple[list[str], int]],
         icon_name: str = APP_ID,
+        on_start_game: Callable[[], None] | None = None,
+        on_stop_game: Callable[[], None] | None = None,
+        game_active: Callable[[], bool] | None = None,
     ) -> None:
         self._on_open = on_open
         self._on_quit = on_quit
         self._on_select_profile = on_select_profile
         self._profiles = profiles
+        self._on_start_game = on_start_game or (lambda: None)
+        self._on_stop_game = on_stop_game or (lambda: None)
+        self._game_active = game_active or (lambda: False)
         self._icon_name = icon_name
         self._icon_pixmaps = _load_icon_pixmaps(icon_name)
         # Hosts are encouraged to prefer IconName when both forms exist. Keep
@@ -550,7 +573,12 @@ class TrayIcon:
         except Exception:
             log.debug("Could not read the profile list", exc_info=True)
             profiles, current = [], 0
-        return menu_items(profiles, current)
+        try:
+            game_active = bool(self._game_active())
+        except Exception:
+            log.debug("Could not read the game state", exc_info=True)
+            game_active = False
+        return menu_items(profiles, current, game_active)
 
     def _on_menu_call(
         self, _connection, _sender, _path, _interface, method, params, invocation
@@ -610,6 +638,10 @@ class TrayIcon:
             GLib.idle_add(self._invoke, self._on_open)
         elif item_id == QUIT_ID:
             GLib.idle_add(self._invoke, self._on_quit)
+        elif item_id == MOLE_SMASH_ID:
+            GLib.idle_add(self._invoke, self._on_start_game)
+        elif item_id == STOP_GAME_ID:
+            GLib.idle_add(self._invoke, self._on_stop_game)
         elif item_id >= PROFILE_ID_BASE:
             index = item_id - PROFILE_ID_BASE
             GLib.idle_add(self._invoke, self._on_select_profile, index)

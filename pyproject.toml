@@ -26,4 +26,6 @@ include = ["linuxstreamdeck*"]
 linuxstreamdeck = [
     "assets/icons/*.ttf", "assets/icons/*.json", "assets/icons/LICENSE*",
     "assets/fonts/*.ttf", "assets/fonts/LICENSE*",
+    "assets/games/mole_smash/*.png", "assets/games/mole_smash/*.wav",
+    "assets/games/mole_smash/LICENSE*",
 ]

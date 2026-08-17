@@ -80,6 +80,10 @@ _CSS = b"""
     background-color: alpha(@warning_color, 0.16);
 }
 .deck-key.reserved { opacity: 0.9; }
+.deck-key.game-mode {
+    border-color: alpha(@success_color, 0.35);
+    background-color: alpha(@success_color, 0.06);
+}
 /* Keyboard focus has to stay distinguishable from selection: arrows move the
    focus, and only activating the key selects it. */
 .deck-key:focus-visible {
@@ -160,6 +164,13 @@ entry.unsettled text { color: @warning_color; }
 
 _KEY_DRAG_PREFIX = "linuxstreamdeck-key:"
 
+
+def _game_active(controller) -> bool:
+    """Read optional game ownership from the real or a reduced controller."""
+    games = getattr(controller, "games", None)
+    return bool(games is not None and getattr(games, "active", False))
+
+
 # The line under the key grid. It lives here rather than inline so the width
 # regression test measures the real text instead of a copy that drifts from it.
 GRID_HINT = (
@@ -167,6 +178,10 @@ GRID_HINT = (
     "double-click a folder to open it, or hold a drag over it · "
     "arrow keys move between keys · "
     "Ctrl+Z undoes, Ctrl+Shift+Z redoes"
+)
+GAME_HINT = (
+    "Mole Smash · press START, then hit each mole before it disappears · "
+    "the Games menu can stop the session at any time"
 )
 
 # Both the arrow keys and their keypad twins, so navigation works either way.
@@ -304,10 +319,12 @@ class MainWindow(Adw.ApplicationWindow):
         # message has passed, so it needs a way in that is not a file manager.
         application_menu.append("Open log file", "win.app-log")
         profile_menu.append_section(None, application_menu)
-        menu_btn = Gtk.MenuButton(icon_name="view-more-symbolic",
-                                  tooltip_text="Manage profiles and configuration",
-                                  menu_model=profile_menu)
-        header.pack_start(menu_btn)
+        self.profile_menu_btn = Gtk.MenuButton(
+            icon_name="view-more-symbolic",
+            tooltip_text="Manage profiles and configuration",
+            menu_model=profile_menu,
+        )
+        header.pack_start(self.profile_menu_btn)
 
         header.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
 
@@ -325,10 +342,12 @@ class MainWindow(Adw.ApplicationWindow):
         order_menu.append("Move page up", "win.page-move-up")
         order_menu.append("Move page down", "win.page-move-down")
         page_menu.append_section(None, order_menu)
-        page_menu_btn = Gtk.MenuButton(icon_name="view-more-symbolic",
-                                       tooltip_text="Manage pages",
-                                       menu_model=page_menu)
-        header.pack_start(page_menu_btn)
+        self.page_menu_btn = Gtk.MenuButton(
+            icon_name="view-more-symbolic",
+            tooltip_text="Manage pages",
+            menu_model=page_menu,
+        )
+        header.pack_start(self.page_menu_btn)
 
         # screen saver + brightness + OBS settings + about
         self.obs_btn = Gtk.Button.new_from_icon_name("network-offline-symbolic")
@@ -352,12 +371,12 @@ class MainWindow(Adw.ApplicationWindow):
         self.brightness.set_value(self.app.config.brightness)
         self.brightness.connect("value-changed", self._on_brightness)
         header.pack_end(self.brightness)
-        screensaver_btn = Gtk.Button.new_from_icon_name(
+        self.screensaver_btn = Gtk.Button.new_from_icon_name(
             "preferences-desktop-screensaver-symbolic"
         )
-        screensaver_btn.set_tooltip_text("Configure Stream Deck display")
-        screensaver_btn.connect("clicked", self._on_screensaver_settings)
-        header.pack_end(screensaver_btn)
+        self.screensaver_btn.set_tooltip_text("Configure Stream Deck display")
+        self.screensaver_btn.connect("clicked", self._on_screensaver_settings)
+        header.pack_end(self.screensaver_btn)
 
         view.add_top_bar(header)
 
@@ -383,15 +402,27 @@ class MainWindow(Adw.ApplicationWindow):
         # Wrapped and width-capped: the grid box is centered, so it takes the
         # width of its widest child. An unwrapped hint therefore made the box
         # wider than the window and ran off the edge.
-        hint = Gtk.Label(
+        self._grid_hint = Gtk.Label(
             label=GRID_HINT,
             wrap=True,
             justify=Gtk.Justification.CENTER,
             max_width_chars=HINT_MAX_CHARS,
         )
-        hint.add_css_class("dim-label")
-        hint.set_margin_top(12)
-        grid_box.append(hint)
+        self._grid_hint.add_css_class("dim-label")
+        self._grid_hint.set_margin_top(12)
+        grid_box.append(self._grid_hint)
+        # Stream Deck + moves the game clock and score onto its LCD strip.
+        # Mirror that strip here as well, or the virtual deck would lose its
+        # HUD precisely on the one model that has room for a better one.
+        self._game_hud = Gtk.Picture(
+            can_shrink=True,
+            keep_aspect_ratio=True,
+            width_request=480,
+            height_request=60,
+            visible=False,
+        )
+        self._game_hud.set_margin_top(10)
+        grid_box.append(self._game_hud)
         # Encoders of a Stream Deck +. The row hides itself on every other
         # model, so nothing about it is reachable without the hardware.
         self.dial_row = DialRow(self)
@@ -493,6 +524,7 @@ class MainWindow(Adw.ApplicationWindow):
         bus = self.app.bus
         bus.subscribe("ui.key_image", self._on_key_image)
         bus.subscribe("ui.screensaver_frame", self._on_screensaver_frame)
+        bus.subscribe("ui.game_hud", self._on_game_hud)
         bus.subscribe("profile.changed", self._on_profile_changed)
         bus.subscribe("page.changed", lambda t, d: self._on_page_changed())
         bus.subscribe("folder.changed", lambda t, d: self._on_folder_changed())
@@ -502,6 +534,7 @@ class MainWindow(Adw.ApplicationWindow):
             bus.subscribe(topic, lambda t, d: self._update_status())
         bus.subscribe("status", lambda t, d: self._flash_status(d.get("text", "")))
         bus.subscribe("preflight.report", self._on_preflight_report)
+        bus.subscribe("game.state", self._on_game_state)
 
     # ---------- callbacks ----------
 
@@ -510,6 +543,47 @@ class MainWindow(Adw.ApplicationWindow):
         if index < len(self._key_pictures):
             texture = Gdk.Texture.new_from_bytes(GLib.Bytes.new(png))
             self._key_pictures[index].set_paintable(texture)
+
+    def _on_game_state(self, _topic: str, data: dict) -> None:
+        """Turn the editor grid into a real virtual game controller."""
+        active = bool(data.get("active"))
+        self._clear_drag_feedback()
+        if active:
+            self._clear_selection()
+        for control in (
+            self.profile_dropdown,
+            self.profile_menu_btn,
+            self.page_dropdown,
+            self.page_menu_btn,
+            self.screensaver_btn,
+        ):
+            control.set_sensitive(not active)
+        self.editor.set_sensitive(not active)
+        self._breadcrumb.set_visible(not active)
+        self._grid_hint.set_label(GAME_HINT if active else GRID_HINT)
+        self.dial_row.set_visible(not active)
+        for button in self._key_buttons:
+            if active:
+                button.add_css_class("game-mode")
+                button.set_tooltip_text("Play Mole Smash")
+            else:
+                button.remove_css_class("game-mode")
+        if not active:
+            self._game_hud.set_visible(False)
+            self._game_hud.set_paintable(None)
+            self._refresh_reserved_key()
+            self.dial_row.rebuild()
+
+    def _on_game_hud(self, _topic: str, data: dict) -> None:
+        """Mirror the Stream Deck + game strip below the virtual keys."""
+        png = data.get("png", b"")
+        if not png:
+            self._game_hud.set_visible(False)
+            self._game_hud.set_paintable(None)
+            return
+        texture = Gdk.Texture.new_from_bytes(GLib.Bytes.new(png))
+        self._game_hud.set_paintable(texture)
+        self._game_hud.set_visible(True)
 
     def _on_key_clicked(self, btn, index: int) -> None:
         """Single click selects the key; a second one opens it if it is a folder.
@@ -521,6 +595,10 @@ class MainWindow(Adw.ApplicationWindow):
         menu is unaffected, because GtkButton never claims that one.
         """
         self.app.deck.record_activity()
+        if _game_active(self.app.controller):
+            self._last_key_click = None
+            self.app.controller.games.press_virtual(index)
+            return
         if self.app.controller.is_reserved_key(index):
             # The Back key is navigation, not a configurable key.
             self._last_key_click = None
@@ -624,7 +702,10 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _select(self, index: int, on_selected=None) -> None:
         """Request a key selection, protecting unsaved editor changes."""
-        if self.app.controller.is_reserved_key(index):
+        if (
+            _game_active(self.app.controller)
+            or self.app.controller.is_reserved_key(index)
+        ):
             return
         if self.selected == index:
             if on_selected is not None:
@@ -752,6 +833,16 @@ class MainWindow(Adw.ApplicationWindow):
         self._confirm_unsaved_changes(
             "switching profiles",
             lambda: self.app.controller.set_profile(index),
+        )
+
+    def request_game(self) -> None:
+        """Start Mole Smash from the status icon without losing a key draft."""
+        if _game_active(self.app.controller):
+            return
+        self._present_for_dialog()
+        self._confirm_unsaved_changes(
+            "starting Mole Smash",
+            self.app.controller.start_game,
         )
 
     def _present_for_dialog(self) -> None:
@@ -1294,6 +1385,9 @@ class MainWindow(Adw.ApplicationWindow):
         return None
 
     def _on_drag_prepare(self, source, x, y):
+        if _game_active(self.app.controller):
+            self._drag_source = None
+            return None
         index = self._key_at_grid_point(x, y)
         if (
             index is None
@@ -1322,6 +1416,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._clear_drag_feedback()
 
     def _on_drag_motion(self, target, x, y):
+        if _game_active(self.app.controller):
+            self._clear_drag_feedback()
+            return Gdk.DragAction(0)
         hovered = self._key_at_grid_point(x, y)
         self._arm_spring(hovered)
         destination = hovered
@@ -1350,6 +1447,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_drop(self, target, value, x, y):
         self._cancel_spring()
+        if _game_active(self.app.controller):
+            self._clear_drag_feedback()
+            return False
         if isinstance(value, GObject.Value):
             value = value.get_string()
         source = self._decode_key_drag(value)
@@ -1500,7 +1600,10 @@ class MainWindow(Adw.ApplicationWindow):
         btn.add_controller(gesture)
 
     def _on_key_right_click(self, gesture, n_press, x, y, index):
-        if self.app.controller.is_reserved_key(index):
+        if (
+            _game_active(self.app.controller)
+            or self.app.controller.is_reserved_key(index)
+        ):
             return
         self._select(
             index,
@@ -1579,6 +1682,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.add_controller(controller)
 
     def find_key(self) -> None:
+        if _game_active(self.app.controller):
+            return
         from .key_search import KeySearchDialog
 
         KeySearchDialog(self, self.app.config, self._go_to_key).present()
@@ -1604,6 +1709,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def undo_key_change(self) -> None:
         """Take back the last key change, if the grid still holds it."""
+        if _game_active(self.app.controller):
+            return
         controller = self.app.controller
         if not controller.can_undo():
             self._flash_status("Nothing to undo")
@@ -1621,6 +1728,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def redo_key_change(self) -> None:
         """Put back the last undone key change."""
+        if _game_active(self.app.controller):
+            return
         controller = self.app.controller
         if not controller.can_redo():
             self._flash_status("Nothing to redo")
@@ -1645,12 +1754,16 @@ class MainWindow(Adw.ApplicationWindow):
     # --- operations ---
 
     def _copy_key(self, index: int) -> None:
+        if _game_active(self.app.controller):
+            return
         kc = self.app.controller.container.key(index)
         self._clipboard = kc.clone() if kc is not None else None
         if self._clipboard is not None:
             self.app.bus.emit("status", text=f"Key {index + 1} copied")
 
     def _paste_key(self, index: int) -> None:
+        if _game_active(self.app.controller):
+            return
         if self._clipboard is None:
             self.app.bus.emit("status", text="No key copied")
             return
@@ -1691,6 +1804,8 @@ class MainWindow(Adw.ApplicationWindow):
         list, and a key's own label lives in Appearance, exactly as when the
         same step is pasted onto a single-action editor.
         """
+        if _game_active(self.app.controller):
+            return
         step = STEP_CLIPBOARD.get()
         if step is None:
             self.app.bus.emit("status", text="No action copied")
@@ -1726,6 +1841,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def clear_key(self, index: int) -> None:
         """Empty a key, confirming unsaved edits and discarded folders first."""
+        if _game_active(self.app.controller):
+            return
         if self.app.controller.is_reserved_key(index):
             return
 

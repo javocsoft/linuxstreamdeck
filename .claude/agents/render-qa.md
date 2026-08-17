@@ -24,6 +24,7 @@ Read `linuxstreamdeck/device/renderer.py`,
 `linuxstreamdeck/device/startup_animation.py`,
 `linuxstreamdeck/device/screensaver.py`,
 `linuxstreamdeck/device/exit_display.py`,
+`linuxstreamdeck/games/render.py`,
 `linuxstreamdeck/core/icons.py` and `AGENTS.md` sections 5-6 first.
 
 ## Absolute rules
@@ -115,6 +116,18 @@ grid over a predominantly black background, using the shorter `TITLE_FORMS` word
 on a grid too small for the full name. This is a pure-Pillow check and must not
 open HID or launch the application. Preview the selected frames offscreen and
 report both objective measurements and visual coherence across key boundaries.
+
+### Built-in games
+
+When `games/` or game ownership is in scope, render Mole Smash lobby, countdown,
+normal target, golden target, hit, miss and results snapshots offscreen. Cover
+Mini 3x2, Neo 4x2, Original 5x3 and XL 8x4, and separately verify the Stream
+Deck + 800x100 touchscreen HUD. Every layout must expose unique lobby controls,
+the expected playable-hole count and no clipped sprite or unreadable score/time
+text. Confirm the transparent source sprite has real alpha and non-empty content,
+that a target differs objectively from an empty hole, and that the same rendered
+images are emitted to physical and virtual paths. Runtime ownership, input
+consumption and restoration belong to the reviewer; do not open HID.
 
 ### Clean-exit display
 

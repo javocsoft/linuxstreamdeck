@@ -13,11 +13,28 @@ PROFILES = ["Streaming", "Podcast", "Gaming"]
 
 
 class MenuItemTests(unittest.TestCase):
-    def test_menu_offers_open_profiles_and_quit(self) -> None:
+    def test_menu_offers_open_profiles_games_and_quit(self) -> None:
         items = tray.menu_items(PROFILES, 0)
 
         labels = [item.get("label") for item in items if not item.get("separator")]
-        self.assertEqual(labels, ["Open", "Profile", "Quit"])
+        self.assertEqual(labels, ["Open", "Profile", "Games", "Quit"])
+
+    def test_games_submenu_switches_to_stop_while_playing(self) -> None:
+        idle = tray.menu_items(PROFILES, 0, False)
+        active = tray.menu_items(PROFILES, 0, True)
+        idle_games = next(item for item in idle if item["id"] == tray.GAMES_ID)
+        active_games = next(item for item in active if item["id"] == tray.GAMES_ID)
+
+        self.assertEqual(
+            idle_games["children"],
+            [{"id": tray.MOLE_SMASH_ID, "label": "Mole Smash"}],
+        )
+        self.assertEqual(
+            active_games["children"],
+            [{"id": tray.STOP_GAME_ID, "label": "Stop Mole Smash"}],
+        )
+        profile = next(item for item in active if item["id"] == tray.PROFILES_ID)
+        self.assertFalse(profile["enabled"])
 
     def test_every_profile_becomes_a_radio_entry(self) -> None:
         items = tray.menu_items(PROFILES, 1)
@@ -37,6 +54,9 @@ class MenuItemTests(unittest.TestCase):
             tray.PROFILES_ID,
             tray.SEPARATOR_BEFORE_PROFILES_ID,
             tray.SEPARATOR_BEFORE_QUIT_ID,
+            tray.GAMES_ID,
+            tray.MOLE_SMASH_ID,
+            tray.STOP_GAME_ID,
         }
 
         profile_ids = {
@@ -309,6 +329,8 @@ class EventRoutingTests(unittest.TestCase):
             on_quit=lambda: self.calls.append("quit"),
             on_select_profile=lambda index: self.calls.append(("profile", index)),
             profiles=lambda: (PROFILES, 0),
+            on_start_game=lambda: self.calls.append("start-game"),
+            on_stop_game=lambda: self.calls.append("stop-game"),
         )
 
     def _click(self, item_id: int, event: str = "clicked") -> None:
@@ -333,6 +355,16 @@ class EventRoutingTests(unittest.TestCase):
         self._click(tray.PROFILE_ID_BASE + 2)
 
         self.assertEqual(self.calls, [("profile", 2)])
+
+    def test_start_game_is_routed(self) -> None:
+        self._click(tray.MOLE_SMASH_ID)
+
+        self.assertEqual(self.calls, ["start-game"])
+
+    def test_stop_game_is_routed(self) -> None:
+        self._click(tray.STOP_GAME_ID)
+
+        self.assertEqual(self.calls, ["stop-game"])
 
     def test_other_events_are_ignored(self) -> None:
         self._click(tray.OPEN_ID, event="hovered")

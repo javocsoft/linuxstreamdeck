@@ -200,6 +200,11 @@ linuxstreamdeck/
 ├── ai/
 │   ├── constants.py   OpenAI/Claude provider ids, labels and default models.
 │   └── service.py     Provider calls, bounded optional context, local proposal validation.
+├── games/
+│   ├── mole_smash.py  Pure clock/RNG-injected game state machine and adaptive layouts.
+│   ├── manager.py     Exclusive input/display session, worker, persistence and restore.
+│   ├── render.py      Shared-lock Pillow key frames and Stream Deck + LCD HUD.
+│   └── audio.py       Bounded, cancellable workers for the bundled WAV effects.
 ├── core/
 │   ├── events.py      EventBus (pub/sub). Emitters may run on any thread; a
 │   │                  `dispatcher` (GLib.idle_add) marshals callbacks to the UI thread.
@@ -284,7 +289,8 @@ linuxstreamdeck/
 │   ├── ha_settings.py Home Assistant dialog: address, token, and a check that both work.
 │   ├── screensaver_settings.py Screen saver and clean-exit display settings.
 │   └── profile_dialog.py New/edit profile dialog (name + description).
-└── assets/icons/      MDI font (TTF) + icons.json index (bundled, Apache-2.0).
+├── assets/icons/      MDI font (TTF) + icons.json index (bundled, Apache-2.0).
+└── assets/games/      Original built-in game sprites and reproducible WAV effects.
 ```
 
 ### EventBus topics
@@ -299,6 +305,8 @@ linuxstreamdeck/
 | `deck.screensaver` | `active:bool, preview:bool, style:str` | Screen saver started/stopped; controller restores keys on stop. |
 | `obs.connected` / `obs.disconnected` | — | OBS websocket state. |
 | `obs.outputs` | `recording:bool, streaming:bool` | Immutable output-state snapshot for the automatic screen-saver policy. |
+| `game.state` | `active:bool, game:str, name:str, phase:str` | A built-in game took or released exclusive control of the deck. |
+| `game.settings` | — | A lobby preference or high score changed and must be persisted. |
 | `twitch.state` | `linked:bool, login:str` | A Twitch account was linked, dropped or confirmed. |
 | `twitch.live` | `connected:bool` | The EventSub session came up or went away. |
 | `obs.state` | `what:str` | Any OBS state change (drives key feedback). |
@@ -306,6 +314,7 @@ linuxstreamdeck/
 | `folder.changed` | `path:tuple[int, ...], trail:list` | A folder was opened, left or reset to the page root. |
 | `profile.changed` | `name, description, …` | Active profile changed. |
 | `ui.key_image` | `index:int, png:bytes` | A key was rendered; UI paints it. |
+| `ui.game_hud` | `png:bytes` | Stream Deck + LCD game HUD for the virtual deck; empty bytes hide it. |
 | `ui.screensaver_frame` | `images:tuple[bytes, ...]` | One animated full-deck frame for the virtual deck. |
 | `preflight.report` | `checks:tuple` | A pre-flight run finished; the window shows the detail. |
 | `status` | `text:str` | Transient status-bar message. |
@@ -607,6 +616,13 @@ available and takes precedence. Entering suppression wakes an already active
 automatic saver, and both edges reset `_last_activity`; after recording and
 streaming are both off, a complete new configured idle interval must elapse
 before automatic activation.
+
+Suppression is a set of named reasons, not one boolean. OBS uses the legacy
+`external` reason and a built-in game uses `game`; removing either must leave the
+other in force. Game ownership is stronger than OBS suppression and is checked
+before `_screensaver_preview`: a settings dialog left open cannot paint a manual
+preview over a live game. Both edges of the effective union still restart idle
+tracking, rather than every redundant addition/removal doing so.
 
 `OBSClient._prime_state()` publishes the first `obs.outputs` snapshot immediately
 after `GetRecordStatus` and `GetStreamStatus`, before unrelated initial requests
@@ -1322,6 +1338,62 @@ deck wait out the double-press window, which it must never do. `Action.long_pres
 and the controller then falls through to a normal press, which is what makes
 "Nothing" behave exactly like a short press.
 
+### Built-in games and exclusive deck ownership
+
+Built-in games are launched from the status icon's **Games** submenu. They are
+not actions stored on a key and never modify the active profile. `GameManager`
+owns one daemon worker and sits in `DeckController` ahead of every normal input
+path: physical press and release edges, virtual presses, dials and touchscreen
+taps. While `games.active` is true, `_standing_aside()` also stops configured
+renders and Twitch alert flashes, the window disables editing/navigation and
+DnD, and the screen saver is suppressed with the named `game` reason. An
+already-active saver is explicitly woken before the first game frame.
+
+The physical release belonging to a press that exits the game must still be
+consumed after `active` clears. `_owned_down` records presses that began inside
+the session for exactly that reason; without it the release would reach the
+gesture resolver of whatever configured key is underneath. On exit, disconnect,
+layout-changing connect, error or shutdown, the manager cancels queued sounds,
+releases only its own screen-saver reason and restores the current configured
+page. `_restore_after_game()` clears any report that completed late so a
+pre-flight board cannot suddenly appear as the game lets go. The game worker
+must stop from `DeckController.shutdown()` before `DeckManager.stop()` closes
+HID, preserving the application-level controller-before-deck shutdown order.
+
+`games/mole_smash.py` is a pure state machine: both monotonic time and randomness
+are injected, and it knows nothing about GTK, HID, Pillow or audio. A lobby
+offers Start, difficulty, sound, record and Back. A three-second countdown leads
+to a 45-second round; normal targets score 10, golden targets 25, an empty press
+costs 2 and breaks the combo. Easy/normal/hard change visible/gap timing, and
+targets accelerate through the round. High scores use
+`<columns>x<rows>[+lcd]:<difficulty>` so decks with different playable areas do
+not share an unfair leaderboard.
+
+`game_layout()` derives every position from live `key_count` and `columns`. On
+decks without a touchscreen, score and time reserve the two top corners during
+play and every other key is a target. On Stream Deck +, `dial_count` selects the
+`+lcd` layout, `touchscreen_hud()` puts score/time/combo on the strip, and all
+eight keys remain playable. The same PNG travels on `ui.game_hud` to a 480x60
+aspect-preserving `Gtk.Picture` below the virtual grid; an empty payload and the
+inactive state both hide it. Lobby controls may reuse score/time positions
+because the phases never render at once. Keep the controls unique even on a
+six-key Mini and never assume a 5x3 grid.
+
+`games/render.py` renders the same Pillow images to physical and virtual decks
+under the shared `RENDER_LOCK`, and every TrueType font uses BASIC layout.
+`GameManager` compares encoded PNGs and sends only changed keys at its 20 Hz
+tick; the engine remains deterministic even though the session is animated.
+The original transparent mole sprite lives below
+`assets/games/mole_smash/`. The original mono WAV effects are reproducible with
+`tools/generate_game_sounds.py`; playback uses a bounded two-worker queue and a
+per-session generation so rapid hits never leave delayed sounds playing after
+exit. `GameSettings` stores difficulty, sound, bounded volume and bounded
+per-layout records in the normal JSON/export; `game.settings` asks the GTK thread
+to save only when one of those values actually changes. Import and backup restore
+replace `Config.games` as an object, so `_adopt_replaced_configuration()` must
+also pass that new object to `GameManager.adopt_settings()`; keeping the old
+reference would make later records disappear into detached state.
+
 ### Status icon and application lifetime
 
 GTK 4 has no tray API, so `ui/tray.py` publishes the icon directly on D-Bus with
@@ -1354,13 +1426,15 @@ normal autostart case — very often has no status area yet, and the name watche
 publishes the icon the moment one appears. `RegisterStatusNotifierItem` is called
 **asynchronously**; it runs on the GTK main thread, so a synchronous call would
 freeze the window whenever the panel is slow. Until the reply arrives the icon
-counts as unregistered, which is the safe direction. The menu is **Open**, a **Profile** submenu of radio entries and
-**Quit**; `ItemIsMenu` is true, so a plain click opens it. `menu_items()` and
+counts as unregistered, which is the safe direction. The menu is **Open**, a
+**Profile** submenu of radio entries, a **Games** submenu and **Quit**. While a
+game is active, Profile is disabled and the game entry becomes **Stop Mole
+Smash**; `ItemIsMenu` is true, so a plain click opens it. `menu_items()` and
 `build_layout()` are pure functions, which is what the tests exercise. Profile
 entry IDs start at `PROFILE_ID_BASE` so they never collide with the fixed ones.
-`app.py` subscribes to `profile.changed` and calls `refresh()`, which bumps the
-revision and emits `LayoutUpdated`; that one event already covers adding,
-renaming, deleting and switching a profile.
+`app.py` subscribes to `profile.changed` and `game.state` and calls `refresh()`,
+which bumps the revision and emits `LayoutUpdated`; those events cover adding,
+renaming, deleting and switching a profile as well as both game-session edges.
 
 `Config.close_action` is `tray` (default) or `quit`.
 `LinuxStreamDeckApp.hides_on_close()` is the single decision point and requires
@@ -3311,6 +3385,20 @@ ignored and you will chase a ghost.
    machine that just started it is an ordinary timestamp, and anything stamped
    before it is silently dropped as already seen.
 
+28. **A game owns both input and pixels until it restores the page.** Route
+   physical input through `GameManager` before actions and preserve `_owned_down`
+   until each release, including a release after Back made the session inactive.
+   Suppress virtual actions, dials, touchscreen input, normal renders, report
+   boards, alert flashes, editing and DnD while active. Screen-saver suppression
+   must be a union of named reasons: releasing `game` may not release OBS, and
+   game ownership must block even manual preview while ordinary OBS suppression
+   must not. Derive layouts from live key count/columns, use the Plus LCD only
+   when dials are present and keep Mini controls unique. Draw under the shared
+   `RENDER_LOCK` with BASIC fonts, bound/cancel audio work, persist records per
+   geometry and difficulty, and stop the game worker before HID shutdown. Exit,
+   disconnect and failure must restore the configured page without resurrecting
+   a delayed report overlay.
+
 ---
 
 ## 6. Safe local experimentation
@@ -3319,7 +3407,8 @@ ignored and you will chase a ghost.
 unless `LSD_CONFIG_DIR` is set. Any script that exercises code calling `save()`
 (e.g. `set_page`, `set_profile`, `add_profile`, `add_page`, `rename_page`,
 `paste_key`, `clear_key`, brightness, screen-saver or exit-display changes,
-saving a key) will **overwrite the user's real config** — this has happened and
+game lobby choices/high scores, saving a key) will **overwrite the user's real
+config** — this has happened and
 lost real keys and settings.
 `Config.import_bundle()` also saves a replacement configuration and writes imported
 icons, audio and exit images below the config directory, so it must always be

@@ -201,6 +201,7 @@ class DeckManager:
             5,
             min(100, int(screensaver_intensity)),
         )
+        self._screensaver_suppression_reasons: set[str] = set()
         self._screensaver_suppressed = False
         self._screensaver_preview: tuple[str, int] | None = None
         self._screensaver_brightness: int | None = None
@@ -729,13 +730,30 @@ class DeckManager:
             self._last_activity = time.monotonic()
         self._screensaver_wakeup.set()
 
-    def set_screensaver_suppressed(self, suppressed: bool) -> None:
-        """Prevent automatic activation while an external activity is live."""
-        suppressed = bool(suppressed)
+    def set_screensaver_suppressed(
+        self,
+        suppressed: bool,
+        *,
+        reason: str = "external",
+    ) -> None:
+        """Prevent automatic activation for one independent live activity.
+
+        OBS and a game can overlap. A single boolean lets whichever one stops
+        first accidentally re-enable the saver underneath the other, so the
+        effective policy is the union of named reasons while the legacy
+        one-argument call remains the default external reason.
+        """
+        reason = str(reason or "external")
         with self._screensaver_lock:
-            if suppressed == self._screensaver_suppressed:
+            was_suppressed = bool(self._screensaver_suppression_reasons)
+            if suppressed:
+                self._screensaver_suppression_reasons.add(reason)
+            else:
+                self._screensaver_suppression_reasons.discard(reason)
+            is_suppressed = bool(self._screensaver_suppression_reasons)
+            self._screensaver_suppressed = is_suppressed
+            if was_suppressed == is_suppressed:
                 return
-            self._screensaver_suppressed = suppressed
             # Treat both edges as activity: entering suppression wakes an
             # active saver, and leaving it starts a fresh idle interval.
             self._last_activity = time.monotonic()
@@ -811,6 +829,11 @@ class DeckManager:
         now: float,
     ) -> tuple[str, int, bool] | None:
         with self._screensaver_lock:
+            # A game owns both input and pixels. Unlike OBS suppression, it
+            # must also stop a settings dialog that was already open from
+            # starting a manual preview over the live game board.
+            if "game" in self._screensaver_suppression_reasons:
+                return None
             if self._screensaver_preview is not None:
                 style, intensity = self._screensaver_preview
                 return style, intensity, True

@@ -22,8 +22,11 @@ log = logging.getLogger(__name__)
 #   obs.disconnected
 #   obs.outputs       recording:bool, streaming:bool
 #   obs.state         what:str                  — any OBS state change
+#   game.state        active:bool, game:str, name:str, phase:str
+#   game.settings                                    — preferences/record changed
 #   page.changed      index:int, name:str
 #   ui.key_image      index:int, png:bytes      — rendered image for the UI
+#   ui.game_hud       png:bytes                 — Plus LCD game HUD; empty hides
 #   ui.screensaver_frame images:tuple[bytes, ...]
 #   status            text:str                  — messages for the status bar
 

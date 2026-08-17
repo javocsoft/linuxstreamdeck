@@ -84,6 +84,13 @@ on the same hardware as the scene switches.
 - 🖥️ **Virtual deck** — the on-screen grid mirrors the physical device, so you can
   configure and test everything **without the hardware even connected**, single,
   double and long press included.
+- 🎮 **Built-in games** — take a break without reaching for another device.
+  **Mole Smash** turns the physical or virtual deck into a complete reaction
+  game with a countdown, 45-second rounds, combos, rare golden moles, three
+  difficulty levels, original sound effects and high scores kept separately for
+  each deck geometry and difficulty. It adapts from the six-key Mini to the XL;
+  on Stream Deck +, score and time move to the LCD strip so all eight keys stay
+  playable, with the same HUD mirrored below the virtual deck.
 - 🔎 **Search everything** — find an action by what it does instead of which
   category it lives in, and find a key by label, action or value across every
   profile, page and folder.
@@ -922,9 +929,29 @@ does and whether LinuxStreamDeck starts with your session.
 - **Quit LinuxStreamDeck** closes the application and releases the deck, asking
   first if a key has unsaved changes.
 
-Clicking the status icon opens a menu to **switch profile**, **open the window**
-and **quit**. Switching a profile from there still asks about unsaved key
-changes, reopening the window if needed.
+Clicking the status icon opens a menu to **switch profile**, **open the window**,
+launch a built-in **Game** and **quit**. Switching a profile or starting a game
+from there still protects unsaved key changes, reopening the window if needed.
+
+### Playing Mole Smash
+
+Open the LinuxStreamDeck status menu, then choose **Games → Mole Smash**. The
+game temporarily owns every key and the virtual deck, so none of your configured
+actions can fire while you play. Its lobby is drawn directly on the keys:
+
+- **START** begins a three-second countdown followed by a 45-second round.
+- **Easy / Normal / Hard** cycles the speed. The choice is remembered.
+- **Sound** toggles the bundled effects. The choice is remembered too.
+- **Best** shows the record for this deck shape and difficulty.
+- **Back** restores the profile, page and folder that were visible before play.
+
+Hit a mole before it disappears for 10 points; a rarer golden mole is worth 25.
+An empty-hole press costs 2 points and breaks the combo. Score and remaining
+time stay on reserved keys, except on Stream Deck + where they use its LCD
+strip. The screen saver cannot start during a game, OBS recording/streaming
+suppression remains independent, and disconnecting or changing deck geometry
+ends the session safely. While playing, **Games → Stop Mole Smash** is always
+available from the status menu.
 
 #### Desktop support
 
@@ -1045,11 +1072,13 @@ linuxstreamdeck/
 ├── ai/            # OpenAI/Claude requests, bounded context and proposal validation
 ├── core/          # events, config, actions, controller, clocks, audio, secrets, icons
 ├── device/        # physical deck, startup/saver/exit displays and key rendering
+├── games/         # exclusive game runtime, Mole Smash engine, rendering and audio
 ├── obs/           # obs-websocket v5 client + full catalogue of OBS actions
 ├── twitch/        # device-code authorization, Helix client and Twitch actions
 ├── ui/            # GTK4/Libadwaita: window, editor, AI, OBS/Twitch/deck settings
-└── assets/icons/  # icon library (Material Design Icons font + index)
+└── assets/        # icon library plus original built-in game art and sounds
 data/udev/         # udev rule for device access
+tools/             # deterministic developer-side asset generators
 ```
 
 ## 🙌 Acknowledgements
@@ -1059,6 +1088,10 @@ data/udev/         # udev rule for device access
   [obsws-python](https://github.com/aatikturk/obsws-python) — the libraries this stands on.
 - [Material Design Icons](https://pictogrammers.com/library/mdi/) (Apache-2.0), bundled as
   the built-in icon library.
+
+The Mole Smash character and synthesized sound effects were created specifically
+for LinuxStreamDeck and are distributed with the project under GPL-3.0-or-later;
+they do not use artwork or audio from the branded Whac-A-Mole game.
 
 ## Contributing
 

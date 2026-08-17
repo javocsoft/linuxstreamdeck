@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -188,6 +189,27 @@ class ControllerActivityTests(unittest.TestCase):
         self.assertTrue(
             self.controller.countdown_snapshot(self.controller._tkey(0), 10).running
         )
+
+    def test_game_consumes_physical_input_before_configured_actions(self) -> None:
+        timer = KeyConfig(
+            kind=KIND_SINGLE,
+            action="sys.timer",
+            params={"duration": "00:10", "sound": "", "volume": 100},
+        )
+        self.config.pages[0].set_key(1, timer)
+        self.config.games.mole_sound_enabled = False
+
+        self.assertTrue(self.controller.start_game())
+        self.controller._on_deck_key("deck.key", {"index": 1, "pressed": True})
+        self.controller._on_deck_key("deck.key", {"index": 1, "pressed": False})
+
+        snapshot = self.controller.countdown_snapshot(self.controller._tkey(1), 10)
+        self.assertFalse(snapshot.running)
+        self.assertTrue(self.controller.stop_game())
+        deadline = time.monotonic() + 1.0
+        while self.controller.games.active and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertFalse(self.controller.games.active)
 
     def test_resetting_a_finished_timer_stops_its_sound(self) -> None:
         started = threading.Event()

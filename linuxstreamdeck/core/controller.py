@@ -45,6 +45,7 @@ from ..twitch import events as twitch_events
 from ..twitch.attention import Attention
 from ..device.manager import DeckManager
 from ..device import renderer
+from ..games import GameManager
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +74,12 @@ GESTURE_LONG = "long"
 # How many key changes can be taken back. The history is dropped on every
 # change of view, so this only ever bounds one grid's worth of edits.
 UNDO_DEPTH = 20
+
+
+def _game_active(owner) -> bool:
+    """Read optional game ownership from real or reduced controllers."""
+    games = getattr(owner, "games", None)
+    return bool(games is not None and getattr(games, "active", False))
 
 
 def _stops_on_error(kc) -> bool:
@@ -350,6 +357,15 @@ class DeckController:
         self._gesture_lock = threading.Lock()
         self._gesture_down: dict[RuntimeKey, float] = {}
         self._gesture_timers: dict[RuntimeKey, threading.Timer] = {}
+        # Games are a real exclusive mode, not a display overlay: their input
+        # is consumed before configured actions and normal renders stand aside
+        # until the session restores the active page.
+        self.games = GameManager(
+            bus,
+            deck,
+            config.games,
+            restore=self._restore_after_game,
+        )
         self._busy_thread = threading.Thread(
             target=self._busy_loop,
             daemon=True,
@@ -833,6 +849,7 @@ class DeckController:
         return info
 
     def _adopt_replaced_configuration(self) -> None:
+        self.games.adopt_settings(self.config.games)
         self._toggle.clear()
         self._counters.clear()
         self._clear_time_actions()
@@ -1163,6 +1180,8 @@ class DeckController:
         index = data.get("index")
         if index is None:
             return
+        if self.games.handle_key(index, bool(data.get("pressed"))):
+            return
         if data.get("pressed"):
             self.key_down(index)
         else:
@@ -1308,6 +1327,9 @@ class DeckController:
         Naming a gesture is a different thing from making the on-screen deck
         wait out the double-press window, which it must never do.
         """
+        if _game_active(self):
+            self.games.press_virtual(index)
+            return
         if self._stopping.is_set() or self.deck.record_activity():
             return
         if self.dismiss_board():
@@ -1374,6 +1396,8 @@ class DeckController:
         return self.page.dial(index)
 
     def _on_deck_dial(self, _topic: str, data: dict) -> None:
+        if _game_active(self):
+            return
         self.turn_dial(
             int(data.get("index", 0)),
             str(data.get("direction", "")),
@@ -1386,7 +1410,8 @@ class DeckController:
         The strip has no configuration of its own: it labels the encoders, so
         tapping a panel is a second way of pressing the dial under it.
         """
-        self.turn_dial(int(data.get("index", 0)), "press", 1)
+        if not _game_active(self):
+            self.turn_dial(int(data.get("index", 0)), "press", 1)
 
     def turn_dial(self, index: int, direction: str, ticks: int = 1) -> None:
         """Run what an encoder gesture is configured to do.
@@ -1396,6 +1421,8 @@ class DeckController:
         count is bounded: the actions are queued on a worker, and a spin that
         outran the queue could otherwise leave it running for a long time.
         """
+        if _game_active(self):
+            return
         if self._stopping.is_set() or self.deck.record_activity():
             return
         field = DIAL_STEPS.get(direction)
@@ -1964,7 +1991,11 @@ class DeckController:
 
     def _start_flash(self, color: str, word: str = "") -> None:
         """Light the whole deck, for an alert nobody was going to hear."""
-        if self._stopping.is_set() or self._flashing.is_set():
+        if (
+            self._stopping.is_set()
+            or self._flashing.is_set()
+            or _game_active(self)
+        ):
             # Already lit: a second flash on top of the first would only cut
             # it short, and the deck is plainly already asking to be looked at.
             return
@@ -1992,6 +2023,8 @@ class DeckController:
             lit = self._flash_frame(size, color, word, count)
             dark = self._flash_frame(size, FLASH_OFF_COLOR, "", count)
             for pulse in range(FLASH_PULSES * 2):
+                if _game_active(self):
+                    return
                 on = pulse % 2 == 0
                 self._paint_frame(lit if on else dark, count)
                 if self._stopping.wait(
@@ -2034,7 +2067,7 @@ class DeckController:
 
     def _paint_frame(self, frame: list, count: int) -> None:
         for index in range(count):
-            if self._stopping.is_set():
+            if self._stopping.is_set() or _game_active(self):
                 return
             image, png = frame[index]
             self.deck.set_key_image(index, image)
@@ -2166,6 +2199,7 @@ class DeckController:
             self._stopping.is_set()
             or self.deck.screensaver_active
             or self._flashing.is_set()
+            or _game_active(self)
             or self._render_pending.is_set()
         ):
             return
@@ -2180,11 +2214,39 @@ class DeckController:
     def _standing_aside(self) -> bool:
         """Whether something else owns the deck right now.
 
-        Two things do, and a normal render has to yield to both: the screen
-        saver, which draws its own coordinated frames, and an alert flash,
-        which would otherwise have half its pulses painted over.
+        Three things do, and a normal render has to yield to all of them: the
+        screen saver and a game draw coordinated frames, while an alert flash
+        would otherwise have half its pulses painted over.
         """
-        return self.deck.screensaver_active or self._flashing.is_set()
+        return (
+            self.deck.screensaver_active
+            or self._flashing.is_set()
+            or _game_active(self)
+        )
+
+    # ---------- built-in games ----------
+
+    def start_game(self) -> bool:
+        """Enter Mole Smash after clearing transient overlays and gestures."""
+        self.dismiss_board()
+        self._clear_gestures()
+        started = self.games.start()
+        if started:
+            self.bus.emit("status", text="Mole Smash is ready on the Stream Deck")
+        return started
+
+    def stop_game(self) -> bool:
+        """Ask the active game worker to restore the configured page."""
+        return self.games.stop()
+
+    def _restore_after_game(self) -> None:
+        """Discard delayed overlays, then restore only the configured page."""
+        # A pre-flight or OBS board may have completed on another worker after
+        # start_game() dismissed the old one. It must not suddenly appear when
+        # the game releases the pixels; the documented contract is to return
+        # to the page that was underneath it.
+        self._board = None
+        self.refresh()
 
     def _render_page(self) -> None:
         self._render_pending.clear()
@@ -2519,6 +2581,7 @@ class DeckController:
     def shutdown(self) -> None:
         """Cancel queued work and wait for running actions/renders to finish."""
         self._stopping.set()
+        self.games.shutdown()
         self._clocks.shutdown()
         self._cancel_all_timer_sounds()
         self._clear_gestures()

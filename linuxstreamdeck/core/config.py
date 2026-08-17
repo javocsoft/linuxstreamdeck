@@ -110,6 +110,16 @@ DEFAULT_EDITOR_WIDTH = 440
 MIN_EDITOR_WIDTH = 380
 MAX_EDITOR_WIDTH = 1600
 
+# Built-in games keep only small preferences and local high scores in the
+# normal configuration.  The score key includes the deck geometry and
+# difficulty, so a Mini never competes with an XL that exposes many more
+# targets.  Values are bounded on load because config.json is user-editable.
+GAME_DIFFICULTIES = ("easy", "normal", "hard")
+DEFAULT_GAME_DIFFICULTY = "normal"
+DEFAULT_GAME_VOLUME = 55
+MAX_GAME_HIGH_SCORES = 100
+MAX_GAME_SCORE = 999_999_999
+
 SCREENSAVER_CHOICES = (
     (
         "neon_pipes",
@@ -785,6 +795,14 @@ class ExitDisplaySettings:
 
 
 @dataclass
+class GameSettings:
+    mole_difficulty: str = DEFAULT_GAME_DIFFICULTY
+    mole_sound_enabled: bool = True
+    mole_volume: int = DEFAULT_GAME_VOLUME
+    mole_high_scores: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
 class Config:
     profiles: list[Profile] = field(default_factory=lambda: [Profile()])
     current_profile: int = 0
@@ -796,6 +814,7 @@ class Config:
     )
     screensaver: ScreenSaverSettings = field(default_factory=ScreenSaverSettings)
     exit_display: ExitDisplaySettings = field(default_factory=ExitDisplaySettings)
+    games: GameSettings = field(default_factory=GameSettings)
     brightness: int = 80
     close_action: str = DEFAULT_CLOSE_ACTION
     editor_width: int = DEFAULT_EDITOR_WIDTH
@@ -879,6 +898,9 @@ class Config:
         raw_exit_display = raw.get("exit_display", {})
         if not isinstance(raw_exit_display, dict):
             raise ValueError("The exit display settings must be a JSON object")
+        raw_games = raw.get("games", {})
+        if not isinstance(raw_games, dict):
+            raise ValueError("The game settings must be a JSON object")
         try:
             legacy_password = str(raw_obs.get("password", ""))
             obs = ObsSettings(
@@ -941,6 +963,34 @@ class Config:
                 mode=exit_mode,
                 image_path=str(raw_exit_display.get("image_path", "") or ""),
             )
+            difficulty = str(
+                raw_games.get("mole_difficulty", DEFAULT_GAME_DIFFICULTY)
+                or DEFAULT_GAME_DIFFICULTY
+            ).lower()
+            if difficulty not in GAME_DIFFICULTIES:
+                difficulty = DEFAULT_GAME_DIFFICULTY
+            raw_scores = raw_games.get("mole_high_scores", {})
+            if not isinstance(raw_scores, dict):
+                raw_scores = {}
+            scores: dict[str, int] = {}
+            for raw_key, raw_score in list(raw_scores.items())[:MAX_GAME_HIGH_SCORES]:
+                key = str(raw_key or "").strip()[:80]
+                if not key:
+                    continue
+                scores[key] = max(0, min(MAX_GAME_SCORE, int(raw_score)))
+            games = GameSettings(
+                mole_difficulty=difficulty,
+                mole_sound_enabled=(
+                    raw_games.get("mole_sound_enabled", True)
+                    if isinstance(raw_games.get("mole_sound_enabled", True), bool)
+                    else True
+                ),
+                mole_volume=max(
+                    0,
+                    min(100, int(raw_games.get("mole_volume", DEFAULT_GAME_VOLUME))),
+                ),
+                mole_high_scores=scores,
+            )
             brightness = max(10, min(100, int(raw.get("brightness", 80))))
             editor_width = max(MIN_EDITOR_WIDTH, min(MAX_EDITOR_WIDTH, int(
                 raw.get("editor_width", DEFAULT_EDITOR_WIDTH)
@@ -960,6 +1010,7 @@ class Config:
             home_assistant=home_assistant,
             screensaver=screensaver,
             exit_display=exit_display,
+            games=games,
             brightness=brightness,
             close_action=close_action,
             editor_width=editor_width,
@@ -1133,6 +1184,7 @@ class Config:
         self.home_assistant = replacement.home_assistant
         self.screensaver = replacement.screensaver
         self.exit_display = replacement.exit_display
+        self.games = replacement.games
         self.brightness = replacement.brightness
         self.close_action = replacement.close_action
         self.editor_width = replacement.editor_width
@@ -1450,6 +1502,7 @@ class Config:
         self.home_assistant = replacement.home_assistant
         self.screensaver = replacement.screensaver
         self.exit_display = replacement.exit_display
+        self.games = replacement.games
         self.brightness = replacement.brightness
         self.close_action = replacement.close_action
         self.editor_width = replacement.editor_width

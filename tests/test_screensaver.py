@@ -683,6 +683,30 @@ class ScreenSaverRuntimeTests(unittest.TestCase):
             ("circuit_pulse", 42, True),
         )
 
+    def test_game_and_obs_suppression_are_independent(self) -> None:
+        self.manager.set_screensaver_suppressed(True, reason="obs")
+        self.manager.set_screensaver_suppressed(True, reason="game")
+        self.manager.set_screensaver_suppressed(False, reason="obs")
+
+        self.assertTrue(self.manager._screensaver_suppressed)
+        self.assertIn("game", self.manager._screensaver_suppression_reasons)
+        self.assertIsNone(self.manager._screensaver_selection(10_000.0))
+
+        self.manager.set_screensaver_suppressed(False, reason="game")
+        self.assertFalse(self.manager._screensaver_suppressed)
+
+    def test_game_ownership_blocks_manual_preview_too(self) -> None:
+        self.manager.preview_screensaver("circuit_pulse", 42)
+        self.manager.set_screensaver_suppressed(True, reason="game")
+
+        self.assertIsNone(self.manager._screensaver_selection(200.0))
+
+        self.manager.set_screensaver_suppressed(False, reason="game")
+        self.assertEqual(
+            self.manager._screensaver_selection(200.0),
+            ("circuit_pulse", 42, True),
+        )
+
     def test_leaving_obs_activity_restarts_the_idle_interval(self) -> None:
         with patch(
             "linuxstreamdeck.device.manager.time.monotonic",

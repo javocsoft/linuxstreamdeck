@@ -55,6 +55,10 @@ Never trust a documentation claim without checking its source. Verify at least:
 - **Stateful clocks:** `linuxstreamdeck/core/clocks.py`, key identity propagation,
   immediate execution, second-change rendering, view-independent runtime state,
   timer completion audio and reset/clear/move/shutdown lifecycle.
+- **Built-in games:** `linuxstreamdeck/games/`, bundled game assets and their
+  generator, `GameSettings`, status-menu/UI entry points, exclusive input/display
+  ownership, adaptive device layouts, score persistence, sound cancellation and
+  screen-saver coexistence.
 - **Stream Deck display:** `linuxstreamdeck/device/screensaver.py`,
   `device/exit_display.py`, `device/manager.py`, `app.py`,
   `ui/screensaver_settings.py` and `ui/window.py`, including installed saver
@@ -77,6 +81,7 @@ Never trust a documentation claim without checking its source. Verify at least:
   physical startup, unambiguous/migrated page navigation, bounded/path-safe
   portable audio/images, key-scoped clock lifecycle, screen-saver
   rendering/wake/OBS-output-suppression/monotonic-handoff/thread lifecycle,
+  built-in game input/display exclusivity and restore/shutdown lifecycle,
   clean-exit display fallback/HID ordering, grid-level validated DnD, isolated
   config experiments and the single-instance GUI rule.
 - **Device facts:** supported device id, key count, grid columns, render size,

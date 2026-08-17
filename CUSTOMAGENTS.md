@@ -64,6 +64,8 @@ maintenance contract.
   and manual preview preserved, clean-exit display
   mode/render/fallback/HID ordering and portable custom images, grid-DnD
   gesture/payload validation, status-icon pixmap/name fallback compatibility,
+  built-in game input/display ownership, adaptive layouts, bounded audio,
+  screen-saver reason composition and configured-page restoration,
   AI credential/context/proposal safety, reusing feedback color constants, and
   English-only with no accents. It only reports; it does not edit code.
 
@@ -102,6 +104,9 @@ maintenance contract.
   For the physical startup sequence, it can inspect the complete offscreen frame
   grid for any of those shapes, title mapping, brightness bounds and fade to
   black. It eyeballs the images itself, and reports without fixing unless asked.
+  Built-in game checks cover the Mole Smash lobby, targets, hit/miss/results and
+  transparent sprite on Mini, Neo, Original and XL, plus the Stream Deck + LCD
+  score/time HUD.
 
 ## `documenter` — documentation keeper
 
