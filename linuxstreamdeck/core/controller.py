@@ -2226,13 +2226,16 @@ class DeckController:
 
     # ---------- built-in games ----------
 
-    def start_game(self) -> bool:
-        """Enter Mole Smash after clearing transient overlays and gestures."""
+    def start_game(self, game_id: str = "mole_smash") -> bool:
+        """Enter a built-in game after clearing transient overlays and gestures."""
         self.dismiss_board()
         self._clear_gestures()
-        started = self.games.start()
+        started = self.games.start(game_id)
         if started:
-            self.bus.emit("status", text="Mole Smash is ready on the Stream Deck")
+            self.bus.emit(
+                "status",
+                text=f"{self.games.game_name} is ready on the Stream Deck",
+            )
         return started
 
     def stop_game(self) -> bool:

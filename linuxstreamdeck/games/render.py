@@ -1,4 +1,4 @@
-"""Pillow renderer for Mole Smash, shared by physical and virtual decks."""
+"""Pillow game dispatcher and Mole Smash renderer for both deck paths."""
 
 from __future__ import annotations
 
@@ -11,6 +11,10 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 from ..core import fonts
 from ..core.icons import RENDER_LOCK
 from ..device import renderer
+from .circuit_breaker import CircuitSnapshot
+from .circuit_render import circuit_hud, render_circuit_keys
+from .memory_match import MemorySnapshot
+from .memory_render import memory_hud, render_memory_keys
 from .mole_smash import (
     DIFFICULTY_LABELS,
     PHASE_COUNTDOWN,
@@ -20,6 +24,8 @@ from .mole_smash import (
     GameSnapshot,
     TargetView,
 )
+from .pulse_memory import PulseSnapshot
+from .pulse_render import pulse_hud, render_pulse_keys
 
 ASSET_DIR = Path(__file__).resolve().parent.parent / "assets" / "games" / "mole_smash"
 MOLE_ASSET = ASSET_DIR / "mole.png"
@@ -184,7 +190,7 @@ def _control_key(snapshot: GameSnapshot, index: int, size) -> Image.Image:
     return _hole_key(size)
 
 
-def render_keys(
+def _render_mole_keys(
     snapshot: GameSnapshot,
     size: tuple[int, int],
 ) -> tuple[Image.Image, ...]:
@@ -243,7 +249,7 @@ def render_keys(
         return tuple(images)
 
 
-def touchscreen_hud(snapshot: GameSnapshot, size: tuple[int, int]) -> Image.Image:
+def _mole_hud(snapshot: GameSnapshot, size: tuple[int, int]) -> Image.Image:
     """Stream Deck + strip: stable score/time HUD, leaving all keys playable."""
     with RENDER_LOCK:
         width, height = size
@@ -265,3 +271,25 @@ def touchscreen_hud(snapshot: GameSnapshot, size: tuple[int, int]) -> Image.Imag
             combo = f"COMBO x{snapshot.combo}"
             draw.text((width - draw.textlength(combo, font=small) - 18, height - 26), combo, font=small, fill=GOLD)
         return image
+
+
+def render_keys(snapshot, size: tuple[int, int]) -> tuple[Image.Image, ...]:
+    """Dispatch one engine snapshot to its code-native renderer."""
+    if isinstance(snapshot, CircuitSnapshot):
+        return render_circuit_keys(snapshot, size)
+    if isinstance(snapshot, PulseSnapshot):
+        return render_pulse_keys(snapshot, size)
+    if isinstance(snapshot, MemorySnapshot):
+        return render_memory_keys(snapshot, size)
+    return _render_mole_keys(snapshot, size)
+
+
+def touchscreen_hud(snapshot, size: tuple[int, int]) -> Image.Image:
+    """Dispatch the optional Stream Deck + strip for the active game."""
+    if isinstance(snapshot, CircuitSnapshot):
+        return circuit_hud(snapshot, size)
+    if isinstance(snapshot, PulseSnapshot):
+        return pulse_hud(snapshot, size)
+    if isinstance(snapshot, MemorySnapshot):
+        return memory_hud(snapshot, size)
+    return _mole_hud(snapshot, size)

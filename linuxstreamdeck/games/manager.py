@@ -9,20 +9,52 @@ from collections.abc import Callable
 
 from ..core.config import GameSettings
 from .audio import GameSoundPlayer
-from .mole_smash import (
-    GAME_ID,
-    GAME_NAME,
-    PHASE_LOBBY,
-    EngineEvent,
-    MoleSmashEngine,
-    game_layout,
-)
+from .catalog import DEFAULT_GAME_ID, game_info
+from .common import PHASE_LOBBY, EngineEvent, game_layout
+from .circuit_breaker import CircuitBreakerEngine
+from .memory_match import MemoryMatchEngine
+from .mole_smash import MoleSmashEngine
+from .pulse_memory import PulseMemoryEngine
 from .render import render_keys, to_png_bytes, touchscreen_hud
 
 log = logging.getLogger(__name__)
 
 FRAME_SECONDS = 0.05
 SAVER_RELEASE_SECONDS = 2.0
+
+_GAME_ENGINES = {
+    "mole_smash": MoleSmashEngine,
+    "circuit_breaker": CircuitBreakerEngine,
+    "pulse_memory": PulseMemoryEngine,
+    "memory_match": MemoryMatchEngine,
+}
+
+_SETTING_FIELDS = {
+    "mole_smash": (
+        "mole_difficulty",
+        "mole_sound_enabled",
+        "mole_volume",
+        "mole_high_scores",
+    ),
+    "circuit_breaker": (
+        "circuit_difficulty",
+        "circuit_sound_enabled",
+        "circuit_volume",
+        "circuit_best_moves",
+    ),
+    "pulse_memory": (
+        "pulse_difficulty",
+        "pulse_sound_enabled",
+        "pulse_volume",
+        "pulse_high_scores",
+    ),
+    "memory_match": (
+        "memory_difficulty",
+        "memory_sound_enabled",
+        "memory_volume",
+        "memory_best_moves",
+    ),
+}
 
 
 class GameManager:
@@ -49,7 +81,9 @@ class GameManager:
         self._shutdown = threading.Event()
         self._thread: threading.Thread | None = None
         self._finishing = False
-        self._engine: MoleSmashEngine | None = None
+        self._engine = None
+        self._game_id = ""
+        self._game_name = ""
         self._owned_down: set[int] = set()
         self._last_png: dict[int, bytes] = {}
         self._last_touch_png = b""
@@ -69,8 +103,26 @@ class GameManager:
         with self._lock:
             return self._engine.phase if self._engine is not None else ""
 
-    def start(self, game_id: str = GAME_ID) -> bool:
-        if game_id != GAME_ID or self._shutdown.is_set():
+    @property
+    def game_id(self) -> str:
+        with self._lock:
+            return self._game_id
+
+    @property
+    def game_name(self) -> str:
+        with self._lock:
+            return self._game_name
+
+    def start(self, game_id: str = DEFAULT_GAME_ID) -> bool:
+        info = game_info(game_id)
+        engine_type = _GAME_ENGINES.get(str(game_id))
+        fields = _SETTING_FIELDS.get(str(game_id))
+        if (
+            info is None
+            or engine_type is None
+            or fields is None
+            or self._shutdown.is_set()
+        ):
             return False
         with self._lock:
             if self._active.is_set() or self._finishing:
@@ -78,14 +130,19 @@ class GameManager:
             if self._sound is None:
                 self._sound = GameSoundPlayer(self._sound_error)
             layout = self._layout()
-            score_key = f"{layout.score_id}:{self.settings.mole_difficulty}"
-            self._engine = MoleSmashEngine(
+            difficulty_field, sound_field, _volume_field, scores_field = fields
+            difficulty = getattr(self.settings, difficulty_field)
+            score_key = f"{layout.score_id}:{difficulty}"
+            scores = getattr(self.settings, scores_field)
+            self._engine = engine_type(
                 layout,
-                difficulty=self.settings.mole_difficulty,
-                sound_enabled=self.settings.mole_sound_enabled,
-                high_score=self.settings.mole_high_scores.get(score_key, 0),
+                difficulty=difficulty,
+                sound_enabled=getattr(self.settings, sound_field),
+                high_score=scores.get(score_key, 0),
                 now=self._monotonic(),
             )
+            self._game_id = info.id
+            self._game_name = info.name
             self._stop.clear()
             self._owned_down.clear()
             self._last_png.clear()
@@ -99,7 +156,7 @@ class GameManager:
             self._thread = threading.Thread(
                 target=self._loop,
                 daemon=True,
-                name="game-mole-smash",
+                name=f"game-{info.id}",
             )
             self._thread.start()
         self._emit_state(True, PHASE_LOBBY)
@@ -188,8 +245,9 @@ class GameManager:
                 if remaining > 0:
                     self._stop.wait(remaining)
         except Exception:
-            log.exception("Mole Smash session failed")
-            self.bus.emit("status", text="Mole Smash stopped after an unexpected error")
+            name = self.game_name or "The game"
+            log.exception("%s session failed", name)
+            self.bus.emit("status", text=f"{name} stopped after an unexpected error")
         finally:
             self._finish()
 
@@ -197,23 +255,31 @@ class GameManager:
         engine = self._engine
         if engine is None:
             return
+        fields = _SETTING_FIELDS.get(self._game_id)
+        if fields is None:
+            return
+        difficulty_field, sound_field, volume_field, scores_field = fields
         persist = False
         for event in events:
             if event.exit_requested:
                 self._stop.set()
             if event.settings_changed:
-                self.settings.mole_difficulty = engine.difficulty
-                self.settings.mole_sound_enabled = engine.sound_enabled
-                engine.set_high_score(
-                    self.settings.mole_high_scores.get(engine.score_key, 0)
-                )
+                setattr(self.settings, difficulty_field, engine.difficulty)
+                setattr(self.settings, sound_field, engine.sound_enabled)
+                scores = getattr(self.settings, scores_field)
+                engine.set_high_score(scores.get(engine.score_key, 0))
                 persist = True
             if event.high_score_changed:
-                self.settings.mole_high_scores[engine.score_key] = engine.high_score
+                scores = getattr(self.settings, scores_field)
+                scores[engine.score_key] = engine.high_score
                 persist = True
             if event.cue and engine.sound_enabled:
                 if self._sound is not None:
-                    self._sound.play(event.cue, self.settings.mole_volume)
+                    self._sound.play(
+                        self._game_id,
+                        event.cue,
+                        getattr(self.settings, volume_field),
+                    )
         if persist:
             self.bus.emit("game.settings")
         if engine.phase != self._announced_phase:
@@ -242,6 +308,7 @@ class GameManager:
             was_active = self._active.is_set()
             self._finishing = True
             sound = self._sound
+            name = self._game_name or "The game"
         if sound is not None:
             sound.cancel()
         self._suppress_saver(False)
@@ -261,12 +328,14 @@ class GameManager:
                     if not self._shutdown.is_set():
                         self._restore()
             except Exception:
-                log.exception("Could not restore the deck after Mole Smash")
+                log.exception("Could not restore the deck after %s", name)
                 self.bus.emit(
                     "status",
-                    text="Mole Smash ended, but the deck could not be restored",
+                    text=f"{name} ended, but the deck could not be restored",
                 )
             finally:
+                self._game_id = ""
+                self._game_name = ""
                 self._thread = None
                 self._finishing = False
 
@@ -282,23 +351,33 @@ class GameManager:
             setter(bool(suppressed))
 
     def _emit_state(self, active: bool, phase: str) -> None:
+        info = game_info(self._game_id) if active else None
         self.bus.emit(
             "game.state",
             active=bool(active),
-            game=GAME_ID if active else "",
-            name=GAME_NAME if active else "",
+            game=self._game_id if active else "",
+            name=self._game_name if active else "",
             phase=str(phase),
+            hint=info.hint if info is not None else "",
         )
 
     def _sound_error(self, text: str) -> None:
         self.bus.emit("status", text=text)
 
     def _on_deck_disconnected(self, _topic, _data) -> None:
+        name = self.game_name or "The game"
         if self.stop():
-            self.bus.emit("status", text="Mole Smash ended because the Stream Deck disconnected")
+            self.bus.emit(
+                "status",
+                text=f"{name} ended because the Stream Deck disconnected",
+            )
 
     def _on_deck_connected(self, _topic, _data) -> None:
         # A game started against the virtual default geometry cannot safely
         # continue when a differently shaped physical deck appears underneath.
+        name = self.game_name or "The game"
         if self.stop():
-            self.bus.emit("status", text="Mole Smash ended because the deck layout changed")
+            self.bus.emit(
+                "status",
+                text=f"{name} ended because the deck layout changed",
+            )

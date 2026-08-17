@@ -28,7 +28,7 @@
     },
     {
       "name": "render-qa",
-      "description": "Verifies LinuxStreamDeck key, startup, screen-saver, and clean-exit display rendering offscreen without launching the GUI. Use after changes to device/renderer.py, device/startup_animation.py, device/screensaver.py, device/exit_display.py, core/icons.py, icon assets, or active-state logic, or whenever the user asks to verify how keys or full-deck displays look.",
+      "description": "Verifies LinuxStreamDeck key, startup, screen-saver, clean-exit display, and built-in game rendering offscreen without launching the GUI. Use after changes to device/renderer.py, device/startup_animation.py, device/screensaver.py, device/exit_display.py, games/*_render.py, games/render.py, games/rendering.py, core/icons.py, icon/game assets, or active-state logic, or whenever the user asks to verify how keys or full-deck displays look.",
       "prompt": "prompts/render-qa.md",
       "claude": {
         "tools": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
@@ -41,7 +41,7 @@
     },
     {
       "name": "reviewer",
-      "description": "Reviews code changes for LinuxStreamDeck's concurrency, rendering, config-isolation, single-instance, EventBus, and English-only invariants. Use proactively after changes to obs/, device/, core/icons.py, core/controller.py, core/events.py, or ui/, and whenever the user asks to review a diff or check for regressions. It reports findings only and never edits code.",
+      "description": "Reviews code changes for LinuxStreamDeck's concurrency, rendering, config-isolation, single-instance, EventBus, built-in game ownership, and English-only invariants. Use proactively after changes to obs/, device/, games/, core/icons.py, core/controller.py, core/events.py, or ui/, and whenever the user asks to review a diff or check for regressions. It reports findings only and never edits code.",
       "prompt": "prompts/reviewer.md",
       "claude": {
         "tools": ["Read", "Grep", "Glob", "Bash"],

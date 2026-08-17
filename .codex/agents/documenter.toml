@@ -34,7 +34,8 @@ Never trust a documentation claim without checking its source. Verify at least:
 - **Commands / scripts:** `build.sh`, `run.sh`, `install-udev.sh` and
   `packaging/build-deb.sh`, including flags and environment variables.
 - **Automated tests:** `tests/`, including an isolated `LSD_CONFIG_DIR` in the
-  documented `unittest` command.
+  documented `unittest` command and the all-game BASIC/`RENDER_LOCK` coverage in
+  `tests/test_invariants.py`.
 - **Packaging / dependencies / versions:** `pyproject.toml` and Debian packaging,
   including Python requirements, entry points, package data, the shared hicolor
   theme icon name (never an absolute Debian-only SVG path), and maintainer-script
@@ -55,10 +56,15 @@ Never trust a documentation claim without checking its source. Verify at least:
 - **Stateful clocks:** `linuxstreamdeck/core/clocks.py`, key identity propagation,
   immediate execution, second-change rendering, view-independent runtime state,
   timer completion audio and reset/clear/move/shutdown lifecycle.
-- **Built-in games:** `linuxstreamdeck/games/`, bundled game assets and their
-  generator, `GameSettings`, status-menu/UI entry points, exclusive input/display
-  ownership, adaptive device layouts, score persistence, sound cancellation and
-  screen-saver coexistence.
+- **Built-in games:** every catalog entry and pure engine under
+  `linuxstreamdeck/games/` (Mole Smash, Circuit Breaker, Pulse Memory and Memory
+  Match), their shared `common.py` value/layout model, snapshot render/HUD
+  dispatch, one self-contained `assets/games/<game_id>/` directory per game,
+  game-keyed cue routing, exact per-game WAV sets, licenses, deterministic
+  generator and matching package-data patterns,
+  per-game `GameSettings`, status-menu/UI entry points, exclusive input/display
+  ownership, adaptive device layouts, per-geometry/difficulty record persistence,
+  sound cancellation and screen-saver coexistence.
 - **Stream Deck display:** `linuxstreamdeck/device/screensaver.py`,
   `device/exit_display.py`, `device/manager.py`, `app.py`,
   `ui/screensaver_settings.py` and `ui/window.py`, including installed saver

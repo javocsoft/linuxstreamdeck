@@ -20,13 +20,14 @@ Read `AGENTS.md` sections 5-6 for the rationale.
 2. **Render lock.** Pillow/FreeType drawing must use the shared reentrant
    `RENDER_LOCK` from `linuxstreamdeck/core/icons.py`. Rendering must never cache
    failed or blank glyphs; full-deck screen-saver and clean-exit image rendering
-   use the same lock.
+   use the same lock, as must `games/render.py` and every `games/*_render.py`.
 3. **Pillow layout.** Font loading in `linuxstreamdeck/core/icons.py`,
    `linuxstreamdeck/device/renderer.py` and
    `linuxstreamdeck/device/startup_animation.py` and
    `linuxstreamdeck/device/screensaver.py` must retain
-   `layout_engine=ImageFont.Layout.BASIC`. Flag RAQM, `anchor="mm"` or oversized
-   glyph fonts.
+   `layout_engine=ImageFont.Layout.BASIC`; the same applies to the game font
+   loaders in `games/render.py` and `games/rendering.py`. Flag RAQM,
+   `anchor="mm"` or oversized glyph fonts.
 4. **Icon inheritance.** An empty explicit icon reference must stay empty in
    config. Editor previews should resolve the same effective action/default icon
    as the controller and deck grid for display only; clearing an override must
@@ -161,11 +162,21 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    press made the session inactive, and suppress virtual actions, dials,
    touchscreen input, normal rendering, alert flashes, editing and DnD. Screen-
    saver suppression must compose named OBS/game reasons without one releasing
-   the other; game ownership must also beat manual preview. Layouts must derive
-   from live geometry, Plus HUD use must stay gated on dials, game rendering must
-   share `RENDER_LOCK`/BASIC layout, audio work must be bounded and cancellable,
-   and shutdown must join the game before HID closes. Every exit path must
-   restore configured keys without reviving a delayed report overlay.
+   the other; game ownership must also beat manual preview. The catalog, status-
+   menu mapping, engine registry, per-game settings mapping and snapshot
+   render/HUD dispatch must agree for Mole Smash, Circuit Breaker, Pulse Memory
+   and Memory Match. Engines
+   must remain pure clock/RNG-injected state machines, with session ownership and
+   persistence centralized in `GameManager`. Layouts must derive from live
+   geometry, odd Memory Match grids must reserve exactly one status key, Plus
+   HUD use must stay gated on dials, game rendering must share
+   `RENDER_LOCK`/BASIC layout, and per-game records must remain separated by
+   geometry and difficulty. Every game must resolve its cues only below its own
+   `assets/games/<game_id>/` directory, whose WAV files exactly match that
+   game's cue map; the deterministic generator and `pyproject.toml` package data
+   must cover every such directory. Audio work must be bounded and cancellable,
+   and shutdown must join the game before HID closes. Every exit path must restore
+   configured keys without reviving a delayed report overlay.
    Configuration import/backup restore must also replace the game manager's
    settings reference, so new preferences and records reach the active Config.
 22. **Clean-exit display lifecycle.** Preserve the three physical-device modes:

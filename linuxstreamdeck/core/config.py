@@ -800,6 +800,18 @@ class GameSettings:
     mole_sound_enabled: bool = True
     mole_volume: int = DEFAULT_GAME_VOLUME
     mole_high_scores: dict[str, int] = field(default_factory=dict)
+    circuit_difficulty: str = DEFAULT_GAME_DIFFICULTY
+    circuit_sound_enabled: bool = True
+    circuit_volume: int = DEFAULT_GAME_VOLUME
+    circuit_best_moves: dict[str, int] = field(default_factory=dict)
+    pulse_difficulty: str = DEFAULT_GAME_DIFFICULTY
+    pulse_sound_enabled: bool = True
+    pulse_volume: int = DEFAULT_GAME_VOLUME
+    pulse_high_scores: dict[str, int] = field(default_factory=dict)
+    memory_difficulty: str = DEFAULT_GAME_DIFFICULTY
+    memory_sound_enabled: bool = True
+    memory_volume: int = DEFAULT_GAME_VOLUME
+    memory_best_moves: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -963,33 +975,56 @@ class Config:
                 mode=exit_mode,
                 image_path=str(raw_exit_display.get("image_path", "") or ""),
             )
-            difficulty = str(
-                raw_games.get("mole_difficulty", DEFAULT_GAME_DIFFICULTY)
-                or DEFAULT_GAME_DIFFICULTY
-            ).lower()
-            if difficulty not in GAME_DIFFICULTIES:
-                difficulty = DEFAULT_GAME_DIFFICULTY
-            raw_scores = raw_games.get("mole_high_scores", {})
-            if not isinstance(raw_scores, dict):
-                raw_scores = {}
-            scores: dict[str, int] = {}
-            for raw_key, raw_score in list(raw_scores.items())[:MAX_GAME_HIGH_SCORES]:
-                key = str(raw_key or "").strip()[:80]
-                if not key:
-                    continue
-                scores[key] = max(0, min(MAX_GAME_SCORE, int(raw_score)))
-            games = GameSettings(
-                mole_difficulty=difficulty,
-                mole_sound_enabled=(
-                    raw_games.get("mole_sound_enabled", True)
-                    if isinstance(raw_games.get("mole_sound_enabled", True), bool)
-                    else True
-                ),
-                mole_volume=max(
+            def game_difficulty(field_name: str) -> str:
+                value = str(
+                    raw_games.get(field_name, DEFAULT_GAME_DIFFICULTY)
+                    or DEFAULT_GAME_DIFFICULTY
+                ).lower()
+                return (
+                    value
+                    if value in GAME_DIFFICULTIES
+                    else DEFAULT_GAME_DIFFICULTY
+                )
+
+            def game_bool(field_name: str) -> bool:
+                value = raw_games.get(field_name, True)
+                return value if isinstance(value, bool) else True
+
+            def game_volume(field_name: str) -> int:
+                return max(
                     0,
-                    min(100, int(raw_games.get("mole_volume", DEFAULT_GAME_VOLUME))),
-                ),
-                mole_high_scores=scores,
+                    min(100, int(raw_games.get(field_name, DEFAULT_GAME_VOLUME))),
+                )
+
+            def game_scores(field_name: str) -> dict[str, int]:
+                values = raw_games.get(field_name, {})
+                if not isinstance(values, dict):
+                    return {}
+                scores: dict[str, int] = {}
+                for raw_key, raw_score in list(values.items())[:MAX_GAME_HIGH_SCORES]:
+                    key = str(raw_key or "").strip()[:80]
+                    if not key:
+                        continue
+                    scores[key] = max(0, min(MAX_GAME_SCORE, int(raw_score)))
+                return scores
+
+            games = GameSettings(
+                mole_difficulty=game_difficulty("mole_difficulty"),
+                mole_sound_enabled=game_bool("mole_sound_enabled"),
+                mole_volume=game_volume("mole_volume"),
+                mole_high_scores=game_scores("mole_high_scores"),
+                circuit_difficulty=game_difficulty("circuit_difficulty"),
+                circuit_sound_enabled=game_bool("circuit_sound_enabled"),
+                circuit_volume=game_volume("circuit_volume"),
+                circuit_best_moves=game_scores("circuit_best_moves"),
+                pulse_difficulty=game_difficulty("pulse_difficulty"),
+                pulse_sound_enabled=game_bool("pulse_sound_enabled"),
+                pulse_volume=game_volume("pulse_volume"),
+                pulse_high_scores=game_scores("pulse_high_scores"),
+                memory_difficulty=game_difficulty("memory_difficulty"),
+                memory_sound_enabled=game_bool("memory_sound_enabled"),
+                memory_volume=game_volume("memory_volume"),
+                memory_best_moves=game_scores("memory_best_moves"),
             )
             brightness = max(10, min(100, int(raw.get("brightness", 80))))
             editor_width = max(MIN_EDITOR_WIDTH, min(MAX_EDITOR_WIDTH, int(

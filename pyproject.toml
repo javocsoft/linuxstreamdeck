@@ -28,4 +28,7 @@ linuxstreamdeck = [
     "assets/fonts/*.ttf", "assets/fonts/LICENSE*",
     "assets/games/mole_smash/*.png", "assets/games/mole_smash/*.wav",
     "assets/games/mole_smash/LICENSE*",
+    "assets/games/circuit_breaker/*.wav", "assets/games/circuit_breaker/LICENSE*",
+    "assets/games/pulse_memory/*.wav", "assets/games/pulse_memory/LICENSE*",
+    "assets/games/memory_match/*.wav", "assets/games/memory_match/LICENSE*",
 ]

@@ -183,8 +183,8 @@ class FakeSound:
         self.cancelled = 0
         self.stopped = 0
 
-    def play(self, cue, volume) -> None:
-        self.cues.append((cue, volume))
+    def play(self, game_id, cue, volume) -> None:
+        self.cues.append((game_id, cue, volume))
 
     def cancel(self) -> None:
         self.cancelled += 1

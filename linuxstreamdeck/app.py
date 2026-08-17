@@ -211,6 +211,7 @@ class LinuxStreamDeckApp:
             on_start_game=self.request_game,
             on_stop_game=self.controller.stop_game,
             game_active=lambda: self.controller.games.active,
+            game_name=lambda: self.controller.games.game_name,
         )
         if not tray.start():
             return
@@ -253,12 +254,12 @@ class LinuxStreamDeckApp:
         else:
             self.controller.set_profile(index)
 
-    def request_game(self) -> None:
+    def request_game(self, game_id: str = "mole_smash") -> None:
         """Start a game through the window's unsaved-key guard."""
         if self.window is None:
-            self.controller.start_game()
+            self.controller.start_game(game_id)
             return
-        self.window.request_game()
+        self.window.request_game(game_id)
 
     def request_quit(self) -> None:
         """Quit from the status icon, giving the window a chance to confirm."""

@@ -1,4 +1,4 @@
-"""Bounded, cancellable playback of the bundled Mole Smash effects."""
+"""Bounded, cancellable playback of the bundled game effects."""
 
 from __future__ import annotations
 
@@ -6,22 +6,57 @@ import logging
 import queue
 import threading
 from collections.abc import Callable
+from pathlib import Path
 
 from ..core.audio import play_audio
-from .render import ASSET_DIR
 
 log = logging.getLogger(__name__)
 
+ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets" / "games"
+
+# Every game owns a complete sound set below its own asset directory. Some
+# waveforms are intentionally alike, but they are generated into each consumer
+# rather than making one game depend on another game's files.
 CUE_FILES = {
-    "countdown": "countdown.wav",
-    "finish": "finish.wav",
-    "go": "go.wav",
-    "golden": "golden.wav",
-    "hit": "hit.wav",
-    "pop": "pop.wav",
-    "record": "record.wav",
-    "select": "select.wav",
-    "wrong": "wrong.wav",
+    "mole_smash": {
+        "countdown": "countdown.wav",
+        "finish": "finish.wav",
+        "go": "go.wav",
+        "golden": "golden.wav",
+        "hit": "hit.wav",
+        "pop": "pop.wav",
+        "record": "record.wav",
+        "select": "select.wav",
+        "wrong": "wrong.wav",
+    },
+    "circuit_breaker": {
+        "circuit": "circuit.wav",
+        "finish": "finish.wav",
+        "go": "go.wav",
+        "record": "record.wav",
+        "select": "select.wav",
+    },
+    "pulse_memory": {
+        "countdown": "countdown.wav",
+        "go": "go.wav",
+        "hit": "hit.wav",
+        "pulse_0": "pulse-0.wav",
+        "pulse_1": "pulse-1.wav",
+        "pulse_2": "pulse-2.wav",
+        "pulse_3": "pulse-3.wav",
+        "pulse_4": "pulse-4.wav",
+        "pulse_5": "pulse-5.wav",
+        "select": "select.wav",
+        "wrong": "wrong.wav",
+    },
+    "memory_match": {
+        "finish": "finish.wav",
+        "go": "go.wav",
+        "hit": "hit.wav",
+        "record": "record.wav",
+        "select": "select.wav",
+        "wrong": "wrong.wav",
+    },
 }
 
 
@@ -30,7 +65,7 @@ class GameSoundPlayer:
 
     def __init__(self, on_error: Callable[[str], None] | None = None) -> None:
         self._on_error = on_error
-        self._queue: queue.Queue[tuple[int, str, int] | None] = queue.Queue(8)
+        self._queue: queue.Queue[tuple[int, Path, int] | None] = queue.Queue(8)
         self._lock = threading.Lock()
         self._generation = 0
         self._stopping = threading.Event()
@@ -46,13 +81,14 @@ class GameSoundPlayer:
         for worker in self._workers:
             worker.start()
 
-    def play(self, cue: str, volume: int) -> None:
-        filename = CUE_FILES.get(str(cue))
+    def play(self, game_id: str, cue: str, volume: int) -> None:
+        filename = CUE_FILES.get(str(game_id), {}).get(str(cue))
         if filename is None or self._stopping.is_set():
             return
         with self._lock:
             generation = self._generation
-        item = (generation, filename, max(0, min(100, int(volume))))
+        path = ASSET_ROOT / str(game_id) / filename
+        item = (generation, path, max(0, min(100, int(volume))))
         try:
             self._queue.put_nowait(item)
         except queue.Full:
@@ -99,11 +135,11 @@ class GameSoundPlayer:
             try:
                 if item is None:
                     return
-                generation, filename, volume = item
+                generation, path, volume = item
                 if self._cancelled(generation):
                     continue
                 play_audio(
-                    ASSET_DIR / filename,
+                    path,
                     volume,
                     stop_requested=lambda: self._cancelled(generation),
                 )

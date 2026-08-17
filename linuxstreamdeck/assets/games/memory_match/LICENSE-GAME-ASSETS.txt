@@ -1,0 +1,12 @@
+Memory Match assets
+===================
+
+Copyright (C) 2026 JavocSoft
+
+The WAV effects used by Memory Match are original synthesized sounds generated
+by tools/generate_game_sounds.py. Running that script reproduces every bundled
+audio file without downloading any third-party material.
+
+These assets are part of LinuxStreamDeck and are distributed under the GNU
+General Public License, version 3 or (at your option) any later version. See the
+project LICENSE file for the complete terms.

@@ -27,7 +27,12 @@ class MenuItemTests(unittest.TestCase):
 
         self.assertEqual(
             idle_games["children"],
-            [{"id": tray.MOLE_SMASH_ID, "label": "Mole Smash"}],
+            [
+                {"id": tray.MOLE_SMASH_ID, "label": "Mole Smash"},
+                {"id": tray.CIRCUIT_BREAKER_ID, "label": "Circuit Breaker"},
+                {"id": tray.PULSE_MEMORY_ID, "label": "Pulse Memory"},
+                {"id": tray.MEMORY_MATCH_ID, "label": "Memory Match"},
+            ],
         )
         self.assertEqual(
             active_games["children"],
@@ -35,6 +40,15 @@ class MenuItemTests(unittest.TestCase):
         )
         profile = next(item for item in active if item["id"] == tray.PROFILES_ID)
         self.assertFalse(profile["enabled"])
+
+    def test_stop_entry_names_the_active_game(self) -> None:
+        items = tray.menu_items(PROFILES, 0, True, "Pulse Memory")
+        games = next(item for item in items if item["id"] == tray.GAMES_ID)
+
+        self.assertEqual(
+            games["children"],
+            [{"id": tray.STOP_GAME_ID, "label": "Stop Pulse Memory"}],
+        )
 
     def test_every_profile_becomes_a_radio_entry(self) -> None:
         items = tray.menu_items(PROFILES, 1)
@@ -57,6 +71,9 @@ class MenuItemTests(unittest.TestCase):
             tray.GAMES_ID,
             tray.MOLE_SMASH_ID,
             tray.STOP_GAME_ID,
+            tray.CIRCUIT_BREAKER_ID,
+            tray.PULSE_MEMORY_ID,
+            tray.MEMORY_MATCH_ID,
         }
 
         profile_ids = {
@@ -329,7 +346,7 @@ class EventRoutingTests(unittest.TestCase):
             on_quit=lambda: self.calls.append("quit"),
             on_select_profile=lambda index: self.calls.append(("profile", index)),
             profiles=lambda: (PROFILES, 0),
-            on_start_game=lambda: self.calls.append("start-game"),
+            on_start_game=lambda game_id: self.calls.append(("start-game", game_id)),
             on_stop_game=lambda: self.calls.append("stop-game"),
         )
 
@@ -359,7 +376,16 @@ class EventRoutingTests(unittest.TestCase):
     def test_start_game_is_routed(self) -> None:
         self._click(tray.MOLE_SMASH_ID)
 
-        self.assertEqual(self.calls, ["start-game"])
+        self.assertEqual(self.calls, [("start-game", "mole_smash")])
+
+    def test_every_classic_game_is_routed(self) -> None:
+        for item_id, game_id in (
+            (tray.CIRCUIT_BREAKER_ID, "circuit_breaker"),
+            (tray.PULSE_MEMORY_ID, "pulse_memory"),
+            (tray.MEMORY_MATCH_ID, "memory_match"),
+        ):
+            self._click(item_id)
+            self.assertEqual(self.calls.pop(), ("start-game", game_id))
 
     def test_stop_game_is_routed(self) -> None:
         self._click(tray.STOP_GAME_ID)

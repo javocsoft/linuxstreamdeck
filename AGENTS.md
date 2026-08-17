@@ -201,9 +201,16 @@ linuxstreamdeck/
 │   ├── constants.py   OpenAI/Claude provider ids, labels and default models.
 │   └── service.py     Provider calls, bounded optional context, local proposal validation.
 ├── games/
-│   ├── mole_smash.py  Pure clock/RNG-injected game state machine and adaptive layouts.
-│   ├── manager.py     Exclusive input/display session, worker, persistence and restore.
-│   ├── render.py      Shared-lock Pillow key frames and Stream Deck + LCD HUD.
+│   ├── catalog.py     Stable IDs, names and user hints for all built-in games.
+│   ├── common.py      Shared engine events, phases and adaptive lobby/layout model.
+│   ├── mole_smash.py  Pure clock/RNG-injected reaction-game engine.
+│   ├── circuit_breaker.py  Pure guaranteed-solvable Lights Out-style engine.
+│   ├── pulse_memory.py Pure increasing sequence-recall engine.
+│   ├── memory_match.py Pure pair-matching engine with odd-grid status slot.
+│   ├── manager.py     Shared exclusive input/display session, worker, persistence and restore.
+│   ├── render.py      Snapshot dispatch plus Mole Smash key frames and Plus HUD.
+│   ├── *_render.py    Code-native key frames and Plus HUDs for the three classic games.
+│   ├── rendering.py   Shared BASIC-font lobby and HUD rendering helpers.
 │   └── audio.py       Bounded, cancellable workers for the bundled WAV effects.
 ├── core/
 │   ├── events.py      EventBus (pub/sub). Emitters may run on any thread; a
@@ -290,7 +297,7 @@ linuxstreamdeck/
 │   ├── screensaver_settings.py Screen saver and clean-exit display settings.
 │   └── profile_dialog.py New/edit profile dialog (name + description).
 ├── assets/icons/      MDI font (TTF) + icons.json index (bundled, Apache-2.0).
-└── assets/games/      Original built-in game sprites and reproducible WAV effects.
+└── assets/games/      One self-contained asset directory per built-in game ID.
 ```
 
 ### EventBus topics
@@ -305,8 +312,8 @@ linuxstreamdeck/
 | `deck.screensaver` | `active:bool, preview:bool, style:str` | Screen saver started/stopped; controller restores keys on stop. |
 | `obs.connected` / `obs.disconnected` | — | OBS websocket state. |
 | `obs.outputs` | `recording:bool, streaming:bool` | Immutable output-state snapshot for the automatic screen-saver policy. |
-| `game.state` | `active:bool, game:str, name:str, phase:str` | A built-in game took or released exclusive control of the deck. |
-| `game.settings` | — | A lobby preference or high score changed and must be persisted. |
+| `game.state` | `active:bool, game:str, name:str, phase:str, hint:str` | A built-in game took or released exclusive control; inactive payload strings are empty. |
+| `game.settings` | — | The active game's difficulty, sound choice or record changed and must be persisted. |
 | `twitch.state` | `linked:bool, login:str` | A Twitch account was linked, dropped or confirmed. |
 | `twitch.live` | `connected:bool` | The EventSub session came up or went away. |
 | `obs.state` | `what:str` | Any OBS state change (drives key feedback). |
@@ -1360,39 +1367,75 @@ pre-flight board cannot suddenly appear as the game lets go. The game worker
 must stop from `DeckController.shutdown()` before `DeckManager.stop()` closes
 HID, preserving the application-level controller-before-deck shutdown order.
 
-`games/mole_smash.py` is a pure state machine: both monotonic time and randomness
-are injected, and it knows nothing about GTK, HID, Pillow or audio. A lobby
-offers Start, difficulty, sound, record and Back. A three-second countdown leads
-to a 45-second round; normal targets score 10, golden targets 25, an empty press
-costs 2 and breaks the combo. Easy/normal/hard change visible/gap timing, and
-targets accelerate through the round. High scores use
-`<columns>x<rows>[+lcd]:<difficulty>` so decks with different playable areas do
-not share an unfair leaderboard.
+`games/catalog.py` holds the stable identities and active-window hints; the
+status menu's fixed IDs/labels must mirror it. Each registered game has its own
+pure state machine with injected monotonic time and randomness, and none knows
+about GTK, HID, Pillow or audio.
+They share `common.py`'s `GameLayout`, `EngineEvent`, phases and lobby contract:
+Start, difficulty, sound, record and Back. Their rules differ:
 
-`game_layout()` derives every position from live `key_count` and `columns`. On
-decks without a touchscreen, score and time reserve the two top corners during
-play and every other key is a target. On Stream Deck +, `dial_count` selects the
-`+lcd` layout, `touchscreen_hud()` puts score/time/combo on the strip, and all
-eight keys remain playable. The same PNG travels on `ui.game_hud` to a 480x60
+- `mole_smash.py` runs a three-second countdown and a 45-second reaction round.
+  Normal targets score 10, golden targets 25, an empty press costs 2 and breaks
+  the combo; difficulty changes visible/gap timing and targets accelerate.
+- `circuit_breaker.py` creates a non-empty, guaranteed-solvable board by applying
+  legal cross toggles to an all-off grid. A press toggles its cell plus the
+  orthogonal neighbours, difficulty changes scramble density, and finishing in
+  fewer moves replaces the record.
+- `pulse_memory.py` starts after a three-second countdown, shows a sequence and
+  accepts input only after the display phase. Easy/normal/hard begin at two,
+  three or four steps and use progressively shorter light/gap intervals. A
+  correct replay appends one step that cannot immediately repeat the same key;
+  a wrong key ends the session, and the longest completed sequence is the
+  record.
+- `memory_match.py` shuffles pairs over the largest even number of keys. An odd
+  grid reserves its final key for moves/pairs; Easy and Normal preview all cards
+  for 2.2 or 1.1 seconds while Hard starts hidden. Mismatches block input until
+  their difficulty-dependent reveal expires, and fewer completed turns wins.
+
+Each record key is `<columns>x<rows>[+lcd]:<difficulty>`, so decks with different
+playable areas do not share an unfair leaderboard.
+
+`game_layout()` derives every shared control from live `key_count` and `columns`.
+On decks without a touchscreen, Mole Smash reserves the two top corners for
+score/time and Memory Match reserves the last key only when an odd key count
+would leave an unpaired card; Circuit Breaker and Pulse Memory use the full grid.
+On Stream Deck +, `dial_count` selects the `+lcd` layout and each renderer puts
+its live score/moves/sequence/pairs/progress state on the strip, leaving all
+eight keys playable. The same PNG travels on `ui.game_hud` to a 480x60
 aspect-preserving `Gtk.Picture` below the virtual grid; an empty payload and the
-inactive state both hide it. Lobby controls may reuse score/time positions
-because the phases never render at once. Keep the controls unique even on a
-six-key Mini and never assume a 5x3 grid.
+inactive state both hide it. Lobby controls may reuse play positions because
+the phases never render at once. Keep the controls unique even on a six-key Mini
+and never assume a 5x3 grid.
 
-`games/render.py` renders the same Pillow images to physical and virtual decks
-under the shared `RENDER_LOCK`, and every TrueType font uses BASIC layout.
-`GameManager` compares encoded PNGs and sends only changed keys at its 20 Hz
-tick; the engine remains deterministic even though the session is animated.
-The original transparent mole sprite lives below
-`assets/games/mole_smash/`. The original mono WAV effects are reproducible with
-`tools/generate_game_sounds.py`; playback uses a bounded two-worker queue and a
-per-session generation so rapid hits never leave delayed sounds playing after
-exit. `GameSettings` stores difficulty, sound, bounded volume and bounded
-per-layout records in the normal JSON/export; `game.settings` asks the GTK thread
-to save only when one of those values actually changes. Import and backup restore
-replace `Config.games` as an object, so `_adopt_replaced_configuration()` must
-also pass that new object to `GameManager.adopt_settings()`; keeping the old
-reference would make later records disappear into detached state.
+`games/render.py` dispatches engine snapshots to the Mole Smash renderer or the
+three `*_render.py` modules, and sends the same Pillow images to physical and
+virtual decks under the shared `RENDER_LOCK`; every TrueType font uses BASIC
+layout. `GameManager` is shared by all four engines, compares encoded PNGs and
+sends only changed keys at its 20 Hz tick; the engines remain deterministic even
+though their sessions are animated.
+
+Every game owns a self-contained asset directory named after its catalog ID:
+`assets/games/mole_smash/`, `circuit_breaker/`, `pulse_memory/` and
+`memory_match/`. The Mole Smash directory also owns its original transparent
+mole sprite. `games/audio.py::CUE_FILES` is keyed first by game ID, and every
+cue resolves only below that game's directory; shared waveforms are duplicated
+deliberately so one game never depends on another game's assets. Each directory's
+WAV set must exactly match its cue mapping and its own `LICENSE-GAME-ASSETS.txt`.
+`tools/generate_game_sounds.py` deterministically writes the complete set for
+all four directories, including Circuit Breaker's `circuit.wav` and Pulse
+Memory's six pitch-mapped `pulse-0.wav` through `pulse-5.wav`. Keep those four
+directory patterns in `pyproject.toml` package data whenever the mapping changes.
+Playback uses a bounded two-worker queue and a per-session generation so rapid
+hits never leave delayed sounds playing after exit.
+
+`GameSettings` stores separate difficulty, sound, bounded volume and bounded
+per-layout record mappings for Mole Smash, Circuit Breaker, Pulse Memory and
+Memory Match in the normal JSON/export. `game.settings` asks the GTK thread to
+save only when the active game's choice or record actually changes. Import and
+backup restore replace `Config.games` as an object, so
+`_adopt_replaced_configuration()` must also pass that new object to
+`GameManager.adopt_settings()`; keeping the old reference would make later
+records disappear into detached state.
 
 ### Status icon and application lifetime
 
@@ -1427,9 +1470,10 @@ publishes the icon the moment one appears. `RegisterStatusNotifierItem` is calle
 **asynchronously**; it runs on the GTK main thread, so a synchronous call would
 freeze the window whenever the panel is slow. Until the reply arrives the icon
 counts as unregistered, which is the safe direction. The menu is **Open**, a
-**Profile** submenu of radio entries, a **Games** submenu and **Quit**. While a
-game is active, Profile is disabled and the game entry becomes **Stop Mole
-Smash**; `ItemIsMenu` is true, so a plain click opens it. `menu_items()` and
+**Profile** submenu of radio entries, a **Games** submenu and **Quit**. The Games
+submenu lists Mole Smash, Circuit Breaker, Pulse Memory and Memory Match. While a
+game is active, Profile is disabled and that submenu becomes **Stop [game
+name]**; `ItemIsMenu` is true, so a plain click opens it. `menu_items()` and
 `build_layout()` are pure functions, which is what the tests exercise. Profile
 entry IDs start at `PROFILE_ID_BASE` so they never collide with the fixed ones.
 `app.py` subscribes to `profile.changed` and `game.state` and calls `refresh()`,
@@ -3028,8 +3072,9 @@ ignored and you will chase a ghost.
    blank). The fix, which must stay in place, is
    `ImageFont.truetype(path, size, layout_engine=ImageFont.Layout.BASIC)` in
    `core/icons.py`, `device/renderer.py`, `device/startup_animation.py` and
-   `device/screensaver.py`. Do **not** use raqm, `anchor="mm"`, or oversized
-   fonts for glyphs (the latter caused giant masks →
+   `device/screensaver.py`, plus every game font loader in `games/render.py` and
+   `games/rendering.py`. Do **not** use raqm, `anchor="mm"`, or oversized fonts
+   for glyphs (the latter caused giant masks →
    `DecompressionBombWarning` + blank keys). Configured-key glyph centering uses
    `textbbox` + ink-bbox recenter; the startup title centers each character from
    its text bounding box within one hardware-key cell, and the screen-saver title
@@ -3052,23 +3097,23 @@ ignored and you will chase a ghost.
 
    *Guarded by* `BasicFontLayoutTests`, which records every `ImageFont.truetype`
    call made while rendering an icon, key images, four screen-saver styles, the
-   startup sequence and the exit tiles, and fails if any of them omitted
-   `layout_engine`. Clear the cached font loaders first or a patched loader is
-   never reached.
+   startup sequence, exit tiles and all four built-in game renderers, and fails
+   if any of them omitted `layout_engine`. Clear the cached font loaders first or
+   a patched loader is never reached.
 
 2. **Rendering is not thread-safe → `RENDER_LOCK`.** Pillow/FreeType is not
    thread-safe. Configured keys render on a worker, the screen saver renders on
    its own thread, and the icon picker/preview render on the main thread;
    concurrent use produced blank (and blank-cached) glyphs. A shared reentrant
-   `RENDER_LOCK` (defined in `core/icons.py`, imported by `device/renderer.py`,
-   `device/startup_animation.py`, `device/screensaver.py` and
-   `device/exit_display.py`) serializes drawing. It is reentrant so `compose()`
-   can call `library.render` without deadlocking. The glyph cache is manual and
-   **never caches failures** (safety net).
+   `RENDER_LOCK` (defined in `core/icons.py`, imported by every device and game
+   drawing module) serializes drawing. It is reentrant so `compose()` can call
+   `library.render` without deadlocking. The glyph cache is manual and **never
+   caches failures** (safety net).
    *Guarded by* `RenderLockTests`, which swaps the lock for a depth-tracking
-   proxy, patches `ImageDraw.Draw` to record anything drawn at depth 0, and also
-   pins that all five modules hold the *same* object: each imports it by value,
-   so a second lock would serialize nothing while still looking correct.
+   proxy, patches `ImageDraw.Draw` to record anything drawn at depth 0 while
+   exercising all four games too, and pins that every drawing module holds the
+   *same* object: each imports it by value, so a second lock would serialize
+   nothing while still looking correct.
 
 3. **OBS requests must be fully serialized.** `obsws_python.ReqClient` uses a
    single websocket that is **not** thread-safe. In `obs/client.py` the `_lock`
@@ -3385,7 +3430,13 @@ ignored and you will chase a ghost.
    machine that just started it is an ordinary timestamp, and anything stamped
    before it is silently dropped as already seen.
 
-28. **A game owns both input and pixels until it restores the page.** Route
+28. **A game owns both input and pixels until it restores the page.** Keep the
+   catalog, status-menu mapping, engine registry, per-game settings fields and
+   render dispatch in agreement: an entry present in only some of them can
+   appear in the menu but fail to start, render through the wrong path or save
+   into another game.
+   Engines stay pure with injected time/RNG; shared lifecycle belongs in
+   `GameManager`. Route
    physical input through `GameManager` before actions and preserve `_owned_down`
    until each release, including a release after Back made the session inactive.
    Suppress virtual actions, dials, touchscreen input, normal renders, report
@@ -3394,10 +3445,12 @@ ignored and you will chase a ghost.
    game ownership must block even manual preview while ordinary OBS suppression
    must not. Derive layouts from live key count/columns, use the Plus LCD only
    when dials are present and keep Mini controls unique. Draw under the shared
-   `RENDER_LOCK` with BASIC fonts, bound/cancel audio work, persist records per
-   geometry and difficulty, and stop the game worker before HID shutdown. Exit,
-   disconnect and failure must restore the configured page without resurrecting
-   a delayed report overlay.
+   `RENDER_LOCK` with BASIC fonts. Keep every game's cue map, exact WAV set,
+   asset license, generator output and package-data entry isolated below that
+   game's own `assets/games/<game_id>/` directory. Bound/cancel audio work,
+   persist records per geometry, game and difficulty, and stop the game worker
+   before HID shutdown. Exit, disconnect and failure must restore the configured
+   page without resurrecting a delayed report overlay.
 
 ---
 

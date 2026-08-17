@@ -44,7 +44,7 @@ maintenance contract.
 
 ## `reviewer` — invariants guard
 
-- **Automatic:** after changes to `obs/`, `device/`, `core/icons.py`,
+- **Automatic:** after changes to `obs/`, `device/`, `games/`, `core/icons.py`,
   `core/controller.py`, `core/events.py` or `ui/`; or when you ask to review a
   diff / check for regressions.
 - **Manual:** *"review this change"*, *"run the reviewer on the branch"*.
@@ -64,8 +64,10 @@ maintenance contract.
   and manual preview preserved, clean-exit display
   mode/render/fallback/HID ordering and portable custom images, grid-DnD
   gesture/payload validation, status-icon pixmap/name fallback compatibility,
-  built-in game input/display ownership, adaptive layouts, bounded audio,
-  screen-saver reason composition and configured-page restoration,
+  built-in game catalog/engine/settings/render-dispatch agreement,
+  input/display ownership, pure-engine boundaries, adaptive layouts, isolated
+  per-game asset/cue/package mappings, bounded audio, screen-saver reason
+  composition and configured-page restoration,
   AI credential/context/proposal safety, reusing feedback color constants, and
   English-only with no accents. It only reports; it does not edit code.
 
@@ -87,7 +89,8 @@ maintenance contract.
 
 - **Automatic:** after touching `device/renderer.py`, `device/screensaver.py`,
   `device/startup_animation.py`, `device/exit_display.py`, `core/icons.py`, the
-  icon assets, or active-state logic.
+  icon assets, `games/*_render.py`, `games/render.py`, `games/rendering.py`, game
+  assets, or active-state logic.
 - **Manual:** *"verify how the keys look"*, *"check there are no blank glyphs"*.
 - **What it does:** composes key PNGs **without launching the GUI** (with an
   isolated `LSD_CONFIG_DIR`) and objectively checks that glyphs are not blank, are
@@ -104,9 +107,11 @@ maintenance contract.
   For the physical startup sequence, it can inspect the complete offscreen frame
   grid for any of those shapes, title mapping, brightness bounds and fade to
   black. It eyeballs the images itself, and reports without fixing unless asked.
-  Built-in game checks cover the Mole Smash lobby, targets, hit/miss/results and
-  transparent sprite on Mini, Neo, Original and XL, plus the Stream Deck + LCD
-  score/time HUD.
+  Built-in game checks cover all four lobbies and phase-specific frames: Mole
+  Smash targets/hits/misses/results and transparent sprite, Circuit Breaker
+  light/cross-press/results, Pulse Memory showing/input/wrong/results, and
+  Memory Match hidden/revealed/matched/mismatch/results. They run on Mini, Neo,
+  Original and XL, with each Stream Deck + LCD HUD checked separately.
 
 ## `documenter` — documentation keeper
 

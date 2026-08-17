@@ -179,10 +179,6 @@ GRID_HINT = (
     "arrow keys move between keys · "
     "Ctrl+Z undoes, Ctrl+Shift+Z redoes"
 )
-GAME_HINT = (
-    "Mole Smash · press START, then hit each mole before it disappears · "
-    "the Games menu can stop the session at any time"
-)
 
 # Both the arrow keys and their keypad twins, so navigation works either way.
 _ARROW_DIRECTIONS = {
@@ -560,12 +556,19 @@ class MainWindow(Adw.ApplicationWindow):
             control.set_sensitive(not active)
         self.editor.set_sensitive(not active)
         self._breadcrumb.set_visible(not active)
-        self._grid_hint.set_label(GAME_HINT if active else GRID_HINT)
+        if active:
+            name = str(data.get("name") or "Game")
+            hint = str(data.get("hint") or "Use the Stream Deck keys to play.")
+            self._grid_hint.set_label(
+                f"{name} - {hint} - the Games menu can stop the session at any time"
+            )
+        else:
+            self._grid_hint.set_label(GRID_HINT)
         self.dial_row.set_visible(not active)
         for button in self._key_buttons:
             if active:
                 button.add_css_class("game-mode")
-                button.set_tooltip_text("Play Mole Smash")
+                button.set_tooltip_text(f"Play {data.get('name') or 'game'}")
             else:
                 button.remove_css_class("game-mode")
         if not active:
@@ -835,14 +838,15 @@ class MainWindow(Adw.ApplicationWindow):
             lambda: self.app.controller.set_profile(index),
         )
 
-    def request_game(self) -> None:
-        """Start Mole Smash from the status icon without losing a key draft."""
+    def request_game(self, game_id: str = "mole_smash") -> None:
+        """Start a built-in game without losing an unsaved key draft."""
         if _game_active(self.app.controller):
             return
         self._present_for_dialog()
+        name = game_id.replace("_", " ").title()
         self._confirm_unsaved_changes(
-            "starting Mole Smash",
-            self.app.controller.start_game,
+            f"starting {name}",
+            lambda: self.app.controller.start_game(game_id),
         )
 
     def _present_for_dialog(self) -> None:

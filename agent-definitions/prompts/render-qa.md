@@ -11,6 +11,10 @@ Read `linuxstreamdeck/device/renderer.py`,
 `linuxstreamdeck/device/screensaver.py`,
 `linuxstreamdeck/device/exit_display.py`,
 `linuxstreamdeck/games/render.py`,
+`linuxstreamdeck/games/rendering.py`,
+`linuxstreamdeck/games/circuit_render.py`,
+`linuxstreamdeck/games/pulse_render.py`,
+`linuxstreamdeck/games/memory_render.py`,
 `linuxstreamdeck/core/icons.py` and `AGENTS.md` sections 5-6 first.
 
 ## Absolute rules
@@ -105,15 +109,25 @@ report both objective measurements and visual coherence across key boundaries.
 
 ### Built-in games
 
-When `games/` or game ownership is in scope, render Mole Smash lobby, countdown,
-normal target, golden target, hit, miss and results snapshots offscreen. Cover
-Mini 3x2, Neo 4x2, Original 5x3 and XL 8x4, and separately verify the Stream
-Deck + 800x100 touchscreen HUD. Every layout must expose unique lobby controls,
-the expected playable-hole count and no clipped sprite or unreadable score/time
-text. Confirm the transparent source sprite has real alpha and non-empty content,
-that a target differs objectively from an empty hole, and that the same rendered
-images are emitted to physical and virtual paths. Runtime ownership, input
-consumption and restoration belong to the reviewer; do not open HID.
+When `games/` or game ownership is in scope, render every registered game
+offscreen:
+
+- Mole Smash: lobby, countdown, normal/golden targets, hit, miss and results;
+- Circuit Breaker: lobby, lit/unlit cells, pressed cross and results;
+- Pulse Memory: lobby, countdown, showing, input flash, wrong key and results;
+- Memory Match: lobby, preview, hidden/revealed/matched cards, mismatch, odd-grid
+  status key and results.
+
+Cover Mini 3x2, Neo 4x2, Original 5x3 and XL 8x4, and separately verify every
+Stream Deck + 800x100 touchscreen HUD. Every layout must expose unique lobby
+controls, fill exactly its live key count and keep text/symbols legible. Confirm
+the Mole Smash source sprite has real alpha and non-empty content, every state
+that should differ does so objectively, the three classic renderers use their
+expected snapshot dispatch, and the same rendered images are emitted to physical
+and virtual paths. Memory Match must use the largest even card count and reserve
+only the final key on odd grids; the Plus HUD must leave all eight keys playable.
+Runtime ownership, input consumption and restoration belong to the reviewer; do
+not open HID.
 
 ### Clean-exit display
 
