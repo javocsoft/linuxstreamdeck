@@ -54,12 +54,17 @@ Never trust a documentation claim without checking its source. Verify at least:
   immediate execution, second-change rendering, view-independent runtime state,
   timer completion audio and reset/clear/move/shutdown lifecycle.
 - **Stream Deck display:** `linuxstreamdeck/device/screensaver.py`,
-  `device/exit_display.py`, `device/manager.py`, `ui/screensaver_settings.py` and
-  `ui/window.py`, including installed saver styles, persisted/imported settings,
-  virtual/physical preview, explicit physical/virtual activity entry points
-  without a global legacy GTK hook, consumed physical wake presses, clean-exit
-  display modes/custom image portability, brightness/key restoration and
-  thread/HID shutdown order.
+  `device/exit_display.py`, `device/manager.py`, `app.py`,
+  `ui/screensaver_settings.py` and `ui/window.py`, including installed saver
+  styles, persisted/imported settings, virtual/physical preview, explicit
+  physical/virtual activity entry points without a global legacy GTK hook,
+  OBS recording/streaming suppression with fresh post-session idle timing and
+  manual preview preserved, the dedicated immutable `obs.outputs` snapshots and
+  their early-prime/live/disconnect-after-event-join lifecycle, plus the locked
+  per-output generations that keep a stale request-socket response from
+  overwriting a newer event-socket callback, consumed physical wake presses,
+  clean-exit display modes/custom image portability, brightness/key restoration
+  and thread/HID shutdown order.
 - **AI-assisted creation:** `linuxstreamdeck/ai/`,
   `linuxstreamdeck/ui/ai_assistant.py` and provider key storage, including
   bounded opt-in context, blocked dangerous actions, local validation and
@@ -69,9 +74,9 @@ Never trust a documentation claim without checking its source. Verify at least:
   same-key restart cancellation and predecessor ordering, exclusive/cancellable
   physical startup, unambiguous/migrated page navigation, bounded/path-safe
   portable audio/images, key-scoped clock lifecycle, screen-saver
-  rendering/wake/thread lifecycle, clean-exit display fallback/HID ordering,
-  grid-level validated DnD, isolated config experiments and the single-instance
-  GUI rule.
+  rendering/wake/OBS-output-suppression/monotonic-handoff/thread lifecycle,
+  clean-exit display fallback/HID ordering, grid-level validated DnD, isolated
+  config experiments and the single-instance GUI rule.
 - **Device facts:** supported device id, key count, grid columns, render size,
   startup/screen-saver/exit-display frame layouts, brightness bounds, connection
   publication order and device-worker shutdown ordering.

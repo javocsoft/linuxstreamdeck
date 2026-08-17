@@ -291,6 +291,7 @@ linuxstreamdeck/
 | `deck.disconnected` | — | Device removed. |
 | `deck.screensaver` | `active:bool, preview:bool, style:str` | Screen saver started/stopped; controller restores keys on stop. |
 | `obs.connected` / `obs.disconnected` | — | OBS websocket state. |
+| `obs.outputs` | `recording:bool, streaming:bool` | Immutable output-state snapshot for the automatic screen-saver policy. |
 | `twitch.state` | `linked:bool, login:str` | A Twitch account was linked, dropped or confirmed. |
 | `twitch.live` | `connected:bool` | The EventSub session came up or went away. |
 | `obs.state` | `what:str` | Any OBS state change (drives key feedback). |
@@ -590,6 +591,39 @@ release are consumed; a later press executes normally. Waking clears preview
 state, restores normal brightness, emits inactive `deck.screensaver`, and the
 controller refreshes configured key images.
 
+`LinuxStreamDeckApp` subscribes to the dedicated `obs.outputs` topic and passes
+the event payload's `recording or streaming` value to
+`DeckManager.set_screensaver_suppressed()`. It must use that immutable snapshot,
+not reread `OBSState`, whose event worker can change it concurrently. Suppression
+applies only to automatic idle activation: an explicit dialog preview remains
+available and takes precedence. Entering suppression wakes an already active
+automatic saver, and both edges reset `_last_activity`; after recording and
+streaming are both off, a complete new configured idle interval must elapse
+before automatic activation.
+
+`OBSClient._prime_state()` publishes the first `obs.outputs` snapshot immediately
+after `GetRecordStatus` and `GetStreamStatus`, before unrelated initial requests
+such as per-input mute queries can delay the policy. Live record and stream
+events update the cache and publish a new snapshot before the general
+`obs.state` repaint event.
+
+Those initial requests and live callbacks arrive on **different sockets**, so
+their order is not guaranteed. `_output_lock` protects the output cache and two
+independent monotonic generations. Each prime request captures its output's
+generation before sending and applies the response only if no newer live event
+advanced that generation; otherwise an old `outputActive=False` response could
+overwrite a recording or stream that started while the request was in flight.
+Record and stream generations must stay separate so activity on one output does
+not discard a valid initial answer for the other. `_emit_output_state()` copies
+both booleans under the same lock before publishing the immutable snapshot.
+
+On disconnect, `_disconnect_clients()` stops and joins the OBS event client
+before `_teardown()` advances both generations, resets the cache and emits the
+authoritative `recording=False, streaming=False` snapshot. The generation advance
+also invalidates prime requests already in flight, while the join prevents an
+in-flight callback from restoring stale active state after suppression has been
+lifted.
+
 Screen-saver settings are part of normal JSON serialization and `.lsdconfig`
 import/export. Import applies them immediately through
 `DeckManager.configure_screensaver()` and restarts idle tracking. Shutdown sets
@@ -622,8 +656,8 @@ falls back to the firmware default. This behavior is guaranteed only for a clean
 application shutdown; forced termination, a system crash or power loss may
 prevent the final HID writes.
 
-The setting is part of normal JSON persistence. A custom image is bundled in
-`.lsdconfig` format v3 and restored below
+The setting is part of normal JSON persistence. Custom images are bundled in
+`.lsdconfig` exports from format v3 onward and restored below
 `CONFIG_DIR/imported-exit-images`; importing applies both its mode and restored
 path immediately through `DeckManager.configure_exit_display()`.
 
@@ -3008,17 +3042,18 @@ ignored and you will chase a ghost.
    waits must observe their `ActionContext`; canceled queued replacements must
    exit without executing so rapid presses collapse to the latest invocation.
 
-10. **Portable assets must stay bounded and path-safe.** Keep `.lsdconfig` v1/v2
-   import compatibility while exporting v3. Bundle only supported `sys.audio`
-   files and `sys.timer` `sound` parameters, deduplicate audio content across
-   both actions and restore it only below `CONFIG_DIR/imported-audio`. Bundle the
-   supported BMP/JPEG/PNG/WebP custom exit image at most once, enforce its 50 MiB
-   limit and restore it only below `CONFIG_DIR/imported-exit-images`. Validate
-   every archive path and size before extraction. Single-key `.lsdkey` bundles
-   follow the same rules and must keep their distinct manifest format, so neither
-   bundle type can be imported through the other's entry point. Export must not
-   mutate the `KeyConfig` it is given, and import must not save the
-   configuration itself.
+10. **Portable assets must stay bounded and path-safe.** Keep `.lsdconfig` v1-v3
+   import compatibility while exporting v4, which preserves folder subtrees.
+   Bundle only supported `sys.audio` files and `sys.timer` `sound` parameters,
+   deduplicate audio content across both actions and restore it only below
+   `CONFIG_DIR/imported-audio`. Bundle the supported BMP/JPEG/PNG/WebP custom
+   exit image at most once, enforce its 50 MiB limit and restore it only below
+   `CONFIG_DIR/imported-exit-images`. Validate every archive path and size before
+   extraction. Single-key `.lsdkey` bundles import v1 and export v2 for folder
+   support; they follow the same rules and must keep their distinct manifest
+   format, so neither bundle type can be imported through the other's entry
+   point. Export must not mutate the `KeyConfig` it is given, and import must not
+   save the configuration itself.
 
 11. **Physical startup must remain exclusive and cancellable.** Generate frames
    offscreen under `RENDER_LOCK`, keep their brightness at or below the configured
@@ -3080,6 +3115,19 @@ ignored and you will chase a ghost.
    Pop!_OS. Consume both edges of the first physical wake press, then restore
    normal brightness and configured keys. Preview must work while disabled and
    without hardware, and temporary dialog subscribers must unsubscribe on close.
+   Suppress automatic activation while OBS is recording or streaming, wake an
+   already active automatic saver when either begins, and restart a complete
+   idle interval only after both stop. Keep manual preview ahead of suppression
+   so an explicit preview remains available during an OBS session. Drive the
+   policy only from immutable `obs.outputs` payloads: publish the first snapshot
+   immediately after priming record and stream status, publish live output
+   events before the general repaint event, and join the OBS event producer
+   before resetting state and emitting the authoritative false snapshot on
+   disconnect. Because prime requests and events use separate sockets, keep
+   output state under `_output_lock` with independent monotonic record/stream
+   generations: a prime response may apply only when its captured generation is
+   still current, live events advance their own generation, and teardown
+   advances both after the event-worker join to invalidate in-flight primes.
    On shutdown, signal the saver wakeup, join its thread before the monitor
    thread, and apply the clean-exit display before HID closes.
 

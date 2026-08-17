@@ -201,6 +201,7 @@ class DeckManager:
             5,
             min(100, int(screensaver_intensity)),
         )
+        self._screensaver_suppressed = False
         self._screensaver_preview: tuple[str, int] | None = None
         self._screensaver_brightness: int | None = None
         self._last_activity = time.monotonic()
@@ -728,6 +729,18 @@ class DeckManager:
             self._last_activity = time.monotonic()
         self._screensaver_wakeup.set()
 
+    def set_screensaver_suppressed(self, suppressed: bool) -> None:
+        """Prevent automatic activation while an external activity is live."""
+        suppressed = bool(suppressed)
+        with self._screensaver_lock:
+            if suppressed == self._screensaver_suppressed:
+                return
+            self._screensaver_suppressed = suppressed
+            # Treat both edges as activity: entering suppression wakes an
+            # active saver, and leaving it starts a fresh idle interval.
+            self._last_activity = time.monotonic()
+        self._screensaver_wakeup.set()
+
     def record_activity(self) -> bool:
         """Wake the deck and return whether a screen saver was active."""
         active = self._screensaver_active.is_set()
@@ -801,6 +814,8 @@ class DeckManager:
             if self._screensaver_preview is not None:
                 style, intensity = self._screensaver_preview
                 return style, intensity, True
+            if self._screensaver_suppressed:
+                return None
             idle_seconds = now - self._last_activity
             if (
                 self._screensaver_enabled

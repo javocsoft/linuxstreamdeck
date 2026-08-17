@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 #   deck.screensaver  active:bool, preview:bool, style:str
 #   obs.connected
 #   obs.disconnected
+#   obs.outputs       recording:bool, streaming:bool
 #   obs.state         what:str                  — any OBS state change
 #   page.changed      index:int, name:str
 #   ui.key_image      index:int, png:bytes      — rendered image for the UI

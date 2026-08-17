@@ -144,6 +144,11 @@ class OBSClient:
         self._req: obsws.ReqClient | None = None
         self._events: obsws.EventClient | None = None
         self._lock = threading.Lock()          # protects _req (concurrent requests)
+        # ReqClient and EventClient use different sockets. Their initial
+        # snapshots and live output events can therefore arrive out of order.
+        self._output_lock = threading.Lock()
+        self._record_generation = 0
+        self._stream_generation = 0
         self._stop = threading.Event()
         self._monitor: threading.Thread | None = None
         # Statistics cache; see stats(). Its own lock, never the request lock:
@@ -235,20 +240,42 @@ class OBSClient:
             self._req = self._events = None
             was_connected = self.connected
             self.connected = False
-        self.state.reset()
+        # Stop and join the event source before resetting its shared cache. An
+        # in-flight output event must not be able to restore stale state after
+        # the disconnect has made the reset authoritative.
         self._disconnect_clients(req, events)
+        with self._output_lock:
+            # Also invalidate any prime request that was already in flight.
+            self._record_generation += 1
+            self._stream_generation += 1
+            self.state.reset()
         if emit and was_connected:
             self.bus.emit("obs.disconnected")
+            self._emit_output_state()
             self.bus.emit("obs.state", what="disconnected")
 
     @staticmethod
     def _disconnect_clients(req, events) -> None:
-        for client in (req, events):
+        # The event client owns a worker and disconnect() joins it. Stop that
+        # producer before closing the request socket or resetting shared state.
+        for client in (events, req):
             try:
                 if client is not None:
                     client.disconnect()
             except Exception:
                 pass
+
+    def _emit_output_state(self) -> None:
+        """Publish an immutable recording/streaming policy snapshot."""
+        connected = self.connected
+        with self._output_lock:
+            recording = bool(connected and self.state.recording)
+            streaming = bool(connected and self.state.streaming)
+        self.bus.emit(
+            "obs.outputs",
+            recording=recording,
+            streaming=streaming,
+        )
 
     # ---------- requests ----------
 
@@ -727,11 +754,23 @@ class OBSClient:
         s = self.state
         if d := self.try_request("GetCurrentProgramScene"):
             s.current_scene = d.get("currentProgramSceneName") or d.get("sceneName", "")
+        with self._output_lock:
+            record_generation = self._record_generation
         if d := self.try_request("GetRecordStatus"):
-            s.recording = d.get("outputActive", False)
-            s.record_paused = d.get("outputPaused", False)
+            with self._output_lock:
+                if record_generation == self._record_generation:
+                    s.recording = d.get("outputActive", False)
+                    s.record_paused = d.get("outputPaused", False)
+        with self._output_lock:
+            stream_generation = self._stream_generation
         if d := self.try_request("GetStreamStatus"):
-            s.streaming = d.get("outputActive", False)
+            with self._output_lock:
+                if stream_generation == self._stream_generation:
+                    s.streaming = d.get("outputActive", False)
+        # This decision is already complete. Do not leave an automatic screen
+        # saver running while unrelated initial requests (including one per
+        # audio input) finish or time out.
+        self._emit_output_state()
         if d := self.try_request("GetVirtualCamStatus"):
             s.virtualcam = d.get("outputActive", False)
         if d := self.try_request("GetReplayBufferStatus"):
@@ -767,17 +806,26 @@ class OBSClient:
             changed("preview")
 
         def on_record_state_changed(d):
-            s.recording = d.output_active
-            state = getattr(d, "output_state", "")
-            if state == "OBS_WEBSOCKET_OUTPUT_PAUSED":
-                s.record_paused = True
-            elif state in ("OBS_WEBSOCKET_OUTPUT_RESUMED", "OBS_WEBSOCKET_OUTPUT_STARTED",
-                           "OBS_WEBSOCKET_OUTPUT_STOPPED"):
-                s.record_paused = False
+            with self._output_lock:
+                s.recording = d.output_active
+                state = getattr(d, "output_state", "")
+                if state == "OBS_WEBSOCKET_OUTPUT_PAUSED":
+                    s.record_paused = True
+                elif state in (
+                    "OBS_WEBSOCKET_OUTPUT_RESUMED",
+                    "OBS_WEBSOCKET_OUTPUT_STARTED",
+                    "OBS_WEBSOCKET_OUTPUT_STOPPED",
+                ):
+                    s.record_paused = False
+                self._record_generation += 1
+            self._emit_output_state()
             changed("record")
 
         def on_stream_state_changed(d):
-            s.streaming = d.output_active
+            with self._output_lock:
+                s.streaming = d.output_active
+                self._stream_generation += 1
+            self._emit_output_state()
             changed("stream")
 
         def on_virtualcam_state_changed(d):

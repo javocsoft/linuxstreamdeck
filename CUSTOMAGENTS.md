@@ -59,7 +59,9 @@ maintenance contract.
   reference integrity, portable-archive limits/path safety and audio deduplication,
   stateful clock identity/ticking/reset/completion
   lifecycle, screen-saver rendering/explicit activity/wake/brightness/thread
-  shutdown with no global legacy GTK activity hook, clean-exit display
+  shutdown with no global legacy GTK activity hook, OBS recording/streaming
+  suppression with immutable output snapshots, monotonic request/event handoff
+  and manual preview preserved, clean-exit display
   mode/render/fallback/HID ordering and portable custom images, grid-DnD
   gesture/payload validation, status-icon pixmap/name fallback compatibility,
   AI credential/context/proposal safety, reusing feedback color constants, and

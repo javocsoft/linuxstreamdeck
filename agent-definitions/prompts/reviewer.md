@@ -102,14 +102,16 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    reset one position; page/profile deletion, import and shutdown must clear
    state safely. Emit each completion once, run sounds outside action workers and
    cancel them on reset/shutdown.
-17. **Portable asset archives.** Export v3 must deduplicate supported `sys.audio`
-   files and `sys.timer` `sound` parameters, including identical content across
-   both actions, and enforce per-file/total limits. It must include at most one
-   supported BMP/JPEG/PNG/WebP custom exit image with a 50 MiB limit. Import must
-   retain v1/v2 compatibility, reject unsafe or unsupported archive paths,
-   enforce limits before writing, restore audio only below
-   `CONFIG_DIR/imported-audio` and restore the exit image only below
-   `CONFIG_DIR/imported-exit-images`.
+17. **Portable asset archives.** `.lsdconfig` export v4 must preserve folder
+   subtrees and deduplicate supported `sys.audio` files and `sys.timer` `sound`
+   parameters, including identical content across both actions, while retaining
+   v1-v3 import compatibility and enforcing per-file/total limits. It must
+   include at most one supported BMP/JPEG/PNG/WebP custom exit image with a
+   50 MiB limit. Import must reject unsafe or unsupported archive paths, enforce
+   limits before writing, restore audio only below `CONFIG_DIR/imported-audio`
+   and restore the exit image only below `CONFIG_DIR/imported-exit-images`.
+   Single-key bundles must import v1, export v2 with folder support and remain
+   distinct from full configuration archives.
 18. **AI proposal safety.** Provider API keys must remain per-provider secrets and
    never enter config or exports. A saved-key mask is read-only display state and
    must never be sent as a credential; replacement, saved-key reuse and forgetting
@@ -133,9 +135,24 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    cause exception storms, high CPU use and application freezes. Consume the
    first physical wake press and release, restore normal brightness and key
    images, and support preview while disabled or without hardware. Temporary
-   dialog callbacks must unsubscribe on close. `DeckManager.stop()` must wake and
-   join the saver thread before joining the monitor and applying the clean-exit
-   display.
+   dialog callbacks must unsubscribe on close. Automatic activation must remain
+   suppressed whenever OBS is recording or streaming; starting either must wake
+   an active automatic saver, and after both stop a complete new idle interval
+   must begin. Explicit preview must take precedence over that suppression.
+   Drive the policy from the immutable `recording`/`streaming` payload on the
+   dedicated `obs.outputs` topic rather than rereading the mutable OBS cache.
+   Publish the initial snapshot immediately after the two output-status prime
+   requests and each live output snapshot before the general repaint event. On
+   disconnect, stop and join the OBS event producer before resetting the cache
+   and emitting the authoritative false snapshot, so no in-flight callback can
+   restore stale active state. Initial requests and live callbacks use separate
+   sockets: keep their shared output state under `_output_lock` with independent
+   monotonic record and stream generations. Each prime response may apply only
+   if its captured generation is still current; each live event advances its own
+   generation, and teardown advances both after joining the event worker so an
+   in-flight prime cannot overwrite the disconnect reset.
+   `DeckManager.stop()` must wake and join the saver thread before joining the
+   monitor and applying the clean-exit display.
 21. **Clean-exit display lifecycle.** Preserve the three physical-device modes:
    `device_default` calls the firmware reset, `blank` writes every key black
    before setting brightness to 0, and `custom` validates and center-crops one

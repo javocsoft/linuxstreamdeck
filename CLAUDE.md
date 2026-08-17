@@ -60,7 +60,15 @@ of truth; everything here is Claude-specific and additive.
   brightness/images, and join its thread before HID closes. Dialog subscribers
   must unsubscribe on close. Track idle activity only at physical-key and
   explicit virtual-deck entry points; never add a broad/global
-  `Gtk.EventControllerLegacy` activity hook. See AGENTS.md §3 and §5.
+  `Gtk.EventControllerLegacy` activity hook. Automatic activation must stay
+  suppressed while OBS records or streams, with either start waking an active
+  automatic saver and the last stop beginning a fresh idle interval; explicit
+  preview must remain available. Drive that policy from immutable `obs.outputs`
+  payloads, emitted immediately after record/stream priming and only reset to
+  false after the OBS event worker is joined. Preserve `_output_lock` and the
+  independent record/stream generations so a response from the request socket
+  cannot overwrite a newer callback from the event socket. See AGENTS.md §3
+  and §5.
 - Keep hiding to the status area reversible: `hides_on_close()` is the only
   decision point and must still require an explicit-quit check, the configured
   action and a registered icon. Hide by returning `True` from `close-request`

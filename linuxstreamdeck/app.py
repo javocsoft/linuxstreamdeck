@@ -102,6 +102,7 @@ class LinuxStreamDeckApp:
             exit_display_mode=exit_display.mode,
             exit_display_image=exit_display.image_path,
         )
+        self.bus.subscribe("obs.outputs", self._sync_obs_screensaver_policy)
         self.controller = DeckController(
             self.config, self.bus, self.obs, self.deck, twitch=self.twitch,
             home_assistant=self.home_assistant,
@@ -118,6 +119,12 @@ class LinuxStreamDeckApp:
 
     def run(self, argv) -> int:
         return self.gtk_app.run(argv)
+
+    def _sync_obs_screensaver_policy(self, _topic, _data) -> None:
+        """Keep automatic screen saving out of an active OBS session."""
+        self.deck.set_screensaver_suppressed(
+            bool(_data["recording"] or _data["streaming"])
+        )
 
     def _on_activate(self, _app) -> None:
         if self.window is None:

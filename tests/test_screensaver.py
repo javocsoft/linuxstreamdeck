@@ -5,6 +5,7 @@ import time
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from PIL import ImageChops, ImageStat
@@ -665,6 +666,59 @@ class ScreenSaverRuntimeTests(unittest.TestCase):
         self.assertEqual(states[0], (True, True, "circuit_pulse"))
         self.assertEqual(states[-1], (False, True, "circuit_pulse"))
 
+    def test_obs_activity_suppresses_only_automatic_activation(self) -> None:
+        with patch(
+            "linuxstreamdeck.device.manager.time.monotonic",
+            return_value=100.0,
+        ):
+            self.manager.set_screensaver_suppressed(True)
+        with self.manager._screensaver_lock:
+            self.manager._last_activity = 0.0
+
+        self.assertIsNone(self.manager._screensaver_selection(200.0))
+
+        self.manager.preview_screensaver("circuit_pulse", 42)
+        self.assertEqual(
+            self.manager._screensaver_selection(200.0),
+            ("circuit_pulse", 42, True),
+        )
+
+    def test_leaving_obs_activity_restarts_the_idle_interval(self) -> None:
+        with patch(
+            "linuxstreamdeck.device.manager.time.monotonic",
+            return_value=100.0,
+        ):
+            self.manager.set_screensaver_suppressed(True)
+        with patch(
+            "linuxstreamdeck.device.manager.time.monotonic",
+            return_value=200.0,
+        ):
+            self.manager.set_screensaver_suppressed(False)
+
+        self.assertIsNone(self.manager._screensaver_selection(259.9))
+        self.assertEqual(
+            self.manager._screensaver_selection(260.0),
+            (DEFAULT_SCREENSAVER, 35, False),
+        )
+
+    def test_obs_activity_wakes_an_automatic_screen_saver(self) -> None:
+        active = threading.Event()
+        inactive = threading.Event()
+
+        def on_state(_topic, data) -> None:
+            (active if data["active"] else inactive).set()
+
+        self.bus.subscribe("deck.screensaver", on_state)
+        self._start_without_device_scan()
+        with self.manager._screensaver_lock:
+            self.manager._last_activity = time.monotonic() - 61
+        self.manager._screensaver_wakeup.set()
+
+        self.assertTrue(active.wait(1.0))
+        self.manager.set_screensaver_suppressed(True)
+        self.assertTrue(inactive.wait(1.0))
+        self.assertFalse(self.manager.screensaver_active)
+
     def test_screen_saver_owns_hid_output_and_restores_normal_brightness(
         self,
     ) -> None:
@@ -704,6 +758,165 @@ class ScreenSaverRuntimeTests(unittest.TestCase):
         self.manager._screensaver_active.clear()
         self.manager._restore_brightness()
         self.assertEqual(deck.brightness[-1], self.manager.brightness)
+
+
+class ObsScreenSaverPolicyTests(unittest.TestCase):
+    def test_recording_or_streaming_suppresses_automatic_screen_saver(
+        self,
+    ) -> None:
+        from linuxstreamdeck.app import LinuxStreamDeckApp
+
+        for recording, streaming, expected in (
+            (False, False, False),
+            (True, False, True),
+            (False, True, True),
+            (True, True, True),
+        ):
+            with self.subTest(recording=recording, streaming=streaming):
+                calls = []
+                app = SimpleNamespace(
+                    deck=SimpleNamespace(
+                        set_screensaver_suppressed=calls.append
+                    ),
+                )
+
+                LinuxStreamDeckApp._sync_obs_screensaver_policy(
+                    app,
+                    "obs.outputs",
+                    {"recording": recording, "streaming": streaming},
+                )
+
+                self.assertEqual(calls, [expected])
+
+
+class ObsOutputStateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from linuxstreamdeck.obs.client import OBSClient
+
+        self.bus = EventBus()
+        self.client = OBSClient(self.bus)
+
+    def test_initial_output_state_is_published_before_slow_prime_work(
+        self,
+    ) -> None:
+        order = []
+        responses = {
+            "GetRecordStatus": {
+                "outputActive": True,
+                "outputPaused": False,
+            },
+            "GetStreamStatus": {"outputActive": False},
+        }
+
+        def request(name, _data=None):
+            order.append(name)
+            return responses.get(name, {})
+
+        self.client.connected = True
+        self.client.try_request = request
+        self.bus.subscribe(
+            "obs.outputs",
+            lambda _topic, data: order.append(("outputs", data.copy())),
+        )
+
+        self.client._prime_state()
+
+        output = next(item for item in order if isinstance(item, tuple))
+        self.assertEqual(
+            output,
+            ("outputs", {"recording": True, "streaming": False}),
+        )
+        self.assertLess(order.index(output), order.index("GetVirtualCamStatus"))
+
+    def test_disconnect_stops_events_before_the_authoritative_reset(
+        self,
+    ) -> None:
+        output_states = []
+
+        class LateEventClient:
+            def __init__(inner_self, client) -> None:
+                inner_self.client = client
+
+            def disconnect(inner_self) -> None:
+                # Models a callback already in flight as disconnect begins.
+                inner_self.client.state.recording = True
+
+        class RequestClient:
+            def disconnect(self) -> None:
+                pass
+
+        self.client.connected = True
+        self.client._req = RequestClient()
+        self.client._events = LateEventClient(self.client)
+        self.bus.subscribe(
+            "obs.outputs",
+            lambda _topic, data: output_states.append(data.copy()),
+        )
+
+        self.client._teardown(emit=True)
+
+        self.assertFalse(self.client.connected)
+        self.assertFalse(self.client.state.recording)
+        self.assertEqual(
+            output_states,
+            [{"recording": False, "streaming": False}],
+        )
+
+    def test_live_output_events_win_over_older_prime_responses(self) -> None:
+        for field, request_name, handler_name in (
+            (
+                "recording",
+                "GetRecordStatus",
+                "on_record_state_changed",
+            ),
+            (
+                "streaming",
+                "GetStreamStatus",
+                "on_stream_state_changed",
+            ),
+        ):
+            with self.subTest(field=field):
+                from linuxstreamdeck.obs.client import OBSClient
+
+                bus = EventBus()
+                client = OBSClient(bus)
+                client.connected = True
+                output_states = []
+                bus.subscribe(
+                    "obs.outputs",
+                    lambda _topic, data: output_states.append(data.copy()),
+                )
+                handler = next(
+                    callback
+                    for callback in client._event_handlers()
+                    if callback.__name__ == handler_name
+                )
+
+                def request(name, _data=None):
+                    if name == request_name:
+                        handler(
+                            SimpleNamespace(
+                                output_active=True,
+                                output_state=(
+                                    "OBS_WEBSOCKET_OUTPUT_STARTED"
+                                ),
+                            )
+                        )
+                        # This response was captured before the live event.
+                        return {
+                            "outputActive": False,
+                            "outputPaused": False,
+                        }
+                    return {}
+
+                client.try_request = request
+                client._prime_state()
+
+                self.assertTrue(getattr(client.state, field))
+                self.assertTrue(output_states)
+                self.assertTrue(
+                    all(snapshot[field] for snapshot in output_states)
+                )
 
 
 if __name__ == "__main__":

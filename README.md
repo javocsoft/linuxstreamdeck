@@ -96,7 +96,8 @@ on the same hardware as the scene switches.
 - 🖨️ **Printable layout sheet** — export any profile as a single PNG with every page and folder laid out, each key captioned with what it actually does. Useful for printing or sharing.
 - 🌌 **Animated full-deck screen saver** — choose from eleven coordinated effects,
   set the idle delay and independent light intensity, and preview them on both
-  the virtual and physical decks.
+  the virtual and physical decks. Automatic activation stays out of the way
+  while OBS is recording or streaming, but manual preview remains available.
 - 📴 **Display after exit** — leave the physical deck on its firmware standby
   image, turn every key fully off, or keep one custom image across the full grid
   after LinuxStreamDeck closes cleanly.
@@ -683,6 +684,13 @@ and configured key images return. The first physical key press only wakes the
 deck and is consumed together with its release, so it cannot accidentally run
 the assigned action; press the key again to run it.
 
+The automatic screen saver does not start while OBS is recording or streaming.
+Starting either output wakes an automatic saver that is already active. Once
+both recording and streaming have stopped, the complete configured idle period
+starts again; time spent on air never counts toward it. **Preview now** remains
+available during an OBS session because it is an explicit request rather than
+automatic idle behavior.
+
 ### 📴 Choose what the physical deck shows after exit
 
 The same **Stream Deck display** dialog controls what remains on the hardware
@@ -818,14 +826,19 @@ the menu next to the profile selector, under **Twitch account…**.
    connected.
 
 Nothing secret is ever sent from your machine, and there is no password, no
-browser extension and no local server. LinuxStreamDeck asks for exactly three
-permissions, which is everything the Twitch keys use and nothing more:
+browser extension and no local server. LinuxStreamDeck asks only for the
+permissions its Twitch keys and live alerts use:
 
 | Permission | Used by |
 | --- | --- |
 | `channel:manage:broadcast` | Set the title, set the category, create a stream marker |
 | `clips:edit` | Create a clip |
 | `moderator:read:followers` | Show the follower count |
+| `channel:edit:commercial` | Start an ad break |
+| `channel:manage:raids` | Start or cancel a raid |
+| `moderator:manage:announcements` | Post an announcement in chat |
+| `user:read:chat` | Receive chat messages for alert keys |
+| `channel:read:subscriptions` | Receive subscription and resubscription alerts |
 
 **About the Client ID.** You do not need one — LinuxStreamDeck ships its own, so
 the **Client ID** field in the dialog is there only if you would rather use an
