@@ -61,9 +61,9 @@ maintenance contract.
   lifecycle, screen-saver rendering/explicit activity/wake/brightness/thread
   shutdown with no global legacy GTK activity hook, clean-exit display
   mode/render/fallback/HID ordering and portable custom images, grid-DnD
-  gesture/payload validation, AI credential/context/proposal safety, reusing
-  feedback color constants, and English-only with no accents. It only reports;
-  it does not edit code.
+  gesture/payload validation, status-icon pixmap/name fallback compatibility,
+  AI credential/context/proposal safety, reusing feedback color constants, and
+  English-only with no accents. It only reports; it does not edit code.
 
 ## `obs-action-author` — action scaffolder
 

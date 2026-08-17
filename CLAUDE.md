@@ -67,7 +67,9 @@ of truth; everything here is Claude-specific and additive.
   without destroying the window, route icon-driven quit/profile changes through
   the unsaved-change guard, and keep autostart state in the XDG entry rather than
   in `config.json`. Never nest a built `GLib.Variant` inside a format string when
-  replying to dbusmenu. See AGENTS.md §3 and §5.
+  replying to dbusmenu. Preserve the multi-size ARGB32 `IconPixmap` publication:
+  leave `IconName` empty when the pixels load and use the name only as fallback.
+  See AGENTS.md §3 and §5.
 - Keep folder keys bounded and reversible. The first slot inside a folder is
   always the Back key and must never be stored or edited, nesting stays within
   `MAX_FOLDER_DEPTH` on load/create/paste, `KeyConfig.folder` stays

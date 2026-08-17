@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from gi.repository import Gio, GLib
 
-from linuxstreamdeck import APP_NAME
+from linuxstreamdeck import APP_ID, APP_NAME
 from linuxstreamdeck.ui import tray
 
 PROFILES = ["Streaming", "Podcast", "Gaming"]
@@ -96,6 +96,133 @@ class PropertyTests(unittest.TestCase):
         self.assertTrue(
             all(isinstance(v, GLib.Variant) for v in properties.values())
         )
+
+
+class IconPixmapTests(unittest.TestCase):
+    class _Pixbuf:
+        def __init__(
+            self,
+            pixels: bytes,
+            width: int,
+            height: int,
+            channels: int,
+            stride: int,
+            alpha: bool,
+        ) -> None:
+            self._pixels = pixels
+            self._width = width
+            self._height = height
+            self._channels = channels
+            self._stride = stride
+            self._alpha = alpha
+
+        def get_pixels(self):
+            return self._pixels
+
+        def get_width(self):
+            return self._width
+
+        def get_height(self):
+            return self._height
+
+        def get_n_channels(self):
+            return self._channels
+
+        def get_rowstride(self):
+            return self._stride
+
+        def get_has_alpha(self):
+            return self._alpha
+
+    def test_rgba_is_serialized_as_network_order_argb_without_row_padding(self):
+        pixbuf = self._Pixbuf(
+            bytes(
+                (
+                    10,
+                    20,
+                    30,
+                    40,
+                    0,
+                    0,
+                    0,
+                    0,
+                    50,
+                    60,
+                    70,
+                    80,
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            ),
+            width=1,
+            height=2,
+            channels=4,
+            stride=8,
+            alpha=True,
+        )
+
+        self.assertEqual(
+            tray._argb32(pixbuf),
+            bytes((40, 10, 20, 30, 80, 50, 60, 70)),
+        )
+
+    def test_rgb_gets_an_opaque_alpha_channel(self):
+        pixbuf = self._Pixbuf(
+            bytes((10, 20, 30)),
+            width=1,
+            height=1,
+            channels=3,
+            stride=3,
+            alpha=False,
+        )
+
+        self.assertEqual(tray._argb32(pixbuf), bytes((255, 10, 20, 30)))
+
+    def test_application_svg_is_published_in_every_requested_size(self):
+        pixmaps = tray._load_icon_pixmaps(APP_ID, (16, 24, 32))
+
+        self.assertEqual([(width, height) for width, height, _data in pixmaps], [
+            (16, 16),
+            (24, 24),
+            (32, 32),
+        ])
+        self.assertTrue(
+            all(len(data) == width * height * 4 for width, height, data in pixmaps)
+        )
+
+    def test_pixmap_is_preferred_over_the_theme_name(self):
+        icon = tray.TrayIcon(
+            on_open=lambda: None,
+            on_quit=lambda: None,
+            on_select_profile=lambda _index: None,
+            profiles=lambda: ([], 0),
+        )
+
+        icon_name = icon._item_property(None, None, None, None, "IconName")
+        pixmaps = icon._item_property(None, None, None, None, "IconPixmap")
+        tooltip = icon._item_property(None, None, None, None, "ToolTip")
+
+        self.assertEqual(icon_name.unpack(), "")
+        self.assertEqual(pixmaps.get_type_string(), "a(iiay)")
+        self.assertEqual(len(pixmaps.unpack()), len(tray.TRAY_ICON_SIZES))
+        self.assertEqual(len(tooltip.unpack()[1]), len(tray.TRAY_ICON_SIZES))
+
+    def test_missing_asset_falls_back_to_the_theme_name(self):
+        icon = tray.TrayIcon(
+            on_open=lambda: None,
+            on_quit=lambda: None,
+            on_select_profile=lambda _index: None,
+            profiles=lambda: ([], 0),
+            icon_name="org.example.MissingStatusIcon",
+        )
+
+        icon_name = icon._item_property(None, None, None, None, "IconName")
+        pixmaps = icon._item_property(None, None, None, None, "IconPixmap")
+
+        self.assertEqual(icon_name.unpack(), "org.example.MissingStatusIcon")
+        self.assertEqual(pixmaps.unpack(), [])
 
 
 class LayoutTests(unittest.TestCase):

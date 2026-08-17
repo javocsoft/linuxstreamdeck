@@ -1290,6 +1290,14 @@ and on GNOME with an AppIndicator extension. The module creates no GTK widgets;
 D-Bus handlers run on the GTK main thread, and every user action is still routed
 back through `GLib.idle_add`.
 
+The status icon is published as actual `IconPixmap` data at several panel sizes,
+not only as the application theme name. `TrayIcon` locates the same SVG in a
+source tree, Debian install, Flatpak or AppImage, rasterizes it with GdkPixbuf and
+serializes it as network-order ARGB32. While those pixels are available it leaves
+`IconName` empty because hosts are encouraged to prefer the name, and COSMIC can
+replace a valid pixmap with a generic placeholder when its theme lookup fails.
+Failure to locate or decode the SVG falls back to the named icon instead.
+
 `TrayIcon.start()` exports both objects, owns an
 `org.kde.StatusNotifierItem-<pid>-1` bus name and then watches the watcher name,
 so the icon survives a panel restart and can be published before the status area
@@ -3094,8 +3102,11 @@ ignored and you will chase a ghost.
    the XDG entry, never in `config.json` or an export. Never gate starting the
    icon on `is_supported()` and never register with `call_sync`: the status area
    commonly appears after the application at session login, and a blocking call
-   on the GTK main thread freezes the window for its whole timeout. Keep the
-   late-appearance regression test.
+   on the GTK main thread freezes the window for its whole timeout. Publish the
+   real application SVG as multi-size, network-order ARGB32 `IconPixmap` data;
+   while those pixels load, leave `IconName` empty so COSMIC cannot prefer a
+   failed theme lookup, and fall back to the theme name when they do not. Keep
+   the late-appearance and icon-pixmap regression tests.
 
 18. **Press gestures must not leak across keys.** Resolve them on release, keep
    the pending double-press timer keyed by profile/page/key, and cancel it from

@@ -17,8 +17,13 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
+from functools import lru_cache
+from pathlib import Path
 
-from gi.repository import Gio, GLib
+import gi
+
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf, Gio, GLib  # noqa: E402
 
 from .. import APP_ID, APP_NAME
 
@@ -39,6 +44,12 @@ SEPARATOR_BEFORE_PROFILES_ID = 4
 SEPARATOR_BEFORE_QUIT_ID = 5
 PROFILE_ID_BASE = 100
 
+# Status areas choose their closest representation rather than scaling one
+# large bitmap. These cover compact and expanded panels without making every
+# D-Bus property read needlessly large.
+TRAY_ICON_SIZES = (16, 22, 24, 32, 48)
+IconPixmap = tuple[int, int, bytes]
+
 _ITEM_XML = """
 <node><interface name="org.kde.StatusNotifierItem">
   <property name="Category" type="s" access="read"/>
@@ -47,9 +58,12 @@ _ITEM_XML = """
   <property name="Status" type="s" access="read"/>
   <property name="WindowId" type="i" access="read"/>
   <property name="IconName" type="s" access="read"/>
+  <property name="IconPixmap" type="a(iiay)" access="read"/>
   <property name="IconThemePath" type="s" access="read"/>
   <property name="OverlayIconName" type="s" access="read"/>
+  <property name="OverlayIconPixmap" type="a(iiay)" access="read"/>
   <property name="AttentionIconName" type="s" access="read"/>
+  <property name="AttentionIconPixmap" type="a(iiay)" access="read"/>
   <property name="ToolTip" type="(sa(iiay)ss)" access="read"/>
   <property name="ItemIsMenu" type="b" access="read"/>
   <property name="Menu" type="o" access="read"/>
@@ -68,10 +82,82 @@ _ITEM_XML = """
   </method>
   <signal name="NewTitle"/>
   <signal name="NewIcon"/>
+  <signal name="NewOverlayIcon"/>
+  <signal name="NewAttentionIcon"/>
   <signal name="NewToolTip"/>
   <signal name="NewStatus"><arg name="status" type="s"/></signal>
 </interface></node>
 """
+
+
+def _icon_candidates(icon_name: str) -> tuple[Path, ...]:
+    """Every location used by a source, Debian, Flatpak or AppImage run."""
+    relative = (
+        Path("icons") / "hicolor" / "scalable" / "apps" / f"{icon_name}.svg"
+    )
+    candidates = [
+        Path(__file__).resolve().parents[2] / "packaging" / f"{icon_name}.svg"
+    ]
+    if appdir := os.environ.get("APPDIR"):
+        appdir_path = Path(appdir)
+        candidates.extend(
+            (appdir_path / "usr" / "share" / relative, appdir_path / f"{icon_name}.svg")
+        )
+    candidates.extend(
+        Path(directory) / relative
+        for directory in (GLib.get_user_data_dir(), *GLib.get_system_data_dirs())
+    )
+
+    # XDG paths can repeat. Avoid decoding the same SVG more than once when an
+    # earlier candidate exists but its loader rejects it.
+    return tuple(dict.fromkeys(candidates))
+
+
+def _argb32(pixbuf: GdkPixbuf.Pixbuf) -> bytes:
+    """Serialize a GdkPixbuf as the network-order ARGB32 required by SNI."""
+    width = pixbuf.get_width()
+    height = pixbuf.get_height()
+    channels = pixbuf.get_n_channels()
+    if channels not in (3, 4):
+        raise ValueError(f"Unsupported status icon channel count: {channels}")
+
+    source = bytes(pixbuf.get_pixels())
+    stride = pixbuf.get_rowstride()
+    has_alpha = pixbuf.get_has_alpha()
+    result = bytearray(width * height * 4)
+    target = 0
+    for y in range(height):
+        row = y * stride
+        for x in range(width):
+            offset = row + x * channels
+            red, green, blue = source[offset : offset + 3]
+            alpha = source[offset + 3] if has_alpha else 255
+            result[target : target + 4] = bytes((alpha, red, green, blue))
+            target += 4
+    return bytes(result)
+
+
+@lru_cache(maxsize=4)
+def _load_icon_pixmaps(
+    icon_name: str, sizes: tuple[int, ...] = TRAY_ICON_SIZES
+) -> tuple[IconPixmap, ...]:
+    """Rasterize the application SVG for hosts that cannot resolve its name."""
+    for icon_path in _icon_candidates(icon_name):
+        if not icon_path.is_file():
+            continue
+        try:
+            pixmaps = []
+            for size in sizes:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                    str(icon_path), size, size, True
+                )
+                pixmaps.append(
+                    (pixbuf.get_width(), pixbuf.get_height(), _argb32(pixbuf))
+                )
+            return tuple(pixmaps)
+        except (GLib.Error, OSError, ValueError):
+            log.debug("Could not rasterize status icon %s", icon_path, exc_info=True)
+    return ()
 
 _MENU_XML = """
 <node><interface name="com.canonical.dbusmenu">
@@ -243,6 +329,15 @@ class TrayIcon:
         self._on_select_profile = on_select_profile
         self._profiles = profiles
         self._icon_name = icon_name
+        self._icon_pixmaps = _load_icon_pixmaps(icon_name)
+        # Hosts are encouraged to prefer IconName when both forms exist. Keep
+        # it empty when pixels are available so COSMIC cannot replace a valid
+        # pixmap with a placeholder after a failed icon-theme lookup.
+        self._published_icon_name = "" if self._icon_pixmaps else icon_name
+        self._icon_pixmap_variant = GLib.Variant(
+            "a(iiay)", self._icon_pixmaps
+        )
+        self._empty_pixmap_variant = GLib.Variant("a(iiay)", [])
 
         self._connection: Gio.DBusConnection | None = None
         self._item_registration = 0
@@ -372,13 +467,21 @@ class TrayIcon:
             "Title": GLib.Variant("s", APP_NAME),
             "Status": GLib.Variant("s", "Active"),
             "WindowId": GLib.Variant("i", 0),
-            "IconName": GLib.Variant("s", self._icon_name),
+            "IconName": GLib.Variant("s", self._published_icon_name),
+            "IconPixmap": self._icon_pixmap_variant,
             "IconThemePath": GLib.Variant("s", ""),
             "OverlayIconName": GLib.Variant("s", ""),
+            "OverlayIconPixmap": self._empty_pixmap_variant,
             "AttentionIconName": GLib.Variant("s", ""),
+            "AttentionIconPixmap": self._empty_pixmap_variant,
             "ToolTip": GLib.Variant(
                 "(sa(iiay)ss)",
-                (self._icon_name, [], APP_NAME, "Elgato Stream Deck controller"),
+                (
+                    self._published_icon_name,
+                    self._icon_pixmaps,
+                    APP_NAME,
+                    "Elgato Stream Deck controller",
+                ),
             ),
             # A menu-only item: a plain click opens the menu instead of needing
             # a separate right click, which is what the status area expects.
