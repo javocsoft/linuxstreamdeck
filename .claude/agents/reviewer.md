@@ -179,12 +179,21 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    saver suppression must compose named OBS/game reasons without one releasing
    the other; game ownership must also beat manual preview. The catalog, status-
    menu mapping, engine registry, per-game settings mapping and snapshot
-   render/HUD dispatch must agree for Mole Smash, Circuit Breaker, Pulse Memory
-   and Memory Match. Engines
+   render/HUD dispatch must agree for Mole Smash, Circuit Breaker, Pulse Memory,
+   Memory Match, Minesweeper, Tic-Tac-Toe and Colour Mastermind. Engines
    must remain pure clock/RNG-injected state machines, with session ownership and
    persistence centralized in `GameManager`. Layouts must derive from live
-   geometry, odd Memory Match grids must reserve exactly one status key, Plus
-   HUD use must stay gated on dials, game rendering must share
+   geometry: odd Memory Match grids reserve exactly one status key, compact
+   Minesweeper keeps distinct one/two/three-mine difficulties and applies a
+   result-screen difficulty change only on the next Start, compact Tic-Tac-Toe
+   derives valid three-cell lines below nine keys, and Mastermind keeps its
+   latest clue visible without history keys and exposes the complete code plus
+   dedicated Again/Back controls in results. Plus HUD use must stay gated on
+   dials. Minesweeper and Tic-Tac-Toe results must preserve their final
+   field/winning line rather than replacing it with repeated status tiles;
+   result controls must avoid the exploded cell/winning line. Compact
+   Tic-Tac-Toe needs visible AI-wait feedback, and the Mastermind Plus HUD's
+   compact clue, legend and counters must not overlap. Game rendering must share
    `RENDER_LOCK`/BASIC layout, and per-game records must remain separated by
    geometry and difficulty. Every game must resolve its cues only below its own
    `assets/games/<game_id>/` directory, whose WAV files exactly match that

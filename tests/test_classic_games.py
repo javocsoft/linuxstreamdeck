@@ -343,6 +343,9 @@ class ClassicGameManagerTests(unittest.TestCase):
             ("circuit_breaker", "Circuit Breaker"),
             ("pulse_memory", "Pulse Memory"),
             ("memory_match", "Memory Match"),
+            ("minesweeper", "Minesweeper"),
+            ("tic_tac_toe", "Tic-Tac-Toe"),
+            ("mastermind", "Colour Mastermind"),
         ):
             with self.subTest(game=game_id):
                 bus = EventBus()
@@ -440,6 +443,18 @@ class ClassicGameConfigTests(unittest.TestCase):
                 "memory_sound_enabled": False,
                 "memory_volume": 63,
                 "memory_best_moves": {"5x3:easy": 9},
+                "mines_difficulty": "hard",
+                "mines_sound_enabled": False,
+                "mines_volume": 24,
+                "mines_best_times": {"5x3:hard": 38},
+                "tic_tac_toe_difficulty": "easy",
+                "tic_tac_toe_sound_enabled": False,
+                "tic_tac_toe_volume": 35,
+                "tic_tac_toe_wins": {"5x3:easy": 7},
+                "mastermind_difficulty": "normal",
+                "mastermind_sound_enabled": False,
+                "mastermind_volume": 46,
+                "mastermind_best_attempts": {"5x3:normal": 4},
             }
         )
 
@@ -457,6 +472,21 @@ class ClassicGameConfigTests(unittest.TestCase):
         self.assertFalse(settings.memory_sound_enabled)
         self.assertEqual(settings.memory_volume, 63)
         self.assertEqual(settings.memory_best_moves, {"5x3:easy": 9})
+        self.assertEqual(settings.mines_difficulty, "hard")
+        self.assertFalse(settings.mines_sound_enabled)
+        self.assertEqual(settings.mines_volume, 24)
+        self.assertEqual(settings.mines_best_times, {"5x3:hard": 38})
+        self.assertEqual(settings.tic_tac_toe_difficulty, "easy")
+        self.assertFalse(settings.tic_tac_toe_sound_enabled)
+        self.assertEqual(settings.tic_tac_toe_volume, 35)
+        self.assertEqual(settings.tic_tac_toe_wins, {"5x3:easy": 7})
+        self.assertEqual(settings.mastermind_difficulty, "normal")
+        self.assertFalse(settings.mastermind_sound_enabled)
+        self.assertEqual(settings.mastermind_volume, 46)
+        self.assertEqual(
+            settings.mastermind_best_attempts,
+            {"5x3:normal": 4},
+        )
 
 
 class ClassicGameAudioTests(unittest.TestCase):

@@ -33,6 +33,21 @@ GAMES = (
         "Memory Match",
         "Reveal two cards at a time and find every matching pair.",
     ),
+    GameInfo(
+        "minesweeper",
+        "Minesweeper",
+        "Reveal every safe cell; switch to Flag mode to mark suspected mines.",
+    ),
+    GameInfo(
+        "tic_tac_toe",
+        "Tic-Tac-Toe",
+        "Make a line of three X marks before the computer does.",
+    ),
+    GameInfo(
+        "mastermind",
+        "Colour Mastermind",
+        "Cycle the coloured pegs and crack the hidden code from its clues.",
+    ),
 )
 
 GAME_BY_ID = {game.id: game for game in GAMES}

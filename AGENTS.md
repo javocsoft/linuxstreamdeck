@@ -207,9 +207,12 @@ linuxstreamdeck/
 │   ├── circuit_breaker.py  Pure guaranteed-solvable Lights Out-style engine.
 │   ├── pulse_memory.py Pure increasing sequence-recall engine.
 │   ├── memory_match.py Pure pair-matching engine with odd-grid status slot.
+│   ├── minesweeper.py Pure first-reveal-safe adaptive minefield engine.
+│   ├── tic_tac_toe.py Pure compact/3x3 player-versus-AI engine.
+│   ├── mastermind.py Pure adaptive colour-code and clue engine.
 │   ├── manager.py     Shared exclusive input/display session, worker, persistence and restore.
 │   ├── render.py      Snapshot dispatch plus Mole Smash key frames and Plus HUD.
-│   ├── *_render.py    Code-native key frames and Plus HUDs for the three classic games.
+│   ├── *_render.py    Code-native key frames and Plus HUDs for the other six games.
 │   ├── rendering.py   Shared BASIC-font lobby and HUD rendering helpers.
 │   └── audio.py       Bounded, cancellable workers for the bundled WAV effects.
 ├── core/
@@ -1391,6 +1394,33 @@ Start, difficulty, sound, record and Back. Their rules differ:
   grid reserves its final key for moves/pairs; Easy and Normal preview all cards
   for 2.2 or 1.1 seconds while Hard starts hidden. Mismatches block input until
   their difficulty-dependent reveal expires, and fewer completed turns wins.
+- `minesweeper.py` reserves the final key as a Reveal/Flag mode switch and uses
+  every other key as the minefield. Mines are placed only on the first reveal,
+  keeping that cell and its neighbours safe whenever capacity permits; revealing
+  a zero expands through its safe region. Larger layouts use 12%, 18% and 25%
+  mine density, while compact layouts use exactly one, two or three mines so all
+  difficulties stay distinct. A mine ends the round; revealing every safe cell
+  records the lowest elapsed whole-second time. Results keep every final cell
+  visible except the controls: the former mode key becomes Again, and Back
+  prefers the normal lobby exit position but must move rather than cover the
+  exploded cell.
+- `tic_tac_toe.py` gives the player X and the computer O, with a 0.34-second
+  visible AI turn. Layouts with at least nine keys receive a centered 3x3 board;
+  smaller layouts use every key and derive every horizontal, vertical or
+  diagonal three-cell line their geometry supports. Easy chooses a random free
+  cell, Normal first wins or blocks and otherwise chooses randomly, and Hard
+  completes that tactical pass with minimax. Each player win increments the
+  persisted win count. Results retain and highlight the winning line; Again and
+  Back first use keys outside the board, then non-winning cells on a compact
+  board, so neither erases that line.
+- `mastermind.py` lets each peg cycle through a difficulty-dependent palette,
+  then scores a submitted guess as exact-position plus colour-only matches with
+  duplicate colours counted once. Easy is 3 pegs/4 colours/8 attempts, Normal
+  4/6/10 and Hard 5/8/12; the code shortens only when a compact deck needs two
+  control keys. Spare keys show newest-first clue history. A six-key Mini has no
+  spare history key at Normal, so Submit keeps the latest `E`/`C` clue visible;
+  results reveal every solution peg and turn Submit/Reset into Again/Back. The
+  lowest successful attempt count is the record.
 
 Each record key is `<columns>x<rows>[+lcd]:<difficulty>`, so decks with different
 playable areas do not share an unfair leaderboard.
@@ -1399,43 +1429,74 @@ playable areas do not share an unfair leaderboard.
 On decks without a touchscreen, Mole Smash reserves the two top corners for
 score/time and Memory Match reserves the last key only when an odd key count
 would leave an unpaired card; Circuit Breaker and Pulse Memory use the full grid.
-On Stream Deck +, `dial_count` selects the `+lcd` layout and each renderer puts
-its live score/moves/sequence/pairs/progress state on the strip, leaving all
-eight keys playable. The same PNG travels on `ui.game_hud` to a 480x60
+Minesweeper reserves one mode key, Tic-Tac-Toe centers 3x3 when it can and uses
+the complete compact grid below nine keys, and Colour Mastermind sizes its peg
+row around Submit/Reset before assigning leftover keys to clue history. On
+Stream Deck +, `dial_count` selects the `+lcd` layout and each renderer puts its
+live score/moves/sequence/pairs/time/clue/progress state on the strip where
+appropriate. The same PNG travels on `ui.game_hud` to a 480x60
 aspect-preserving `Gtk.Picture` below the virtual grid; an empty payload and the
 inactive state both hide it. Lobby controls may reuse play positions because
 the phases never render at once. Keep the controls unique even on a six-key Mini
 and never assume a 5x3 grid.
 
+The phase-specific presentation is intentional. Compact Tic-Tac-Toe has no
+spare status key, so every board tile receives a subtle waiting tint during the
+AI delay; larger boards use exactly one central extra key for turn/result text
+and render the other extras as subdued dots rather than repeated status tiles.
+Colour Mastermind's Plus HUD uses compact `E`/`C` feedback and supplies the
+`E = exact` / `C = colour` legend on its lower row; keep that legend, Best,
+attempts and the title in separate measured regions so they cannot overlap.
+
 `games/render.py` dispatches engine snapshots to the Mole Smash renderer or the
-three `*_render.py` modules, and sends the same Pillow images to physical and
+six `*_render.py` modules, and sends the same Pillow images to physical and
 virtual decks under the shared `RENDER_LOCK`; every TrueType font uses BASIC
-layout. `GameManager` is shared by all four engines, compares encoded PNGs and
+layout. `GameManager` is shared by all seven engines, compares encoded PNGs and
 sends only changed keys at its 20 Hz tick; the engines remain deterministic even
 though their sessions are animated.
 
 Every game owns a self-contained asset directory named after its catalog ID:
 `assets/games/mole_smash/`, `circuit_breaker/`, `pulse_memory/` and
-`memory_match/`. The Mole Smash directory also owns its original transparent
-mole sprite. `games/audio.py::CUE_FILES` is keyed first by game ID, and every
+`memory_match/`, plus `minesweeper/`, `tic_tac_toe/` and `mastermind/`. The Mole
+Smash directory also owns its original transparent mole sprite.
+`games/audio.py::CUE_FILES` is keyed first by game ID, and every
 cue resolves only below that game's directory; shared waveforms are duplicated
 deliberately so one game never depends on another game's assets. Each directory's
 WAV set must exactly match its cue mapping and its own `LICENSE-GAME-ASSETS.txt`.
 `tools/generate_game_sounds.py` deterministically writes the complete set for
-all four directories, including Circuit Breaker's `circuit.wav` and Pulse
-Memory's six pitch-mapped `pulse-0.wav` through `pulse-5.wav`. Keep those four
-directory patterns in `pyproject.toml` package data whenever the mapping changes.
+all seven directories, including Circuit Breaker's `circuit.wav`, Pulse
+Memory's six pitch-mapped `pulse-0.wav` through `pulse-5.wav`, and the distinct
+reveal/flag/explosion, mark/AI/result and peg/submit/result cue sets of the three
+new games. Keep all seven directory patterns in `pyproject.toml` package data
+whenever the mapping changes.
 Playback uses a bounded two-worker queue and a per-session generation so rapid
 hits never leave delayed sounds playing after exit.
 
+The exact new-game WAV sets are load-bearing: Minesweeper owns
+`explosion.wav`, `finish.wav`, `flag.wav`, `go.wav`, `record.wav`,
+`reveal.wav` and `select.wav`; Tic-Tac-Toe owns `ai.wav`, `draw.wav`, `go.wav`,
+`lose.wav`, `mark.wav`, `select.wav` and `win.wav`; Colour Mastermind owns
+`finish.wav`, `go.wav`, `peg.wav`, `record.wav`, `select.wav`, `submit.wav` and
+`wrong.wav`. Each set is original synthesized audio reproduced by
+`tools/generate_game_sounds.py` and licensed by the file beside it.
+
 `GameSettings` stores separate difficulty, sound, bounded volume and bounded
-per-layout record mappings for Mole Smash, Circuit Breaker, Pulse Memory and
-Memory Match in the normal JSON/export. `game.settings` asks the GTK thread to
-save only when the active game's choice or record actually changes. Import and
-backup restore replace `Config.games` as an object, so
+per-layout record mappings for all seven games in the normal JSON/export.
+Minesweeper persists best times, Tic-Tac-Toe persists cumulative player wins,
+and Colour Mastermind persists best attempt counts. `game.settings` asks the GTK
+thread to save only when the active game's choice or record actually changes.
+Import and backup restore replace `Config.games` as an object, so
 `_adopt_replaced_configuration()` must also pass that new object to
 `GameManager.adopt_settings()`; keeping the old reference would make later
 records disappear into detached state.
+
+`tests/test_new_games.py` pins registry parity, first-reveal safety, flagging,
+compact mine densities, deferred result-screen difficulty, both Tic-Tac-Toe
+geometries and AI levels, duplicate-safe Mastermind clues, Mini clue/results UX,
+all supported key counts and every new Plus HUD. `tests/test_classic_games.py`
+pins exact per-game asset isolation and persisted settings for all seven, while
+`tests/test_invariants.py` drives all seven dispatch paths through BASIC font
+and shared-`RENDER_LOCK` checks.
 
 ### Status icon and application lifetime
 
@@ -1471,8 +1532,9 @@ publishes the icon the moment one appears. `RegisterStatusNotifierItem` is calle
 freeze the window whenever the panel is slow. Until the reply arrives the icon
 counts as unregistered, which is the safe direction. The menu is **Open**, a
 **Profile** submenu of radio entries, a **Games** submenu and **Quit**. The Games
-submenu lists Mole Smash, Circuit Breaker, Pulse Memory and Memory Match. While a
-game is active, Profile is disabled and that submenu becomes **Stop [game
+submenu lists every entry in `games/catalog.py`: Mole Smash, Circuit Breaker,
+Pulse Memory, Memory Match, Minesweeper, Tic-Tac-Toe and Colour Mastermind.
+While a game is active, Profile is disabled and that submenu becomes **Stop [game
 name]**; `ItemIsMenu` is true, so a plain click opens it. `menu_items()` and
 `build_layout()` are pure functions, which is what the tests exercise. Profile
 entry IDs start at `PROFILE_ID_BASE` so they never collide with the fixed ones.
@@ -3097,7 +3159,7 @@ ignored and you will chase a ghost.
 
    *Guarded by* `BasicFontLayoutTests`, which records every `ImageFont.truetype`
    call made while rendering an icon, key images, four screen-saver styles, the
-   startup sequence, exit tiles and all four built-in game renderers, and fails
+   startup sequence, exit tiles and all seven built-in game renderers, and fails
    if any of them omitted `layout_engine`. Clear the cached font loaders first or
    a patched loader is never reached.
 
@@ -3111,7 +3173,7 @@ ignored and you will chase a ghost.
    caches failures** (safety net).
    *Guarded by* `RenderLockTests`, which swaps the lock for a depth-tracking
    proxy, patches `ImageDraw.Draw` to record anything drawn at depth 0 while
-   exercising all four games too, and pins that every drawing module holds the
+   exercising all seven games too, and pins that every drawing module holds the
    *same* object: each imports it by value, so a second lock would serialize
    nothing while still looking correct.
 
@@ -3444,7 +3506,11 @@ ignored and you will chase a ghost.
    must be a union of named reasons: releasing `game` may not release OBS, and
    game ownership must block even manual preview while ordinary OBS suppression
    must not. Derive layouts from live key count/columns, use the Plus LCD only
-   when dials are present and keep Mini controls unique. Draw under the shared
+   when dials are present and keep Mini controls unique. Preserve the
+   one/two/three compact Minesweeper densities and defer a result-time difficulty
+   change until Start; derive valid compact Tic-Tac-Toe lines below nine keys;
+   and keep Mastermind's latest Mini clue plus complete solution/Again/Back
+   result controls. Draw under the shared
    `RENDER_LOCK` with BASIC fonts. Keep every game's cue map, exact WAV set,
    asset license, generator output and package-data entry isolated below that
    game's own `assets/games/<game_id>/` directory. Bound/cancel audio work,

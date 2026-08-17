@@ -57,6 +57,33 @@ CUE_FILES = {
         "select": "select.wav",
         "wrong": "wrong.wav",
     },
+    "minesweeper": {
+        "explosion": "explosion.wav",
+        "finish": "finish.wav",
+        "flag": "flag.wav",
+        "go": "go.wav",
+        "record": "record.wav",
+        "reveal": "reveal.wav",
+        "select": "select.wav",
+    },
+    "tic_tac_toe": {
+        "ai": "ai.wav",
+        "draw": "draw.wav",
+        "go": "go.wav",
+        "lose": "lose.wav",
+        "mark": "mark.wav",
+        "select": "select.wav",
+        "win": "win.wav",
+    },
+    "mastermind": {
+        "finish": "finish.wav",
+        "go": "go.wav",
+        "peg": "peg.wav",
+        "record": "record.wav",
+        "select": "select.wav",
+        "submit": "submit.wav",
+        "wrong": "wrong.wav",
+    },
 }
 
 

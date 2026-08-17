@@ -13,8 +13,11 @@ from .catalog import DEFAULT_GAME_ID, game_info
 from .common import PHASE_LOBBY, EngineEvent, game_layout
 from .circuit_breaker import CircuitBreakerEngine
 from .memory_match import MemoryMatchEngine
+from .mastermind import MastermindEngine
+from .minesweeper import MinesweeperEngine
 from .mole_smash import MoleSmashEngine
 from .pulse_memory import PulseMemoryEngine
+from .tic_tac_toe import TicTacToeEngine
 from .render import render_keys, to_png_bytes, touchscreen_hud
 
 log = logging.getLogger(__name__)
@@ -27,6 +30,9 @@ _GAME_ENGINES = {
     "circuit_breaker": CircuitBreakerEngine,
     "pulse_memory": PulseMemoryEngine,
     "memory_match": MemoryMatchEngine,
+    "minesweeper": MinesweeperEngine,
+    "tic_tac_toe": TicTacToeEngine,
+    "mastermind": MastermindEngine,
 }
 
 _SETTING_FIELDS = {
@@ -53,6 +59,24 @@ _SETTING_FIELDS = {
         "memory_sound_enabled",
         "memory_volume",
         "memory_best_moves",
+    ),
+    "minesweeper": (
+        "mines_difficulty",
+        "mines_sound_enabled",
+        "mines_volume",
+        "mines_best_times",
+    ),
+    "tic_tac_toe": (
+        "tic_tac_toe_difficulty",
+        "tic_tac_toe_sound_enabled",
+        "tic_tac_toe_volume",
+        "tic_tac_toe_wins",
+    ),
+    "mastermind": (
+        "mastermind_difficulty",
+        "mastermind_sound_enabled",
+        "mastermind_volume",
+        "mastermind_best_attempts",
     ),
 }
 

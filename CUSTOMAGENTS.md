@@ -107,11 +107,15 @@ maintenance contract.
   For the physical startup sequence, it can inspect the complete offscreen frame
   grid for any of those shapes, title mapping, brightness bounds and fade to
   black. It eyeballs the images itself, and reports without fixing unless asked.
-  Built-in game checks cover all four lobbies and phase-specific frames: Mole
+  Built-in game checks cover all seven lobbies and phase-specific frames: Mole
   Smash targets/hits/misses/results and transparent sprite, Circuit Breaker
   light/cross-press/results, Pulse Memory showing/input/wrong/results, and
-  Memory Match hidden/revealed/matched/mismatch/results. They run on Mini, Neo,
-  Original and XL, with each Stream Deck + LCD HUD checked separately.
+  Memory Match hidden/revealed/matched/mismatch/results, Minesweeper
+  reveal/flag/mine/result states, Tic-Tac-Toe player/AI/line/results, and Colour
+  Mastermind peg/clue/solution/results. They run on Mini, Neo, Original and XL,
+  including compact board variants, preserved result boards, AI-wait feedback
+  and non-repeated large-board status tiles, with each Stream Deck + LCD HUD
+  checked separately for legible, non-overlapping labels and legends.
 
 ## `documenter` — documentation keeper
 

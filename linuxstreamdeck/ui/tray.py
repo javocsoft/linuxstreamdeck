@@ -48,6 +48,9 @@ STOP_GAME_ID = 8
 CIRCUIT_BREAKER_ID = 9
 PULSE_MEMORY_ID = 10
 MEMORY_MATCH_ID = 11
+MINESWEEPER_ID = 12
+TIC_TAC_TOE_ID = 13
+MASTERMIND_ID = 14
 PROFILE_ID_BASE = 100
 
 _GAME_IDS = {
@@ -55,6 +58,9 @@ _GAME_IDS = {
     CIRCUIT_BREAKER_ID: "circuit_breaker",
     PULSE_MEMORY_ID: "pulse_memory",
     MEMORY_MATCH_ID: "memory_match",
+    MINESWEEPER_ID: "minesweeper",
+    TIC_TAC_TOE_ID: "tic_tac_toe",
+    MASTERMIND_ID: "mastermind",
 }
 
 # Status areas choose their closest representation rather than scaling one
@@ -322,6 +328,9 @@ def menu_items(
                     {"id": CIRCUIT_BREAKER_ID, "label": "Circuit Breaker"},
                     {"id": PULSE_MEMORY_ID, "label": "Pulse Memory"},
                     {"id": MEMORY_MATCH_ID, "label": "Memory Match"},
+                    {"id": MINESWEEPER_ID, "label": "Minesweeper"},
+                    {"id": TIC_TAC_TOE_ID, "label": "Tic-Tac-Toe"},
+                    {"id": MASTERMIND_ID, "label": "Colour Mastermind"},
                 ]
             ),
         },

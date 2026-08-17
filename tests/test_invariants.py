@@ -20,7 +20,14 @@ from PIL import ImageDraw, ImageFont
 from linuxstreamdeck.core import icons
 from linuxstreamdeck.device import exit_display, renderer, screensaver
 from linuxstreamdeck.device import layout_sheet, startup_animation, touchscreen
-from linuxstreamdeck.games import circuit_render, memory_render, pulse_render
+from linuxstreamdeck.games import (
+    circuit_render,
+    mastermind_render,
+    memory_render,
+    minesweeper_render,
+    pulse_render,
+    tic_tac_toe_render,
+)
 from linuxstreamdeck.games import render as game_render
 from linuxstreamdeck.games import rendering as game_rendering
 
@@ -78,8 +85,11 @@ def _render_games() -> None:
     from linuxstreamdeck.games.circuit_breaker import CircuitBreakerEngine
     from linuxstreamdeck.games.common import COUNTDOWN_SECONDS, game_layout
     from linuxstreamdeck.games.memory_match import MemoryMatchEngine
+    from linuxstreamdeck.games.mastermind import MastermindEngine
+    from linuxstreamdeck.games.minesweeper import MinesweeperEngine
     from linuxstreamdeck.games.mole_smash import MoleSmashEngine
     from linuxstreamdeck.games.pulse_memory import PulseMemoryEngine
+    from linuxstreamdeck.games.tic_tac_toe import TicTacToeEngine
 
     layout = game_layout(6, 3)
     engines = (
@@ -87,6 +97,9 @@ def _render_games() -> None:
         CircuitBreakerEngine(layout, rng=random.Random(1)),
         PulseMemoryEngine(layout, difficulty="easy", rng=random.Random(1)),
         MemoryMatchEngine(layout, difficulty="hard", rng=random.Random(1)),
+        MinesweeperEngine(layout, rng=random.Random(1)),
+        TicTacToeEngine(layout, rng=random.Random(1)),
+        MastermindEngine(layout, rng=random.Random(1)),
     )
     for engine in engines:
         engine.press(layout.start_key, 0.0)
@@ -94,6 +107,9 @@ def _render_games() -> None:
     engines[0].tick(COUNTDOWN_SECONDS + 0.02)
     engines[2].tick(COUNTDOWN_SECONDS + 0.01)
     engines[3].press(0, 0.1)
+    engines[4].press(0, 0.1)
+    engines[5].press(0, 0.1)
+    engines[6].press(0, 0.1)
     for engine in engines:
         game_render.render_keys(engine.snapshot(COUNTDOWN_SECONDS + 0.02), (72, 72))
 
@@ -210,7 +226,8 @@ class RenderLockTests(unittest.TestCase):
         holders = (
             icons, renderer, screensaver, startup_animation, exit_display,
             touchscreen, layout_sheet, game_render, circuit_render,
-            pulse_render, memory_render,
+            pulse_render, memory_render, minesweeper_render,
+            tic_tac_toe_render, mastermind_render,
         )
         with patch.object(ImageDraw, "Draw", guarded_draw):
             with ExitStack() as stack:
@@ -232,7 +249,8 @@ class RenderLockTests(unittest.TestCase):
         for module in (
             renderer, screensaver, startup_animation, exit_display,
             touchscreen, layout_sheet, game_render, circuit_render,
-            pulse_render, memory_render,
+            pulse_render, memory_render, minesweeper_render,
+            tic_tac_toe_render, mastermind_render,
         ):
             self.assertIs(
                 module.RENDER_LOCK,

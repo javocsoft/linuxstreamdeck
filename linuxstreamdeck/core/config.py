@@ -812,6 +812,18 @@ class GameSettings:
     memory_sound_enabled: bool = True
     memory_volume: int = DEFAULT_GAME_VOLUME
     memory_best_moves: dict[str, int] = field(default_factory=dict)
+    mines_difficulty: str = DEFAULT_GAME_DIFFICULTY
+    mines_sound_enabled: bool = True
+    mines_volume: int = DEFAULT_GAME_VOLUME
+    mines_best_times: dict[str, int] = field(default_factory=dict)
+    tic_tac_toe_difficulty: str = DEFAULT_GAME_DIFFICULTY
+    tic_tac_toe_sound_enabled: bool = True
+    tic_tac_toe_volume: int = DEFAULT_GAME_VOLUME
+    tic_tac_toe_wins: dict[str, int] = field(default_factory=dict)
+    mastermind_difficulty: str = DEFAULT_GAME_DIFFICULTY
+    mastermind_sound_enabled: bool = True
+    mastermind_volume: int = DEFAULT_GAME_VOLUME
+    mastermind_best_attempts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -1025,6 +1037,28 @@ class Config:
                 memory_sound_enabled=game_bool("memory_sound_enabled"),
                 memory_volume=game_volume("memory_volume"),
                 memory_best_moves=game_scores("memory_best_moves"),
+                mines_difficulty=game_difficulty("mines_difficulty"),
+                mines_sound_enabled=game_bool("mines_sound_enabled"),
+                mines_volume=game_volume("mines_volume"),
+                mines_best_times=game_scores("mines_best_times"),
+                tic_tac_toe_difficulty=game_difficulty(
+                    "tic_tac_toe_difficulty"
+                ),
+                tic_tac_toe_sound_enabled=game_bool(
+                    "tic_tac_toe_sound_enabled"
+                ),
+                tic_tac_toe_volume=game_volume("tic_tac_toe_volume"),
+                tic_tac_toe_wins=game_scores("tic_tac_toe_wins"),
+                mastermind_difficulty=game_difficulty(
+                    "mastermind_difficulty"
+                ),
+                mastermind_sound_enabled=game_bool(
+                    "mastermind_sound_enabled"
+                ),
+                mastermind_volume=game_volume("mastermind_volume"),
+                mastermind_best_attempts=game_scores(
+                    "mastermind_best_attempts"
+                ),
             )
             brightness = max(10, min(100, int(raw.get("brightness", 80))))
             editor_width = max(MIN_EDITOR_WIDTH, min(MAX_EDITOR_WIDTH, int(

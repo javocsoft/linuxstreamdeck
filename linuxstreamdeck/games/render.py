@@ -15,6 +15,10 @@ from .circuit_breaker import CircuitSnapshot
 from .circuit_render import circuit_hud, render_circuit_keys
 from .memory_match import MemorySnapshot
 from .memory_render import memory_hud, render_memory_keys
+from .mastermind import MastermindSnapshot
+from .mastermind_render import mastermind_hud, render_mastermind_keys
+from .minesweeper import MinesweeperSnapshot
+from .minesweeper_render import minesweeper_hud, render_minesweeper_keys
 from .mole_smash import (
     DIFFICULTY_LABELS,
     PHASE_COUNTDOWN,
@@ -26,6 +30,8 @@ from .mole_smash import (
 )
 from .pulse_memory import PulseSnapshot
 from .pulse_render import pulse_hud, render_pulse_keys
+from .tic_tac_toe import TicTacToeSnapshot
+from .tic_tac_toe_render import tic_tac_toe_hud, render_tic_tac_toe_keys
 
 ASSET_DIR = Path(__file__).resolve().parent.parent / "assets" / "games" / "mole_smash"
 MOLE_ASSET = ASSET_DIR / "mole.png"
@@ -281,6 +287,12 @@ def render_keys(snapshot, size: tuple[int, int]) -> tuple[Image.Image, ...]:
         return render_pulse_keys(snapshot, size)
     if isinstance(snapshot, MemorySnapshot):
         return render_memory_keys(snapshot, size)
+    if isinstance(snapshot, MinesweeperSnapshot):
+        return render_minesweeper_keys(snapshot, size)
+    if isinstance(snapshot, TicTacToeSnapshot):
+        return render_tic_tac_toe_keys(snapshot, size)
+    if isinstance(snapshot, MastermindSnapshot):
+        return render_mastermind_keys(snapshot, size)
     return _render_mole_keys(snapshot, size)
 
 
@@ -292,4 +304,10 @@ def touchscreen_hud(snapshot, size: tuple[int, int]) -> Image.Image:
         return pulse_hud(snapshot, size)
     if isinstance(snapshot, MemorySnapshot):
         return memory_hud(snapshot, size)
+    if isinstance(snapshot, MinesweeperSnapshot):
+        return minesweeper_hud(snapshot, size)
+    if isinstance(snapshot, TicTacToeSnapshot):
+        return tic_tac_toe_hud(snapshot, size)
+    if isinstance(snapshot, MastermindSnapshot):
+        return mastermind_hud(snapshot, size)
     return _mole_hud(snapshot, size)

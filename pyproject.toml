@@ -31,4 +31,7 @@ linuxstreamdeck = [
     "assets/games/circuit_breaker/*.wav", "assets/games/circuit_breaker/LICENSE*",
     "assets/games/pulse_memory/*.wav", "assets/games/pulse_memory/LICENSE*",
     "assets/games/memory_match/*.wav", "assets/games/memory_match/LICENSE*",
+    "assets/games/minesweeper/*.wav", "assets/games/minesweeper/LICENSE*",
+    "assets/games/tic_tac_toe/*.wav", "assets/games/tic_tac_toe/LICENSE*",
+    "assets/games/mastermind/*.wav", "assets/games/mastermind/LICENSE*",
 ]

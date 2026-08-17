@@ -23,6 +23,9 @@ Read `linuxstreamdeck/device/renderer.py`,
 `linuxstreamdeck/games/circuit_render.py`,
 `linuxstreamdeck/games/pulse_render.py`,
 `linuxstreamdeck/games/memory_render.py`,
+`linuxstreamdeck/games/minesweeper_render.py`,
+`linuxstreamdeck/games/tic_tac_toe_render.py`,
+`linuxstreamdeck/games/mastermind_render.py`,
 `linuxstreamdeck/core/icons.py` and `AGENTS.md` sections 5-6 first.
 
 ## Absolute rules
@@ -125,15 +128,33 @@ offscreen:
 - Pulse Memory: lobby, countdown, showing, input flash, wrong key and results;
 - Memory Match: lobby, preview, hidden/revealed/matched cards, mismatch, odd-grid
   status key and results.
+- Minesweeper: lobby, hidden/revealed/numbered cells, Reveal/Flag modes, flags,
+  mine/explosion/wrong-flag states and win/loss results. Results must preserve
+  the final field, use the former mode key for Again and place Back somewhere
+  other than the exploded cell.
+- Tic-Tac-Toe: lobby, player X, the visible AI turn, AI O, winning lines,
+  draw/player/AI results and both centered 3x3 and compact boards. Results must
+  preserve and highlight the winning line with Again/Back outside it; compact
+  boards need a subtle whole-board AI-wait tint, while larger boards use one
+  status tile and subdued extras rather than repeating the same message.
+- Colour Mastermind: lobby, cycling pegs, Submit/Reset, exact/colour-only clue
+  history, solution reveal and win/loss results; on Mini, verify the latest clue
+  remains visible on Submit when no history key exists and Again/Back are both
+  present in results.
 
 Cover Mini 3x2, Neo 4x2, Original 5x3 and XL 8x4, and separately verify every
 Stream Deck + 800x100 touchscreen HUD. Every layout must expose unique lobby
 controls, fill exactly its live key count and keep text/symbols legible. Confirm
 the Mole Smash source sprite has real alpha and non-empty content, every state
-that should differ does so objectively, the three classic renderers use their
+that should differ does so objectively, all six dedicated renderers use their
 expected snapshot dispatch, and the same rendered images are emitted to physical
 and virtual paths. Memory Match must use the largest even card count and reserve
-only the final key on odd grids; the Plus HUD must leave all eight keys playable.
+only the final key on odd grids. Compact Minesweeper must visibly distinguish
+its one/two/three-mine difficulties; compact Tic-Tac-Toe must expose at least one
+valid three-cell line; and Mastermind must retain usable clue and result controls
+when history space is absent. Every Plus HUD must contain legible live state.
+Colour Mastermind's HUD must keep compact `E`/`C` feedback, its exact/colour
+legend, attempts, Best and title visibly separate with no overlap.
 Runtime ownership, input consumption and restoration belong to the reviewer; do
 not open HID.
 

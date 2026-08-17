@@ -85,14 +85,13 @@ on the same hardware as the scene switches.
   configure and test everything **without the hardware even connected**, single,
   double and long press included.
 - 🎮 **Built-in games** — take a break without reaching for another device.
-  Choose **Mole Smash**, **Circuit Breaker**, **Pulse Memory** or **Memory
-  Match** from the status menu. They turn the physical or virtual deck into a
-  reaction game, a guaranteed-solvable lights puzzle, an increasing sequence
-  challenge or a pair-matching board. All four offer three difficulty levels,
-  original synthesized sounds and records kept separately for each deck
-  geometry and difficulty. They adapt from the six-key Mini to the XL; on
-  Stream Deck +, the LCD strip becomes a game HUD, mirrored below the virtual
-  deck.
+  Choose **Mole Smash**, **Circuit Breaker**, **Pulse Memory**, **Memory Match**,
+  **Minesweeper**, **Tic-Tac-Toe** or **Colour Mastermind** from the status
+  menu. The seven games cover reaction, logic, recall, matching and
+  single-player strategy. Each offers three difficulty levels, original
+  synthesized sounds and a record kept separately for each deck geometry and
+  difficulty. They adapt from the six-key Mini to the XL; on Stream Deck +, the
+  LCD strip becomes a game HUD, mirrored below the virtual deck.
 - 🔎 **Search everything** — find an action by what it does instead of which
   category it lives in, and find a key by label, action or value across every
   profile, page and folder.
@@ -937,7 +936,7 @@ from there still protects unsaved key changes, reopening the window if needed.
 
 ### Playing the built-in games
 
-Open the LinuxStreamDeck status menu, then choose **Games** and one of the four
+Open the LinuxStreamDeck status menu, then choose **Games** and one of the seven
 games. The selected game temporarily owns every key and the virtual deck, so
 none of your configured actions can fire while you play. Every lobby is drawn
 directly on the keys:
@@ -964,10 +963,34 @@ directly on the keys:
   visible briefly, and the lowest number of turns is the record. On odd-key
   decks, one key becomes the move/pair display so every remaining card has a
   partner.
+- **Minesweeper:** reveal every safe cell without touching a mine. The final
+  key switches between Reveal and Flag mode, the first reveal and its
+  neighbours are kept safe whenever the board has room, and empty areas open
+  automatically. Easy, Normal and Hard use 12%, 18% and 25% mine density on
+  larger decks; compact boards use exactly one, two or three mines so their
+  difficulties remain distinct. The fastest clear is the record. Results keep
+  the final field visible; the old mode key becomes Again and Back never hides
+  the mine that exploded.
+- **Tic-Tac-Toe:** play X against the computer's O. Easy chooses randomly,
+  Normal also takes immediate wins and blocks yours, and Hard uses a complete
+  minimax search. Decks with at least nine keys use a centered 3x3 board;
+  smaller decks use every key as a compact board with every available
+  three-in-a-row line. The computer has a short visible thinking turn, and the
+  record counts your wins. Results preserve the final board and highlight the
+  winning line, placing Again and Back away from it.
+- **Colour Mastermind:** press each peg to cycle its colour, then Submit the
+  guess. Each clue reports exact-position matches and right-colour/wrong-position
+  matches without double-counting repeated colours. Easy uses 3 pegs, 4 colours
+  and 8 attempts; Normal uses 4/6/10; Hard uses 5/8/12, shortening the code only
+  when the deck needs room for Submit and Reset. Spare keys show recent clues;
+  on a Mini, the latest clue remains on Submit instead. Results reveal the full
+  code and provide Again and Back, and the fewest attempts is the record. The
+  Stream Deck + HUD pairs its compact `E`/`C` clue with an exact/colour legend.
 
-On Stream Deck +, score, moves, pairs, progress and other live game state use
-the LCD strip where appropriate, leaving all eight keys playable; the same HUD
-appears below the virtual deck. The screen saver cannot start during a game,
+On Stream Deck +, score, moves, pairs, time, clues, progress and other live game
+state use the LCD strip where appropriate, leaving the keys to each game's board
+and controls; the same HUD appears below the virtual deck. The screen saver
+cannot start during a game,
 OBS recording/streaming suppression remains independent, and disconnecting or
 changing deck geometry ends the session safely. While playing, the Games menu
 always offers **Stop** followed by the active game's name.
@@ -1091,7 +1114,7 @@ linuxstreamdeck/
 ├── ai/            # OpenAI/Claude requests, bounded context and proposal validation
 ├── core/          # events, config, actions, controller, clocks, audio, secrets, icons
 ├── device/        # physical deck, startup/saver/exit displays and key rendering
-├── games/         # shared runtime plus four pure game engines and renderers
+├── games/         # shared runtime plus seven pure game engines and renderers
 ├── obs/           # obs-websocket v5 client + full catalogue of OBS actions
 ├── twitch/        # device-code authorization, Helix client and Twitch actions
 ├── ui/            # GTK4/Libadwaita: window, editor, AI, OBS/Twitch/deck settings

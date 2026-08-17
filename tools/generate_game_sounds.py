@@ -121,6 +121,40 @@ def main() -> None:
             tone(0.055, (440.0, 880.0), volume=0.20),
             gap=0.008,
         ),
+        "reveal.wav": join(
+            tone(0.035, (185.0, 278.0), volume=0.18, fall=1.4),
+            tone(0.035, (247.0, 370.0), volume=0.14, fall=1.5),
+            gap=0.004,
+        ),
+        "flag.wav": tone(0.075, (740.0, 1110.0), volume=0.22, fall=0.8),
+        "explosion.wav": join(
+            tone(0.11, (82.0, 118.0), volume=0.48, noise=0.42, fall=1.8, seed=31),
+            glide(0.18, 145.0, 54.0, 0.32),
+        ),
+        "mark.wav": tone(0.075, (420.0, 630.0), volume=0.22, fall=0.9),
+        "ai.wav": tone(0.075, (250.0, 375.0), volume=0.20, fall=0.9),
+        "draw.wav": join(
+            tone(0.09, (440.0, 660.0), volume=0.20),
+            tone(0.14, (440.0, 660.0), volume=0.17),
+            gap=0.025,
+        ),
+        "win.wav": join(
+            tone(0.07, (659.0, 988.0), volume=0.23),
+            tone(0.07, (784.0, 1175.0), volume=0.25),
+            tone(0.18, (988.0, 1480.0), volume=0.28),
+            gap=0.018,
+        ),
+        "lose.wav": join(
+            glide(0.12, 330.0, 220.0, 0.20),
+            glide(0.18, 220.0, 110.0, 0.22),
+            gap=0.025,
+        ),
+        "peg.wav": tone(0.055, (540.0, 810.0), volume=0.18, fall=0.8),
+        "submit.wav": join(
+            tone(0.055, (392.0, 588.0), volume=0.18),
+            tone(0.075, (523.0, 784.0), volume=0.20),
+            gap=0.012,
+        ),
     }
     for index, frequency in enumerate((330.0, 392.0, 494.0, 587.0, 698.0, 880.0)):
         effects[f"pulse-{index}.wav"] = tone(
@@ -163,6 +197,33 @@ def main() -> None:
             "hit.wav",
             "record.wav",
             "select.wav",
+            "wrong.wav",
+        ),
+        "minesweeper": (
+            "explosion.wav",
+            "finish.wav",
+            "flag.wav",
+            "go.wav",
+            "record.wav",
+            "reveal.wav",
+            "select.wav",
+        ),
+        "tic_tac_toe": (
+            "ai.wav",
+            "draw.wav",
+            "go.wav",
+            "lose.wav",
+            "mark.wav",
+            "select.wav",
+            "win.wav",
+        ),
+        "mastermind": (
+            "finish.wav",
+            "go.wav",
+            "peg.wav",
+            "record.wav",
+            "select.wav",
+            "submit.wav",
             "wrong.wav",
         ),
     }

@@ -32,6 +32,9 @@ class MenuItemTests(unittest.TestCase):
                 {"id": tray.CIRCUIT_BREAKER_ID, "label": "Circuit Breaker"},
                 {"id": tray.PULSE_MEMORY_ID, "label": "Pulse Memory"},
                 {"id": tray.MEMORY_MATCH_ID, "label": "Memory Match"},
+                {"id": tray.MINESWEEPER_ID, "label": "Minesweeper"},
+                {"id": tray.TIC_TAC_TOE_ID, "label": "Tic-Tac-Toe"},
+                {"id": tray.MASTERMIND_ID, "label": "Colour Mastermind"},
             ],
         )
         self.assertEqual(
@@ -383,6 +386,9 @@ class EventRoutingTests(unittest.TestCase):
             (tray.CIRCUIT_BREAKER_ID, "circuit_breaker"),
             (tray.PULSE_MEMORY_ID, "pulse_memory"),
             (tray.MEMORY_MATCH_ID, "memory_match"),
+            (tray.MINESWEEPER_ID, "minesweeper"),
+            (tray.TIC_TAC_TOE_ID, "tic_tac_toe"),
+            (tray.MASTERMIND_ID, "mastermind"),
         ):
             self._click(item_id)
             self.assertEqual(self.calls.pop(), ("start-game", game_id))
