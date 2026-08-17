@@ -28,14 +28,21 @@ class MenuItemTests(unittest.TestCase):
         self.assertEqual(
             idle_games["children"],
             [
-                {"id": tray.MOLE_SMASH_ID, "label": "Mole Smash"},
                 {"id": tray.CIRCUIT_BREAKER_ID, "label": "Circuit Breaker"},
-                {"id": tray.PULSE_MEMORY_ID, "label": "Pulse Memory"},
+                {"id": tray.MASTERMIND_ID, "label": "Colour Mastermind"},
                 {"id": tray.MEMORY_MATCH_ID, "label": "Memory Match"},
                 {"id": tray.MINESWEEPER_ID, "label": "Minesweeper"},
+                {"id": tray.MOLE_SMASH_ID, "label": "Mole Smash"},
+                {"id": tray.PULSE_MEMORY_ID, "label": "Pulse Memory"},
                 {"id": tray.TIC_TAC_TOE_ID, "label": "Tic-Tac-Toe"},
-                {"id": tray.MASTERMIND_ID, "label": "Colour Mastermind"},
             ],
+        )
+        self.assertEqual(
+            [child["label"] for child in idle_games["children"]],
+            sorted(
+                (child["label"] for child in idle_games["children"]),
+                key=str.casefold,
+            ),
         )
         self.assertEqual(
             active_games["children"],

@@ -1532,8 +1532,9 @@ publishes the icon the moment one appears. `RegisterStatusNotifierItem` is calle
 freeze the window whenever the panel is slow. Until the reply arrives the icon
 counts as unregistered, which is the safe direction. The menu is **Open**, a
 **Profile** submenu of radio entries, a **Games** submenu and **Quit**. The Games
-submenu lists every entry in `games/catalog.py`: Mole Smash, Circuit Breaker,
-Pulse Memory, Memory Match, Minesweeper, Tic-Tac-Toe and Colour Mastermind.
+submenu lists every entry in `games/catalog.py` alphabetically by its displayed
+name: Circuit Breaker, Colour Mastermind, Memory Match, Minesweeper, Mole Smash,
+Pulse Memory and Tic-Tac-Toe.
 While a game is active, Profile is disabled and that submenu becomes **Stop [game
 name]**; `ItemIsMenu` is true, so a plain click opens it. `menu_items()` and
 `build_layout()` are pure functions, which is what the tests exercise. Profile

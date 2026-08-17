@@ -26,6 +26,7 @@ gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import GdkPixbuf, Gio, GLib  # noqa: E402
 
 from .. import APP_ID, APP_NAME
+from ..games.catalog import GAME_BY_ID
 
 log = logging.getLogger(__name__)
 
@@ -324,13 +325,11 @@ def menu_items(
                 [{"id": STOP_GAME_ID, "label": f"Stop {game_name or 'game'}"}]
                 if game_active
                 else [
-                    {"id": MOLE_SMASH_ID, "label": "Mole Smash"},
-                    {"id": CIRCUIT_BREAKER_ID, "label": "Circuit Breaker"},
-                    {"id": PULSE_MEMORY_ID, "label": "Pulse Memory"},
-                    {"id": MEMORY_MATCH_ID, "label": "Memory Match"},
-                    {"id": MINESWEEPER_ID, "label": "Minesweeper"},
-                    {"id": TIC_TAC_TOE_ID, "label": "Tic-Tac-Toe"},
-                    {"id": MASTERMIND_ID, "label": "Colour Mastermind"},
+                    {"id": item_id, "label": GAME_BY_ID[game_id].name}
+                    for item_id, game_id in sorted(
+                        _GAME_IDS.items(),
+                        key=lambda item: GAME_BY_ID[item[1]].name.casefold(),
+                    )
                 ]
             ),
         },

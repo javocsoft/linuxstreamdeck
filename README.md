@@ -85,9 +85,9 @@ on the same hardware as the scene switches.
   configure and test everything **without the hardware even connected**, single,
   double and long press included.
 - 🎮 **Built-in games** — take a break without reaching for another device.
-  Choose **Mole Smash**, **Circuit Breaker**, **Pulse Memory**, **Memory Match**,
-  **Minesweeper**, **Tic-Tac-Toe** or **Colour Mastermind** from the status
-  menu. The seven games cover reaction, logic, recall, matching and
+  Choose **Circuit Breaker**, **Colour Mastermind**, **Memory Match**,
+  **Minesweeper**, **Mole Smash**, **Pulse Memory** or **Tic-Tac-Toe** from the
+  status menu. The seven games cover reaction, logic, recall, matching and
   single-player strategy. Each offers three difficulty levels, original
   synthesized sounds and a record kept separately for each deck geometry and
   difficulty. They adapt from the six-key Mini to the XL; on Stream Deck +, the
