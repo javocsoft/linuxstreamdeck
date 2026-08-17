@@ -96,6 +96,13 @@ catalogues can discover its icon, description and screenshot), and the udev rule
 **syncs it into both** `pyproject.toml` and `linuxstreamdeck/__init__.py::VERSION`,
 so passing `X.Y.Z` also bumps those sources.
 
+The shared desktop entry keeps the theme icon name because Flatpak and AppImage
+install into different roots, but the Debian build rewrites only its staged
+`Icon` value to the absolute `/usr/share/icons/hicolor/scalable/apps/` SVG path.
+This is intentional: COSMIC can stop resolving the named hicolor icon after a
+Flatpak with the same application id is removed, even when the system icon cache
+is valid. Do not move that absolute path into the shared `.desktop` source.
+
 Everything else derives that one value: `ui/about.py` reads `VERSION`,
 `__main__.py` answers `--version` / `-V` **before GTK parses argv** (an unknown
 option would otherwise be rejected, and the bug report template tells people to

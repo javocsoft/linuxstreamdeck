@@ -151,7 +151,14 @@ LAUNCH
 chmod 755 "$STAGE/usr/bin/$APPDIR"
 
 # ---- desktop entry, AppStream metadata, icon, udev rule, docs ----
-cp "$HERE/$APPID.desktop" "$STAGE/usr/share/applications/"
+DESKTOP_ENTRY="$STAGE/usr/share/applications/$APPID.desktop"
+cp "$HERE/$APPID.desktop" "$DESKTOP_ENTRY"
+# COSMIC may fail to resolve a named hicolor icon after the Flatpak with the
+# same application id is removed. The Desktop Entry specification permits an
+# absolute icon path, so use one in the Debian package only. The shared source
+# entry must remain theme-based because Flatpak and AppImage install elsewhere.
+sed -i "s|^Icon=.*|Icon=/usr/share/icons/hicolor/scalable/apps/$APPID.svg|" \
+    "$DESKTOP_ENTRY"
 cp "$HERE/$APPID.svg"     "$STAGE/usr/share/icons/hicolor/scalable/apps/"
 # AppStream metainfo makes software centres show the app icon, summary and
 # screenshot instead of a generic package entry. Inject the built version/date.
