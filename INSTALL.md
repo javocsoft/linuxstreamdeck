@@ -32,7 +32,9 @@ sudo apt install ./linux-stream-deck-<version>.deb
 ```
 
 The USB rule is installed and reloaded for you. Replug the deck once, then
-launch **LinuxStreamDeck** from the applications menu.
+launch **LinuxStreamDeck** from the applications menu. The package also refreshes
+the desktop entry and hicolor icon caches automatically, so the application menu
+and dock can resolve its installed icon.
 
 ---
 

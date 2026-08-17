@@ -36,7 +36,9 @@ Never trust a documentation claim without checking its source. Verify at least:
 - **Automated tests:** `tests/`, including an isolated `LSD_CONFIG_DIR` in the
   documented `unittest` command.
 - **Packaging / dependencies / versions:** `pyproject.toml` and Debian packaging,
-  including Python requirements, entry points and package data.
+  including Python requirements, entry points, package data, the shared hicolor
+  theme icon name (never an absolute Debian-only SVG path), and maintainer-script
+  desktop/icon cache refreshes versus the separate AppStream refresh.
 - **Module map and structure:** the actual `linuxstreamdeck/` tree.
 - **EventBus topics:** `bus.emit(`, `subscribe(` and `unsubscribe(` calls against
   the documented topics, payloads and temporary-subscriber lifecycle.

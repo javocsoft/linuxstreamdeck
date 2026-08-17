@@ -92,16 +92,23 @@ bindings, so there is no additional pip dependency. The launcher
 `sys.path`. It also installs a
 desktop entry, the app icon, an **AppStream metainfo** (so installed software
 catalogues can discover its icon, description and screenshot), and the udev rule
-(reloaded by the `postinst`). Version defaults to `pyproject.toml`; the build
-**syncs it into both** `pyproject.toml` and `linuxstreamdeck/__init__.py::VERSION`,
-so passing `X.Y.Z` also bumps those sources.
+(reloaded by the `postinst`). The maintainer scripts also refresh the desktop
+entry and hicolor icon caches after install, upgrade and removal. Version
+defaults to `pyproject.toml`; the build **syncs it into both** `pyproject.toml`
+and `linuxstreamdeck/__init__.py::VERSION`, so passing `X.Y.Z` also bumps those
+sources.
 
-The shared desktop entry keeps the theme icon name because Flatpak and AppImage
-install into different roots, but the Debian build rewrites only its staged
-`Icon` value to the absolute `/usr/share/icons/hicolor/scalable/apps/` SVG path.
-This is intentional: COSMIC can stop resolving the named hicolor icon after a
-Flatpak with the same application id is removed, even when the system icon cache
-is valid. Do not move that absolute path into the shared `.desktop` source.
+Every package format keeps the shared desktop entry's hicolor theme name:
+`Icon=com.javocsoft.LinuxStreamDeck`. The Debian build asserts that exact value
+and installs `com.javocsoft.LinuxStreamDeck.svg` below
+`/usr/share/icons/hicolor/scalable/apps/`; `postinst` then runs
+`update-desktop-database` and `gtk-update-icon-cache` when available. This is
+load-bearing on COSMIC: its launcher and dock take different icon-loading paths,
+and an absolute SVG path can work in the launcher while the dock silently falls
+back to a generic icon. Do not rewrite the staged Debian desktop entry to an
+absolute icon path. `packaging/refresh-appstream.sh` refreshes separate
+software-catalogue metadata; it is not a substitute for the desktop/icon cache
+refresh in the maintainer scripts.
 
 Everything else derives that one value: `ui/about.py` reads `VERSION`,
 `__main__.py` answers `--version` / `-V` **before GTK parses argv** (an unknown

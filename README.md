@@ -466,6 +466,11 @@ hidapi, websocket-client, GStreamer with its playback plugins and the HTTPS CA
 certificate bundle through apt. AI provider calls use Python's standard library,
 so they add no pip dependency.
 
+The package installs the application icon under the hicolor theme using
+`com.javocsoft.LinuxStreamDeck` as the desktop icon name. Its maintainer scripts
+refresh the desktop and icon caches automatically after installation, upgrade or
+removal, so the application menu and dock can pick up the current icon.
+
 After installing or upgrading the package, refresh the system AppStream cache
 so software centres show the current application metadata:
 
