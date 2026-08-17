@@ -137,6 +137,40 @@ def _argb32(pixbuf: GdkPixbuf.Pixbuf) -> bytes:
     return bytes(result)
 
 
+def _visible_bounds(pixbuf: GdkPixbuf.Pixbuf) -> tuple[int, int, int, int]:
+    """Return the smallest rectangle containing every non-transparent pixel."""
+    width = pixbuf.get_width()
+    height = pixbuf.get_height()
+    channels = pixbuf.get_n_channels()
+    if not pixbuf.get_has_alpha() or channels < 4:
+        return 0, 0, width, height
+
+    source = bytes(pixbuf.get_pixels())
+    stride = pixbuf.get_rowstride()
+    left, top, right, bottom = width, height, -1, -1
+    for y in range(height):
+        row = y * stride
+        for x in range(width):
+            if source[row + x * channels + 3] == 0:
+                continue
+            left = min(left, x)
+            top = min(top, y)
+            right = max(right, x)
+            bottom = max(bottom, y)
+
+    # A fully transparent asset is still valid input. Leaving its dimensions
+    # alone is safer than asking GdkPixbuf for a zero-sized subpixbuf.
+    if right < left or bottom < top:
+        return 0, 0, width, height
+    return left, top, right - left + 1, bottom - top + 1
+
+
+def _fit_inside(width: int, height: int, size: int) -> tuple[int, int]:
+    """Fit a rectangle within one status-area size without changing its shape."""
+    scale = min(size / width, size / height)
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
 @lru_cache(maxsize=4)
 def _load_icon_pixmaps(
     icon_name: str, sizes: tuple[int, ...] = TRAY_ICON_SIZES
@@ -146,10 +180,14 @@ def _load_icon_pixmaps(
         if not icon_path.is_file():
             continue
         try:
+            source = GdkPixbuf.Pixbuf.new_from_file(str(icon_path))
+            x, y, width, height = _visible_bounds(source)
+            visible = source.new_subpixbuf(x, y, width, height)
             pixmaps = []
             for size in sizes:
-                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
-                    str(icon_path), size, size, True
+                target_width, target_height = _fit_inside(width, height, size)
+                pixbuf = visible.scale_simple(
+                    target_width, target_height, GdkPixbuf.InterpType.BILINEAR
                 )
                 pixmaps.append(
                     (pixbuf.get_width(), pixbuf.get_height(), _argb32(pixbuf))

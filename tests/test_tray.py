@@ -183,14 +183,36 @@ class IconPixmapTests(unittest.TestCase):
     def test_application_svg_is_published_in_every_requested_size(self):
         pixmaps = tray._load_icon_pixmaps(APP_ID, (16, 24, 32))
 
-        self.assertEqual([(width, height) for width, height, _data in pixmaps], [
-            (16, 16),
-            (24, 24),
-            (32, 32),
-        ])
+        self.assertEqual(
+            [max(width, height) for width, height, _data in pixmaps], [16, 24, 32]
+        )
+        self.assertTrue(all(width > 0 and height > 0 for width, height, _ in pixmaps))
         self.assertTrue(
             all(len(data) == width * height * 4 for width, height, data in pixmaps)
         )
+
+    def test_application_svg_does_not_publish_transparent_outer_padding(self):
+        for width, height, data in tray._load_icon_pixmaps(APP_ID, (16, 24, 32)):
+            alpha = data[0::4]
+            occupied_columns = {
+                x
+                for y in range(height)
+                for x in range(width)
+                if alpha[y * width + x]
+            }
+            occupied_rows = {
+                y
+                for y in range(height)
+                for x in range(width)
+                if alpha[y * width + x]
+            }
+
+            self.assertEqual(
+                (min(occupied_columns), max(occupied_columns)), (0, width - 1)
+            )
+            self.assertEqual(
+                (min(occupied_rows), max(occupied_rows)), (0, height - 1)
+            )
 
     def test_pixmap_is_preferred_over_the_theme_name(self):
         icon = tray.TrayIcon(

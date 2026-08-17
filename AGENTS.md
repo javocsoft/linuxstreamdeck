@@ -1334,10 +1334,16 @@ back through `GLib.idle_add`.
 The status icon is published as actual `IconPixmap` data at several panel sizes,
 not only as the application theme name. `TrayIcon` locates the same SVG in a
 source tree, Debian install, Flatpak or AppImage, rasterizes it with GdkPixbuf and
-serializes it as network-order ARGB32. While those pixels are available it leaves
-`IconName` empty because hosts are encouraged to prefer the name, and COSMIC can
-replace a valid pixmap with a generic placeholder when its theme lookup fails.
-Failure to locate or decode the SVG falls back to the named icon instead.
+serializes it as network-order ARGB32. Before scaling, it finds the alpha bounding
+box and removes only fully transparent outer padding, then fits that visible
+rectangle inside each panel size without forcing it square. The published pixmaps
+may therefore be rectangular: preserving the artwork's aspect ratio is what keeps
+the status icon large without distorting it. This crop is local to `IconPixmap`;
+the launcher and dock continue to use the original hicolor SVG. While those
+pixels are available it leaves `IconName` empty because hosts are encouraged to
+prefer the name, and COSMIC can replace a valid pixmap with a generic placeholder
+when its theme lookup fails. Failure to locate or decode the SVG falls back to
+the named icon instead.
 
 `TrayIcon.start()` exports both objects, owns an
 `org.kde.StatusNotifierItem-<pid>-1` bus name and then watches the watcher name,
@@ -3159,6 +3165,9 @@ ignored and you will chase a ghost.
    commonly appears after the application at session login, and a blocking call
    on the GTK main thread freezes the window for its whole timeout. Publish the
    real application SVG as multi-size, network-order ARGB32 `IconPixmap` data;
+   crop only its fully transparent outer padding and preserve the visible
+   artwork's aspect ratio instead of forcing square pixmaps. Keep that raster-only
+   crop isolated from the original hicolor SVG used by the launcher and dock;
    while those pixels load, leave `IconName` empty so COSMIC cannot prefer a
    failed theme lookup, and fall back to the theme name when they do not. Keep
    the late-appearance and icon-pixmap regression tests.

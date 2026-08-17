@@ -58,9 +58,12 @@ Read `AGENTS.md` sections 5-6 for the rationale.
 7. **Single instance and status icon.** Automation must not launch the GUI for
    verification. Rendering checks should run offscreen or be handed to the user.
    The StatusNotifierItem must publish the real application SVG as multi-size,
-   network-order ARGB32 `IconPixmap` data. When those pixels load, `IconName`
-   must stay empty so COSMIC cannot replace them after a failed theme lookup;
-   when loading fails, the theme name must remain as the fallback.
+   network-order ARGB32 `IconPixmap` data. Crop only fully transparent outer
+   padding, preserve the visible artwork's aspect ratio instead of forcing square
+   pixmaps, and do not alter the original hicolor SVG used by the launcher and
+   dock. When those pixels load, `IconName` must stay empty so COSMIC cannot
+   replace them after a failed theme lookup; when loading fails, the theme name
+   must remain as the fallback.
 8. **EventBus threading.** Background emitters must reach UI subscribers through
    the dispatcher. Event payloads must match the documented topic contract.
 9. **Feedback colors.** OBS feedback should reuse shared state color constants.
