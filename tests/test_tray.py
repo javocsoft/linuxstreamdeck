@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from gi.repository import Gio, GLib
 
-from linuxstreamdeck import APP_ID, APP_NAME
+from linuxstreamdeck import APP_ID
 from linuxstreamdeck.ui import tray
 
 PROFILES = ["Streaming", "Podcast", "Gaming"]
@@ -17,9 +17,7 @@ class MenuItemTests(unittest.TestCase):
         items = tray.menu_items(PROFILES, 0)
 
         labels = [item.get("label") for item in items if not item.get("separator")]
-        self.assertEqual(
-            labels, [f"Open {APP_NAME}", "Profile", f"Quit {APP_NAME}"]
-        )
+        self.assertEqual(labels, ["Open", "Profile", "Quit"])
 
     def test_every_profile_becomes_a_radio_entry(self) -> None:
         items = tray.menu_items(PROFILES, 1)

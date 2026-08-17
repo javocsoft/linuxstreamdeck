@@ -277,7 +277,7 @@ def is_supported() -> bool:
 def menu_items(profiles: list[str], current_profile: int) -> list[dict]:
     """Flat description of the menu, used to build the layout and for tests."""
     items: list[dict] = [
-        {"id": OPEN_ID, "label": f"Open {APP_NAME}"},
+        {"id": OPEN_ID, "label": "Open"},
         {"id": SEPARATOR_BEFORE_PROFILES_ID, "separator": True},
         {
             "id": PROFILES_ID,
@@ -294,7 +294,7 @@ def menu_items(profiles: list[str], current_profile: int) -> list[dict]:
             ],
         },
         {"id": SEPARATOR_BEFORE_QUIT_ID, "separator": True},
-        {"id": QUIT_ID, "label": f"Quit {APP_NAME}"},
+        {"id": QUIT_ID, "label": "Quit"},
     ]
     return items
 
