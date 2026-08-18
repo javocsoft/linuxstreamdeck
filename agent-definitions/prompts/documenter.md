@@ -82,6 +82,13 @@ Never trust a documentation claim without checking its source. Verify at least:
   `linuxstreamdeck/ui/ai_assistant.py` and provider key storage, including
   bounded opt-in context, blocked dangerous actions, local validation and
   explicit editor review/save.
+- **Marketing gallery:** `marketing/generate.py`, `marketing/README.md` and all
+  six generated PNGs, including the isolated regeneration command, use of real
+  application render paths and the canonical hand-taken main-window screenshot,
+  representative-value disclosure, and the exact hardware caveat that only the
+  MK.2 is physically tested while Mini, Neo, XL and Stream Deck + layouts are
+  verified in simulation. Never describe a generated composition as a live
+  hardware or desktop capture.
 - **Critical invariants:** BASIC Pillow layout, shared `RENDER_LOCK`, serialized
   OBS requests, separate action/render workers and ordered activity shutdown,
   same-key restart cancellation and predecessor ordering, exclusive/cancellable

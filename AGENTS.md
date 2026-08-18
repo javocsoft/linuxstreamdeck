@@ -3634,6 +3634,25 @@ Set `LSD_CONFIG_DIR` in the environment **before** `linuxstreamdeck.core.config`
 is imported. A `config.json.bak` backup is written on each save, but do not rely
 on it — isolate first.
 
+The six 1600x900 images in `marketing/` are reproducible feature presentations,
+not invented interfaces or hardware mockups. `marketing/generate.py` sends
+configured keys through the normal key renderer, deterministic states through
+the real game engines and render dispatcher, screen savers through their
+full-deck renderer, and the Stream Deck + strip through its LCD renderer. The
+main-window panel embeds the canonical hand-taken `docs/screenshot.png` instead
+of synthesizing a window. Regenerate the gallery only with an isolated config:
+
+```bash
+LSD_CONFIG_DIR="$(mktemp -d)" .venv/bin/python marketing/generate.py
+```
+
+The numbers shown on live-feedback keys are representative supported values,
+not readings from the developer's current system or accounts. Keep that
+disclosure, and keep the hardware disclosure exact: the MK.2 is tested on
+physical hardware while Mini, Neo, XL and Stream Deck + layouts are verified in
+simulation. Do not hand-edit generated gallery PNGs; update the generator or its
+canonical `docs/screenshot.png` input and regenerate all six images together.
+
 ---
 
 ## 7. Documentation
@@ -3647,6 +3666,8 @@ The project's documentation must stay in sync with the code. Documentation files
 - `agent-definitions/` — canonical prompts, provider settings and the generator
   for Claude/Codex agent adapters.
 - `docs/` — assets such as `screenshot.png`.
+- `marketing/` — reproducible feature gallery, its generator and provenance
+  notes.
 
 Custom agent prompts must be edited only below `agent-definitions/`; files below
 `.claude/agents/` and `.codex/agents/` are generated provider adapters. After an

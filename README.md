@@ -12,6 +12,8 @@
 
 <img src="docs/screenshot.png" alt="LinuxStreamDeck Streaming profile with a 15-key virtual deck and the Record action editor" width="840">
 
+[Explore the reproducible marketing gallery](marketing/README.md)
+
 </div>
 
 ---
@@ -1147,6 +1149,7 @@ linuxstreamdeck/
 └── assets/        # icons plus one self-contained asset folder per built-in game
 data/udev/         # udev rule for device access
 tools/             # deterministic developer-side asset generators
+marketing/         # reproducible feature gallery generated through real render paths
 ```
 
 ## 🙌 Acknowledgements
