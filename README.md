@@ -253,7 +253,8 @@ Connecting asks for no password. The dialog shows a short code, you enter it at
 are kept in your desktop keyring and never reach `config.json`, its backup or an
 exported configuration, so sharing a configuration never shares your account.
 You can disconnect at any time from **Twitch account…**, which also tells Twitch
-to forget the authorization.
+to revoke the application's current access. Twitch keeps the application listed
+under **Settings → Connections** until you remove it there yourself.
 
 The follower count and the title answer while you are offline; the viewer count
 does not, because there is no audience to count when you are off air, and
@@ -474,6 +475,11 @@ dependencies and pulls GTK4/Libadwaita, Secret Service, GNOME Keyring, Pillow,
 hidapi, websocket-client, GStreamer with its playback plugins and the HTTPS CA
 certificate bundle through apt. AI provider calls use Python's standard library,
 so they add no pip dependency.
+
+For an actual release, set both version sources before regenerating the landing
+page, then build and inspect the `.deb`, AppImage and Flatpak in the order given
+by the **Release version checklist** in [AGENTS.md](AGENTS.md). Do not rely on
+the Debian builder's final synchronization as the start of a release bump.
 
 The package installs the application icon under the hicolor theme using
 `com.javocsoft.LinuxStreamDeck` as the desktop icon name. Its maintainer scripts
@@ -1066,13 +1072,15 @@ The optional context switch sends only a bounded set of OBS and page names to he
 the provider choose existing values; it never sends passwords, commands, or the
 full configuration.
 
-AI-assisted creation cannot propose **Run Command** (`sys.command`) or **Raw OBS
-Request** (`obs.raw`). Every response is validated locally against the installed
-action catalogue and converted into a preview. Proposals with several actions
-also come with a **Step name** on each one, so the list reads as plain steps;
-the preview always shows that name next to the real action it runs. Nothing is executed or saved
-automatically: load the proposal into the existing editor, review every action
-and parameter, then press **Save** only if you want to keep it.
+AI-assisted creation cannot propose **Run Command** (`sys.command`), **Raw OBS
+Request** (`obs.raw`) or **Web request** (`web.request`), because each can reach
+outside the application from a string. Every response is validated locally
+against the installed action catalogue and converted into a preview. Proposals
+with several actions also come with a **Step name** on each one, so the list
+reads as plain steps; the preview always shows that name next to the real action
+it runs. Nothing is executed or saved automatically: load the proposal into the
+existing editor, review every action and parameter, then press **Save** only if
+you want to keep it.
 
 ## 💾 Import and export configuration
 

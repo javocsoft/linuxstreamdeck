@@ -1,6 +1,6 @@
 /* Action explorer, guide navigation, and nothing else.
  *
- * No search library on purpose. The catalogue is 65 entries with five short
+ * No search library on purpose. The catalogue is a small set with five short
  * fields each, so a dependency would be more code than the feature and would
  * add an external request to a page meant to be dropped on any server. Fuzzy
  * matching is also the wrong tool at this size: on a small set it invents
@@ -209,6 +209,9 @@
       $$("[data-version]").forEach((n) => (n.textContent = data.version));
       $$("[data-action-count]").forEach(
         (n) => (n.textContent = String(data.actions.length))
+      );
+      $$("[data-game-count]").forEach(
+        (n) => (n.textContent = String(data.games.length))
       );
       const before = window.scrollY;
       render();

@@ -46,7 +46,12 @@ Never trust a documentation claim without checking its source. Verify at least:
 - **Packaging / dependencies / versions:** `pyproject.toml` and Debian packaging,
   including Python requirements, entry points, package data, the shared hicolor
   theme icon name (never an absolute Debian-only SVG path), and maintainer-script
-  desktop/icon cache refreshes versus the separate AppStream refresh.
+  desktop/icon cache refreshes versus the separate AppStream refresh. Verify the
+  ordered release workflow too: both authoritative version sources must agree
+  before isolated landing regeneration; checks precede the Debian, AppImage and
+  bundled Flatpak builds; final versions and contents are inspected inside all
+  three artifacts before checksums; and the bug-report template keeps its generic
+  `X.Y.Z` reporter placeholder rather than becoming a release version source.
 - **Module map and structure:** the actual `linuxstreamdeck/` tree.
 - **EventBus topics:** `bus.emit(`, `subscribe(` and `unsubscribe(` calls against
   the documented topics, payloads and temporary-subscriber lifecycle.

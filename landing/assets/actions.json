@@ -1,5 +1,5 @@
 {
- "version": "0.3.7",
+ "version": "0.3.8",
  "actions": [
   {
    "id": "ha.state",
@@ -1640,6 +1640,48 @@
     }
    ],
    "needs": []
+  }
+ ],
+ "games": [
+  {
+   "id": "mole_smash",
+   "name": "Mole Smash",
+   "hint": "Press START, then hit each mole before it disappears."
+  },
+  {
+   "id": "circuit_breaker",
+   "name": "Circuit Breaker",
+   "hint": "Turn every light off in as few moves as possible."
+  },
+  {
+   "id": "pulse_memory",
+   "name": "Pulse Memory",
+   "hint": "Watch the illuminated sequence, then repeat it exactly."
+  },
+  {
+   "id": "memory_match",
+   "name": "Memory Match",
+   "hint": "Reveal two cards at a time and find every matching pair."
+  },
+  {
+   "id": "minesweeper",
+   "name": "Minesweeper",
+   "hint": "Reveal every safe cell; switch to Flag mode to mark suspected mines."
+  },
+  {
+   "id": "tic_tac_toe",
+   "name": "Tic-Tac-Toe",
+   "hint": "Make a line of three X marks before the computer does."
+  },
+  {
+   "id": "mastermind",
+   "name": "Colour Mastermind",
+   "hint": "Cycle the coloured pegs and crack the hidden code from its clues."
+  },
+  {
+   "id": "neon_relay",
+   "name": "Neon Relay",
+   "hint": "Rotate the neon route ahead of the spark and keep it alive."
   }
  ]
 }

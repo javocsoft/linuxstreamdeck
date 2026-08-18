@@ -27,7 +27,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -52,7 +54,7 @@ OG_WIDTH, OG_HEIGHT = 1200, 630
 # --------------------------------------------------------------- catalogue
 
 def catalogue() -> dict:
-    """Every registered action, as the search index reads it."""
+    """Every registered action and game, as the site presents them."""
     from linuxstreamdeck import basic_actions  # noqa: F401
     from linuxstreamdeck import ha_actions  # noqa: F401
     from linuxstreamdeck import light_actions  # noqa: F401
@@ -62,6 +64,7 @@ def catalogue() -> dict:
     from linuxstreamdeck.twitch import actions as _twitch  # noqa: F401
     from linuxstreamdeck import VERSION
     from linuxstreamdeck.core.actions import REGISTRY
+    from linuxstreamdeck.games.catalog import GAMES
 
     actions = []
     for action in REGISTRY.values():
@@ -94,7 +97,14 @@ def catalogue() -> dict:
     # name above every lowercase one: "Open URL" landed above "Open
     # application", which reads as no order at all.
     actions.sort(key=lambda a: (a["category"].lower(), a["name"].lower()))
-    return {"version": VERSION, "actions": actions}
+    return {
+        "version": VERSION,
+        "actions": actions,
+        "games": [
+            {"id": game.id, "name": game.name, "hint": game.hint}
+            for game in GAMES
+        ],
+    }
 
 
 # ---------------------------------------------------------------- pictures
@@ -255,6 +265,40 @@ def screensaver() -> None:
     canvas.save(IMG / "keys-screensaver.png")
 
 
+def game_preview() -> None:
+    """One deterministic Neon Relay frame, rendered through the real game path."""
+    from PIL import Image
+
+    from linuxstreamdeck.games.common import game_layout
+    from linuxstreamdeck.games.neon_relay import NeonRelayEngine
+    from linuxstreamdeck.games.render import render_keys
+
+    engine = NeonRelayEngine(
+        game_layout(15, 5),
+        difficulty="normal",
+        sound_enabled=False,
+        rng=random.Random(31),
+    )
+    engine.press(engine.layout.start_key, 0.0)
+    images = render_keys(engine.snapshot(0.36), (96, 96))
+
+    key, gap, columns = 96, 10, 5
+    canvas = Image.new(
+        "RGBA",
+        (columns * key + (columns + 1) * gap, 3 * key + 4 * gap),
+        (0, 0, 0, 0),
+    )
+    for index, tile in enumerate(images):
+        canvas.paste(
+            tile.convert("RGBA"),
+            (
+                gap + (index % columns) * (key + gap),
+                gap + (index // columns) * (key + gap),
+            ),
+        )
+    canvas.save(IMG / "keys-games.png")
+
+
 # ------------------------------------------------------------------ icons
 
 def _logo(size: int):
@@ -292,6 +336,10 @@ def narrow_screenshot() -> None:
     """
     from PIL import Image
 
+    # The README screenshot is the canonical application-window image. Copy it
+    # on every generation so a refreshed repository screenshot cannot leave the
+    # landing page showing the previous UI indefinitely.
+    shutil.copyfile(ROOT / "docs" / "screenshot.png", IMG / "app-window.png")
     window = Image.open(IMG / "app-window.png")
     window.crop((0, 0, 578, window.height)).save(IMG / "app-window-narrow.png")
 
@@ -323,7 +371,7 @@ def favicons() -> list[str]:
 
 # ----------------------------------------------------------- sharing card
 
-def social_card(version: str, action_count: int) -> None:
+def social_card(version: str, action_count: int, game_count: int) -> None:
     """The 1200x630 image a link to this site unfurls into.
 
     Sharing the plain window screenshot was the obvious thing and reads badly
@@ -361,7 +409,7 @@ def social_card(version: str, action_count: int) -> None:
         draw.text(
             (74, 356),
             "Deep OBS Studio integration, plus Twitch, Home Assistant,\n"
-            "Key Lights and per-application audio — built in.",
+            f"per-application audio and {game_count} built-in games.",
             font=renderer._font(27), fill=(160, 166, 180), spacing=12,
         )
 
@@ -469,8 +517,26 @@ def seo(data: dict, site_url: str) -> None:
         html = html.replace(previous, site_url)
 
     actions = data["actions"]
+    games = data["games"]
     html = _region(html, "cards", "".join(_card_html(a) for a in actions))
     html = _region(html, "count", f"{len(actions)} actions")
+    html = _region(
+        html,
+        "games",
+        "".join(
+            f'<span class="tag">{_escape(game["name"])}</span>'
+            for game in sorted(games, key=lambda game: game["name"].lower())
+        ),
+    )
+    game_names = [
+        _escape(game["name"])
+        for game in sorted(games, key=lambda game: game["name"].lower())
+    ]
+    if len(game_names) > 1:
+        game_list = ", ".join(game_names[:-1]) + f", or {game_names[-1]}"
+    else:
+        game_list = "".join(game_names)
+    html = _region(html, "game-list", game_list)
     html = re.sub(
         r"(<(b|span) data-version>)[^<]*(</\2>)",
         lambda m: m.group(1) + _escape(data["version"]) + m.group(3), html,
@@ -478,6 +544,10 @@ def seo(data: dict, site_url: str) -> None:
     html = re.sub(
         r"(<(b|span) data-action-count>)[^<]*(</\2>)",
         lambda m: m.group(1) + str(len(actions)) + m.group(3), html,
+    )
+    html = re.sub(
+        r"(<(b|span) data-game-count>)[^<]*(</\2>)",
+        lambda m: m.group(1) + str(len(games)) + m.group(3), html,
     )
     INDEX.write_text(html, encoding="utf-8")
 
@@ -519,9 +589,15 @@ if __name__ == "__main__":
     (HERE / "assets" / "actions.json").write_text(
         json.dumps(data, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    print(f"actions.json: {len(data['actions'])} actions, v{data['version']}")
+    print(
+        "actions.json: "
+        f"{len(data['actions'])} actions, {len(data['games'])} games, "
+        f"v{data['version']}"
+    )
     for name in pictures():
         print(f"  {name}.png")
+    game_preview()
+    print("  keys-games.png")
     try:
         screensaver()
         print("  keys-screensaver.png")
@@ -531,7 +607,7 @@ if __name__ == "__main__":
     print("  app-window-narrow.png")
     for name in favicons():
         print(f"  {name}")
-    social_card(data["version"], len(data["actions"]))
+    social_card(data["version"], len(data["actions"]), len(data["games"]))
     print("  og-card.png")
     seo(data, site_url)
     print(f"index.html, robots.txt, sitemap.xml: {site_url}")

@@ -1,7 +1,7 @@
 /* Assert that the catalogue baked into index.html is exactly what app.js
  * builds at run time.
  *
- * generate.py writes the 65 action cards into the served HTML so crawlers and
+ * generate.py writes every action card into the served HTML so crawlers and
  * non-JavaScript readers see them, and app.js replaces that block on its first
  * render. If the two ever disagree the list silently reshuffles or reflows the
  * moment the script runs, and nothing else notices. Both halves of that have
@@ -23,6 +23,15 @@ const read = (name) => readFileSync(join(HERE, name), "utf8");
 
 const html = read("index.html");
 const data = JSON.parse(read("assets/actions.json"));
+
+function escapeHTML(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
 
 const region = html.match(
   /<!-- generated:cards -->([\s\S]*?)<!-- \/generated:cards -->/
@@ -48,6 +57,7 @@ const parts = {
 const lists = {
   "[data-version]": [node(), node()],
   "[data-action-count]": [node()],
+  "[data-game-count]": [node()],
   ".guide aside a": [],
   ".guide .step": [],
 };
@@ -104,4 +114,44 @@ if (parts["#count"].textContent !== `${data.actions.length} actions`) {
   process.exit(1);
 }
 
-console.log(`ok  ${bakedCount} cards identical in index.html and app.js`);
+const gameRegion = html.match(
+  /<!-- generated:games -->([\s\S]*?)<!-- \/generated:games -->/
+);
+if (!gameRegion) {
+  console.error("FAIL  index.html has no generated:games region");
+  process.exit(1);
+}
+const sortedGames = [...data.games].sort((left, right) =>
+  left.name.localeCompare(right.name, undefined, { sensitivity: "base" })
+);
+const expectedGameTags = sortedGames
+  .map((game) => `<span class="tag">${escapeHTML(game.name)}</span>`)
+  .join("");
+if (gameRegion[1] !== expectedGameTags) {
+  console.error("FAIL  the generated game tags do not match actions.json");
+  process.exit(1);
+}
+const gameListRegion = html.match(
+  /<!-- generated:game-list -->([\s\S]*?)<!-- \/generated:game-list -->/
+);
+if (!gameListRegion) {
+  console.error("FAIL  the guide has no generated:game-list region");
+  process.exit(1);
+}
+const gameNames = sortedGames.map((game) => escapeHTML(game.name));
+const expectedGameList = gameNames.length > 1
+  ? `${gameNames.slice(0, -1).join(", ")}, or ${gameNames.at(-1)}`
+  : gameNames.join("");
+if (gameListRegion[1] !== expectedGameList) {
+  console.error("FAIL  the generated guide game list does not match actions.json");
+  process.exit(1);
+}
+const gameCount = lists["[data-game-count]"][0].textContent;
+if (gameCount !== String(data.games.length)) {
+  console.error(`FAIL  the game count reads "${gameCount}"`);
+  process.exit(1);
+}
+
+console.log(
+  `ok  ${bakedCount} action cards and ${data.games.length} games are synchronized`
+);

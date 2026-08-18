@@ -15,12 +15,12 @@ landing/
 └── assets/
     ├── style.css       dark by default, light theme follows the visitor
     ├── app.js          action search and guide navigation
-    ├── actions.json    generated: the full action catalogue
+    ├── actions.json    generated: the action and game catalogues
     └── img/
-        ├── keys-*.png      generated: composed by the real key renderer
+        ├── keys-*.png      generated: composed by the real key/game renderers
         ├── og-card.png     generated: the 1200x630 social sharing card
         ├── favicon-*.png   generated: rasterized from logo.svg
-        ├── app-window.png  the application window (docs/screenshot.png)
+        ├── app-window.png  generated copy of docs/screenshot.png
         └── logo.svg        the application icon
 ```
 
@@ -52,10 +52,11 @@ around for days:
 
 ## Rebuilding the generated parts
 
-`actions.json`, every `keys-*.png`, `og-card.png`, the favicons, and the action
-cards inside `index.html` all come from the code, so the site cannot drift from
-what the software does. Rerun after adding an action, changing an action's name
-or description, or changing how a key is drawn:
+`actions.json`, every `keys-*.png`, `og-card.png`, the favicons, the
+application window copy, and the action/game catalogues inside `index.html`
+all come from the code, so the site cannot drift from what the software does.
+Rerun after adding an action or game, changing its name or description,
+replacing `docs/screenshot.png`, or changing how a key is drawn:
 
 ```bash
 LSD_CONFIG_DIR="$(mktemp -d)" .venv/bin/python landing/generate.py
@@ -65,11 +66,14 @@ LSD_CONFIG_DIR="$(mktemp -d)" .venv/bin/python landing/generate.py
 importing the package reaches configuration code, and this must never touch the
 real configuration. See AGENTS.md section 6.
 
-The key pictures go through `renderer.compose()` **offscreen** - they are never
-screenshots of a running window. The application is single-instance, so
-launching it to photograph it leaves a stale, cached view (AGENTS.md section
-5.5). `app-window.png` is the one exception: it is the repository's own
-`docs/screenshot.png`, taken by hand.
+The normal key pictures go through `renderer.compose()` **offscreen**, the game
+preview is a deterministic seeded Neon Relay snapshot passed through the real
+engine and render dispatcher, and the screen-saver picture uses its real frame
+renderer. They are never screenshots of a running window. The application is
+single-instance, so launching it to photograph it leaves a stale, cached view
+(AGENTS.md section 5.5).
+`app-window.png` is the one exception: every generation copies the repository's
+hand-taken `docs/screenshot.png`.
 
 The favicons are rasterized from `logo.svg` through GdkPixbuf, which comes with
 PyGObject and is therefore already a dependency; no standalone rasterizer
@@ -84,6 +88,11 @@ served HTML. `generate.py` writes the unsearched list of cards between
 `<!-- generated:cards -->` markers, and `app.js` replaces it with **identical**
 markup on its first render.
 
+The same catalogue JSON carries every entry from `games/catalog.py`.
+`generate.py` derives the game count, the feature tags and the complete guide
+list from those entries, while `check.mjs` verifies all three against
+`actions.json`. Adding or renaming a game therefore has one canonical source.
+
 That coupling is silent when it breaks: the list simply reshuffles or reflows
 the instant the script runs. It has already broken twice - once on
 indentation, once because the two sides sorted the catalogue differently and
@@ -97,8 +106,9 @@ Run that after touching `card()` in `app.js` or `_card_html()` in
 `generate.py`. Node is only needed for this check, never to build or serve the
 site.
 
-The generated regions are `generated:cards`, `generated:count`, and the
-`[data-version]` / `[data-action-count]` elements. Everything else in
+The generated regions are `generated:cards`, `generated:count`,
+`generated:games` and `generated:game-list`, plus the `[data-version]`,
+`[data-action-count]` and `[data-game-count]` elements. Everything else in
 `index.html` is written by hand.
 
 ## Checking it locally
@@ -119,16 +129,23 @@ release build** until this site is regenerated. That is the scan doing its job,
 not a false positive: a site still naming the previous version while the
 package ships the new one is exactly the staleness it exists to catch.
 
-Regenerate with the target version *before* building, because the scan runs
-before `build-deb.sh` syncs `pyproject.toml`:
+Change both authoritative version sources first, then regenerate before any
+package build. The generator imports `linuxstreamdeck.VERSION`, while the
+AppImage and Flatpak builders read `pyproject.toml`; those values must already
+agree so every generated file and package receives the same release version:
 
 ```bash
-LSD_CONFIG_DIR="$(mktemp -d)" .venv/bin/python landing/generate.py --version X.Y.Z
+LSD_CONFIG_DIR="$(mktemp -d)" .venv/bin/python landing/generate.py
 ./packaging/build-deb.sh X.Y.Z
+./packaging/build-appimage.sh
+./packaging/build-flatpak.sh --bundle
 ```
 
-Without `--version` the script stamps the package's current version, which is
-the right thing every other time.
+Do not use the generator's `--version` override for a release: it can make the
+landing look current while one of the two authoritative sources is still old.
+Follow the complete ordered checklist in `AGENTS.md`, including the isolated
+tests and site checks, verifying the version and release contents *inside* all
+three final artifacts, and calculating checksums only after the last rebuild.
 
 ## Deploying
 

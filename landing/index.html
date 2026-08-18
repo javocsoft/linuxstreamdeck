@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <title>LinuxStreamDeck — your Elgato Stream Deck, at home on Linux</title>
-<meta name="description" content="Turn an Elgato Stream Deck into a Linux control surface. Deep OBS Studio integration, plus Twitch, Home Assistant, Key Lights and per-application audio.">
+<meta name="description" content="Turn an Elgato Stream Deck into a Linux control surface. Deep OBS integration, Twitch, Home Assistant, AI-assisted setup and built-in games.">
 <meta name="author" content="JavocSoft">
 
 <!-- Every absolute address below is written by landing/generate.py from this
@@ -25,7 +25,7 @@
 <meta property="og:locale" content="en_GB">
 <meta property="og:url" content="https://javocsoft.github.io/linuxstreamdeck/">
 <meta property="og:title" content="LinuxStreamDeck — your Elgato Stream Deck, at home on Linux">
-<meta property="og:description" content="Deep OBS Studio integration, plus Twitch, Home Assistant, Key Lights and per-application audio. Free and open source.">
+<meta property="og:description" content="Deep OBS integration, Twitch, Home Assistant, AI-assisted setup and built-in games. Free and open source.">
 <meta property="og:image" content="https://javocsoft.github.io/linuxstreamdeck/assets/img/og-card.png">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
@@ -35,7 +35,7 @@
 <!-- X / Twitter -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="LinuxStreamDeck — your Elgato Stream Deck, at home on Linux">
-<meta name="twitter:description" content="Deep OBS Studio integration, plus Twitch, Home Assistant, Key Lights and per-application audio. Free and open source.">
+<meta name="twitter:description" content="Deep OBS integration, Twitch, Home Assistant, AI-assisted setup and built-in games. Free and open source.">
 <meta name="twitter:image" content="https://javocsoft.github.io/linuxstreamdeck/assets/img/og-card.png">
 <meta name="twitter:image:alt" content="LinuxStreamDeck: your Elgato Stream Deck, at home on Linux, over a row of configured deck keys.">
 
@@ -47,7 +47,7 @@
   "url": "https://javocsoft.github.io/linuxstreamdeck/",
   "applicationCategory": "MultimediaApplication",
   "operatingSystem": "Linux",
-  "description": "A GTK4 desktop application that turns an Elgato Stream Deck into a control surface on Linux, built around deep OBS Studio integration, with Twitch, Home Assistant, Elgato Key Lights and per-application audio built in.",
+  "description": "A GTK4 desktop application that turns an Elgato Stream Deck into a control surface on Linux, with deep OBS Studio integration, Twitch, Home Assistant, AI-assisted setup and built-in games.",
   "license": "https://www.gnu.org/licenses/gpl-3.0.html",
   "image": "https://javocsoft.github.io/linuxstreamdeck/assets/img/og-card.png",
   "screenshot": "https://javocsoft.github.io/linuxstreamdeck/assets/img/app-window.png",
@@ -66,6 +66,7 @@
     <nav>
       <a href="#different" class="hide-s">Why this one</a>
       <a href="#features" class="hide-xs">Features</a>
+      <a href="#games">Games</a>
       <a href="#actions">Actions</a>
       <a href="#guide">Guide</a>
       <a class="ghost" href="https://github.com/javocsoft/linuxstreamdeck">GitHub</a>
@@ -77,13 +78,14 @@
 
 <!-- ------------------------------------------------------------- hero -->
 <div class="hero wrap">
-  <span class="badge">GPL-3.0 · <b data-action-count>65</b> actions · v<b data-version>0.3.7</b></span>
+  <span class="badge">GPL-3.0 · <b data-action-count>65</b> actions · <b data-game-count>8</b> games · v<b data-version>0.3.8</b></span>
   <h1>Your Elgato Stream Deck,<br>finally at home on <em>Linux</em>.</h1>
   <p class="lead">
     Elgato ships software for macOS and Windows only. This is a GTK4 desktop
     application built around <b>deep OBS Studio integration</b>, with Twitch,
     Home Assistant, Key Lights and per-application audio native rather than
-    bolted on.
+    bolted on. OpenAI or Claude can help build a key, and built-in games turn the
+    deck itself into the board.
   </p>
   <div class="cta">
     <a class="btn primary" href="#install">Install it</a>
@@ -133,8 +135,9 @@
         <h3>No plugin ecosystem to assemble</h3>
         <p>
           Twitch, Home Assistant, Elgato Key Lights, per-application audio,
-          HTTP endpoints and machine monitoring are in the box. Nothing to
-          install, nothing running under Wine.
+          HTTP endpoints, machine monitoring and built-in games are in the box.
+          OpenAI or Claude can propose a key when you choose to connect one.
+          Nothing runs under Wine.
         </p>
       </article>
       <article>
@@ -268,6 +271,26 @@
       </figure>
     </div>
 
+    <div class="feature" id="games">
+      <div class="text">
+        <h3>The keys become the game board</h3>
+        <p>
+          Start a game from the status menu and it takes over the physical and
+          virtual decks until you leave. Reaction, memory, deduction, matching
+          and routing all work from the six-key Mini through the 32-key XL, with
+          three difficulties, original sounds and records kept per deck shape.
+        </p>
+        <p>
+          <b>Neon Relay</b> is built for the hardware: rotate the glowing route
+          before the travelling spark reaches it, collect crystals, protect a
+          combo with shields and charge a score-doubling Overdrive. On Stream
+          Deck +, its dials rotate whole columns and the LCD becomes a live HUD.
+        </p>
+        <div class="tagrow"><!-- generated:games --><span class="tag">Circuit Breaker</span><span class="tag">Colour Mastermind</span><span class="tag">Memory Match</span><span class="tag">Minesweeper</span><span class="tag">Mole Smash</span><span class="tag">Neon Relay</span><span class="tag">Pulse Memory</span><span class="tag">Tic-Tac-Toe</span><!-- /generated:games --></div>
+      </div>
+      <figure><img src="assets/img/keys-games.png" alt="Neon Relay running across a 15-key Stream Deck: glowing circuit paths, crystals, entry and exit portals, and the travelling spark." width="540" height="328"><figcaption>Neon Relay, rendered by the same game path that drives the deck</figcaption></figure>
+    </div>
+
     <div class="feature">
       <div class="text">
         <h3>It tells you when something is wrong</h3>
@@ -349,11 +372,13 @@
           <li><a href="#install">Install</a></li>
           <li><a href="#connect-obs">Connect OBS</a></li>
           <li><a href="#first-key">Your first key</a></li>
+          <li><a href="#ai">AI-assisted setup</a></li>
           <li><a href="#key-types">Key types</a></li>
           <li><a href="#organise">Pages and folders</a></li>
           <li><a href="#twitch">Twitch</a></li>
           <li><a href="#home-assistant">Home Assistant</a></li>
           <li><a href="#audio">Audio and soundboard</a></li>
+          <li><a href="#play-games">Built-in games</a></li>
           <li><a href="#appearance">Screen saver and exit</a></li>
           <li><a href="#backup">Backup and sharing</a></li>
           <li><a href="#trouble">If something is wrong</a></li>
@@ -446,8 +471,29 @@ chmod +x LinuxStreamDeck-X.Y.Z-x86_64.AppImage &amp;&amp; ./LinuxStreamDeck-X.Y.
           </div>
         </div>
 
+        <div class="step" id="ai">
+          <h3><span class="n">4</span> AI-assisted setup</h3>
+          <p>
+            Select a key and press <b>Create with AI...</b>. Choose OpenAI or
+            Claude, enter your own API key and describe the result you want in
+            ordinary language. The proposal opens in the normal editor; nothing
+            reaches the deck until you review it and press <b>Save</b>.
+          </p>
+          <p>
+            Provider keys live in the desktop keyring, never in
+            <code>config.json</code>, backups or exports. The generated proposal
+            is validated locally against the installed action catalogue, and
+            Run Command, Web request and Raw OBS Request actions are deliberately
+            excluded because each can reach outside the application from text.
+          </p>
+          <div class="note">
+            <b>AI is optional.</b> No account or API key is needed for any other
+            feature, and you can always configure the same key by hand.
+          </div>
+        </div>
+
         <div class="step" id="key-types">
-          <h3><span class="n">4</span> Key types</h3>
+          <h3><span class="n">5</span> Key types</h3>
           <div class="scroll-x"><table class="spec">
             <tr><th>Type</th><th>What it does</th></tr>
             <tr><td>Single action</td><td>One action, with live state feedback on the key.</td></tr>
@@ -471,7 +517,7 @@ chmod +x LinuxStreamDeck-X.Y.Z-x86_64.AppImage &amp;&amp; ./LinuxStreamDeck-X.Y.
         </div>
 
         <div class="step" id="organise">
-          <h3><span class="n">5</span> Pages and folders</h3>
+          <h3><span class="n">6</span> Pages and folders</h3>
           <ul>
             <li><b>Profiles</b> keep their own pages and keys: Streaming, Work, Gaming. Switch from the header or from the status icon.</li>
             <li><b>Pages</b> are added, renamed, duplicated, reordered and deleted from the <b>page menu</b>. Assign keys to go to a named page, or step forward and back.</li>
@@ -487,7 +533,7 @@ chmod +x LinuxStreamDeck-X.Y.Z-x86_64.AppImage &amp;&amp; ./LinuxStreamDeck-X.Y.
         </div>
 
         <div class="step" id="twitch">
-          <h3><span class="n">6</span> Twitch</h3>
+          <h3><span class="n">7</span> Twitch</h3>
           <p>
             <b>profile menu</b> → <b>Twitch account…</b>, then read the code off the dialog
             and type it at <code>twitch.tv/activate</code>. No password is ever
@@ -509,7 +555,7 @@ chmod +x LinuxStreamDeck-X.Y.Z-x86_64.AppImage &amp;&amp; ./LinuxStreamDeck-X.Y.
         </div>
 
         <div class="step" id="home-assistant">
-          <h3><span class="n">7</span> Home Assistant</h3>
+          <h3><span class="n">8</span> Home Assistant</h3>
           <p>
             <b>profile menu</b> → <b>Home Assistant…</b>. You need the address
             (<code>http://homeassistant.local:8123</code> usually works) and a
@@ -526,7 +572,7 @@ chmod +x LinuxStreamDeck-X.Y.Z-x86_64.AppImage &amp;&amp; ./LinuxStreamDeck-X.Y.
         </div>
 
         <div class="step" id="audio">
-          <h3><span class="n">8</span> Audio and soundboard</h3>
+          <h3><span class="n">9</span> Audio and soundboard</h3>
           <ul>
             <li><b>Volume and mute</b> — point it at the speakers, the microphone, or one application on its own. A mute key lights up red while whatever it watches is muted, and follows changes you make elsewhere.</li>
             <li><b>Switch audio device</b> — set the device in use; give it a second one and the key moves between them.</li>
@@ -539,13 +585,43 @@ chmod +x LinuxStreamDeck-X.Y.Z-x86_64.AppImage &amp;&amp; ./LinuxStreamDeck-X.Y.
           </div>
         </div>
 
+        <div class="step" id="play-games">
+          <h3><span class="n">10</span> Built-in games</h3>
+          <p>
+            Open the LinuxStreamDeck status icon, choose <b>Games</b>, then pick
+            <!-- generated:game-list -->Circuit Breaker, Colour Mastermind, Memory Match, Minesweeper, Mole Smash, Neon Relay, Pulse Memory, or Tic-Tac-Toe<!-- /generated:game-list -->. The game temporarily
+            owns every key and the virtual deck, so a configured action cannot
+            fire while you play.
+          </p>
+          <ul>
+            <li><b>START</b> begins; <b>Easy / Normal / Hard</b> changes difficulty.</li>
+            <li><b>Sound</b> toggles the original bundled effects.</li>
+            <li><b>Best</b> is stored separately for this deck shape and difficulty.</li>
+            <li><b>Back</b>, or <b>Stop [game]</b> in the status menu, restores the page you left.</li>
+          </ul>
+          <p>
+            Every game adapts to the connected grid. Stream Deck + uses its LCD
+            as a mirrored live HUD; Neon Relay also maps each dial to its key
+            column and lets a dial push or LCD tap spend charge on stasis. Those
+            Plus game controls are verified in simulation, not on physical Plus
+            hardware.
+          </p>
+        </div>
+
         <div class="step" id="appearance">
-          <h3><span class="n">9</span> Screen saver and exit display</h3>
+          <h3><span class="n">11</span> Screen saver and exit display</h3>
           <p>
             The <b>Stream Deck display</b> button in the header holds both.
             Choose one of eleven animations, an idle delay and a brightness of
             its own — and preview it immediately, with or without hardware
             connected.
+          </p>
+          <p>
+            Automatic activation stays out of the way while OBS is recording or
+            streaming, and throughout a built-in game. Once that work ends, a
+            complete new idle interval begins. Manual preview remains available
+            during OBS suppression; an active game owns the display and blocks
+            previews until it ends.
           </p>
           <p>
             The same dialog sets what the physical deck shows after a clean
@@ -555,7 +631,7 @@ chmod +x LinuxStreamDeck-X.Y.Z-x86_64.AppImage &amp;&amp; ./LinuxStreamDeck-X.Y.
         </div>
 
         <div class="step" id="backup">
-          <h3><span class="n">10</span> Backup and sharing</h3>
+          <h3><span class="n">12</span> Backup and sharing</h3>
           <p>
             Every save writes a backup, and timestamped copies are kept — <b>profile
             menu</b> → <b>Restore a backup…</b> lists them with what each one holds.
@@ -570,7 +646,7 @@ chmod +x LinuxStreamDeck-X.Y.Z-x86_64.AppImage &amp;&amp; ./LinuxStreamDeck-X.Y.
         </div>
 
         <div class="step" id="trouble">
-          <h3><span class="n">11</span> If something is wrong</h3>
+          <h3><span class="n">13</span> If something is wrong</h3>
           <div class="scroll-x"><table class="spec">
             <tr><th>What you see</th><th>What it means</th></tr>
             <tr><td>The deck never appears</td><td>USB permissions: the rule is not installed. See <a href="#install">step 1</a> — from a source checkout it is <code>sudo ./install-udev.sh</code>. Replug the deck afterwards. The status bar says so after the second failed attempt.</td></tr>
@@ -620,7 +696,7 @@ chmod +x LinuxStreamDeck-X.Y.Z-x86_64.AppImage &amp;&amp; ./LinuxStreamDeck-X.Y.
 
 <footer>
   <div class="wrap">
-    <span>LinuxStreamDeck v<span data-version>0.3.7</span> · GPL-3.0-or-later · &copy; <span id="year">2026</span> JavocSoft</span>
+    <span>LinuxStreamDeck v<span data-version>0.3.8</span> · GPL-3.0-or-later · &copy; <span id="year">2026</span> JavocSoft</span>
     <nav>
       <a href="https://github.com/javocsoft/linuxstreamdeck">Source</a>
       <a href="https://github.com/javocsoft/linuxstreamdeck/releases">Releases</a>

@@ -18,7 +18,8 @@ dependencies are Debian package names; there is nothing to be done about that.
 
 **Do this, or the deck is never opened and the application looks broken.**
 Linux does not give ordinary users access to a USB device by default, and no
-package format can install a system rule for you.
+portable package can install a system rule for you. The `.deb` installs it;
+Flatpak and AppImage users must install it with the commands below.
 
 Every method below writes the same one-line rule and reloads it. Afterwards,
 **unplug the Stream Deck and plug it back in.**

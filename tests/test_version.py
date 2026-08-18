@@ -35,6 +35,13 @@ class VersionSourceTests(unittest.TestCase):
         self.assertIn('<release version="@VERSION@"', text)
         self.assertNotRegex(text, r'<release version="\d+\.\d+\.\d+"')
 
+    def test_the_bug_report_version_is_a_generic_prompt(self) -> None:
+        """Reporters need their installed version, not the latest release."""
+        template = ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml"
+        text = template.read_text(encoding="utf-8")
+        self.assertIn('placeholder: "X.Y.Z"', text)
+        self.assertNotIn(f'placeholder: "{VERSION}"', text)
+
 
 class VersionFlagTests(unittest.TestCase):
     """The bug report template tells people to run `linuxstreamdeck --version`."""

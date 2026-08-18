@@ -129,6 +129,39 @@ than a plausible number, or they trip the scan. After installing or upgrading th
 package, run `sudo ./packaging/refresh-appstream.sh` to refresh the system
 AppStream cache for software centres, then reopen the software centre.
 
+**Release version checklist:** a version bump is more than editing one line,
+and it must follow this order so generated content cannot retain the previous
+release:
+
+1. Change both authoritative source values: `pyproject.toml::version` and
+   `linuxstreamdeck/__init__.py::VERSION`. They must agree before importing the
+   package; the landing generator reads `VERSION` while AppImage and Flatpak read
+   `pyproject.toml`.
+2. Regenerate the landing with an isolated configuration:
+   `LSD_CONFIG_DIR="$(mktemp -d)" .venv/bin/python landing/generate.py`. This
+   stamps the version into `landing/assets/actions.json`, `landing/index.html`
+   and `landing/assets/img/og-card.png`; never edit those generated values by
+   hand.
+3. Run the compile check and the full isolated test suite from §2. Then run
+   `node landing/check.mjs`, `python3 agent-definitions/sync.py --check` and
+   `git diff --check`.
+4. Build `./packaging/build-deb.sh X.Y.Z`,
+   `./packaging/build-appimage.sh` and `./packaging/build-flatpak.sh --bundle`.
+   The Flatpak script installs its result for the current user as part of its
+   workflow; remove that temporary installation afterwards when the workstation
+   is meant to keep only the Debian package.
+5. Verify the version *inside* all three final artefacts, not only their
+   filenames. Also check that the release's new modules and package data are
+   present, and calculate checksums only after the last rebuild.
+
+The bug-report template is deliberately **not** a version source. Its
+`placeholder: "X.Y.Z"` asks reporters for the version they actually have
+installed, which may be older than the latest release; replacing it with the
+current version would be misleading and create release-by-release maintenance.
+`tests/test_version.py` pins that generic placeholder. The AppStream source is
+also not bumped by hand: its `@VERSION@` and `@DATE@` placeholders are filled by
+each package build.
+
 **Flatpak:** `./packaging/build-flatpak.sh [--bundle] [--clean]`, from
 `packaging/flatpak/com.javocsoft.LinuxStreamDeck.yml`. It sits on
 `org.gnome.Platform`, which supplies GTK4, libadwaita, PyGObject, GStreamer and
