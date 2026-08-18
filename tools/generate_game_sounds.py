@@ -155,6 +155,44 @@ def main() -> None:
             tone(0.075, (523.0, 784.0), volume=0.20),
             gap=0.012,
         ),
+        "relay-crash.wav": join(
+            tone(0.07, (92.0, 138.0), volume=0.40, noise=0.34, fall=1.7, seed=73),
+            glide(0.16, 310.0, 74.0, 0.26),
+        ),
+        "relay-crystal.wav": join(
+            tone(0.045, (988.0, 1976.0), volume=0.20, fall=0.7),
+            tone(0.09, (1480.0, 2960.0), volume=0.24, fall=0.8),
+            gap=0.008,
+        ),
+        "relay-gate.wav": join(
+            glide(0.09, 330.0, 880.0, 0.20),
+            tone(0.14, (880.0, 1320.0), volume=0.24, fall=0.8),
+            gap=0.008,
+        ),
+        "relay-overdrive.wav": join(
+            glide(0.18, 220.0, 1320.0, 0.24),
+            tone(0.20, (1175.0, 1760.0, 2350.0), volume=0.25, fall=0.7),
+            gap=0.006,
+        ),
+        "relay-rotate.wav": join(
+            tone(0.025, (260.0, 520.0), volume=0.14, fall=1.8),
+            tone(0.035, (390.0, 780.0), volume=0.16, fall=1.7),
+            gap=0.002,
+        ),
+        "relay-shield.wav": join(
+            glide(0.11, 260.0, 660.0, 0.19),
+            tone(0.16, (660.0, 990.0), volume=0.20, fall=0.5),
+        ),
+        "relay-stasis.wav": join(
+            glide(0.12, 880.0, 440.0, 0.18),
+            tone(0.18, (440.0, 660.0), volume=0.17, fall=0.45),
+        ),
+        "relay-upgrade.wav": join(
+            tone(0.055, (523.0, 784.0), volume=0.20),
+            tone(0.055, (659.0, 988.0), volume=0.22),
+            tone(0.13, (880.0, 1320.0), volume=0.24),
+            gap=0.012,
+        ),
     }
     for index, frequency in enumerate((330.0, 392.0, 494.0, 587.0, 698.0, 880.0)):
         effects[f"pulse-{index}.wav"] = tone(
@@ -226,10 +264,27 @@ def main() -> None:
             "submit.wav",
             "wrong.wav",
         ),
+        "neon_relay": {
+            "crash.wav": "relay-crash.wav",
+            "crystal.wav": "relay-crystal.wav",
+            "gate.wav": "relay-gate.wav",
+            "go.wav": "go.wav",
+            "overdrive.wav": "relay-overdrive.wav",
+            "record.wav": "record.wav",
+            "rotate.wav": "relay-rotate.wav",
+            "select.wav": "select.wav",
+            "shield.wav": "relay-shield.wav",
+            "stasis.wav": "relay-stasis.wav",
+            "upgrade.wav": "relay-upgrade.wav",
+        },
     }
     for game_id, filenames in game_files.items():
-        for filename in filenames:
-            write(game_id, filename, effects[filename])
+        sources = (
+            filenames.items() if isinstance(filenames, dict)
+            else ((filename, filename) for filename in filenames)
+        )
+        for filename, source in sources:
+            write(game_id, filename, effects[source])
 
 
 if __name__ == "__main__":

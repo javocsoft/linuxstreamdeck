@@ -34,4 +34,5 @@ linuxstreamdeck = [
     "assets/games/minesweeper/*.wav", "assets/games/minesweeper/LICENSE*",
     "assets/games/tic_tac_toe/*.wav", "assets/games/tic_tac_toe/LICENSE*",
     "assets/games/mastermind/*.wav", "assets/games/mastermind/LICENSE*",
+    "assets/games/neon_relay/*.wav", "assets/games/neon_relay/LICENSE*",
 ]

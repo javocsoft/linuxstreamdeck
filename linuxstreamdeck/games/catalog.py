@@ -48,6 +48,11 @@ GAMES = (
         "Colour Mastermind",
         "Cycle the coloured pegs and crack the hidden code from its clues.",
     ),
+    GameInfo(
+        "neon_relay",
+        "Neon Relay",
+        "Rotate the neon route ahead of the spark and keep it alive.",
+    ),
 )
 
 GAME_BY_ID = {game.id: game for game in GAMES}

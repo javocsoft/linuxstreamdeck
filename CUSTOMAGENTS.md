@@ -67,7 +67,8 @@ maintenance contract.
   built-in game catalog/engine/settings/render-dispatch agreement,
   input/display ownership, pure-engine boundaries, adaptive layouts, isolated
   per-game asset/cue/package mappings, bounded audio, screen-saver reason
-  composition and configured-page restoration,
+  composition and configured-page restoration, including Neon Relay route,
+  progression, recovery, upgrade and Plus dial/strip invariants,
   AI credential/context/proposal safety, reusing feedback color constants, and
   English-only with no accents. It only reports; it does not edit code.
 
@@ -107,12 +108,14 @@ maintenance contract.
   For the physical startup sequence, it can inspect the complete offscreen frame
   grid for any of those shapes, title mapping, brightness bounds and fade to
   black. It eyeballs the images itself, and reports without fixing unless asked.
-  Built-in game checks cover all seven lobbies and phase-specific frames: Mole
+  Built-in game checks cover all eight lobbies and phase-specific frames: Mole
   Smash targets/hits/misses/results and transparent sprite, Circuit Breaker
   light/cross-press/results, Pulse Memory showing/input/wrong/results, and
   Memory Match hidden/revealed/matched/mismatch/results, Minesweeper
   reveal/flag/mine/result states, Tic-Tac-Toe player/AI/line/results, and Colour
-  Mastermind peg/clue/solution/results. They run on Mini, Neo, Original and XL,
+  Mastermind peg/clue/solution/results, and Neon Relay route/spark/crystal/
+  crash/recovery/upgrade/Overdrive/results states. They run on Mini, Neo,
+  Original and XL,
   including compact board variants, preserved result boards, AI-wait feedback
   and non-repeated large-board status tiles, with each Stream Deck + LCD HUD
   checked separately for legible, non-overlapping labels and legends.

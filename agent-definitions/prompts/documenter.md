@@ -50,16 +50,17 @@ Never trust a documentation claim without checking its source. Verify at least:
   timer completion audio and reset/clear/move/shutdown lifecycle.
 - **Built-in games:** every catalog entry and pure engine under
   `linuxstreamdeck/games/` (Mole Smash, Circuit Breaker, Pulse Memory, Memory
-  Match, Minesweeper, Tic-Tac-Toe and Colour Mastermind), their shared
+  Match, Minesweeper, Tic-Tac-Toe, Colour Mastermind and Neon Relay), their shared
   `common.py` value/layout model, snapshot render/HUD
   dispatch, one self-contained `assets/games/<game_id>/` directory per game,
   game-keyed cue routing, exact per-game WAV sets, licenses, deterministic
   generator and matching package-data patterns,
   per-game `GameSettings`, status-menu/UI entry points, exclusive input/display
   ownership, adaptive device layouts (including compact Tic-Tac-Toe,
-  difficulty-distinct compact Minesweeper and Mastermind's Mini clue/results
-  controls), per-geometry/difficulty record persistence, sound cancellation and
-  screen-saver coexistence.
+  difficulty-distinct compact Minesweeper, Mastermind's Mini clue/results
+  controls and Neon Relay's guaranteed boundary route, speed/shield/upgrade
+  progression and Plus dial/strip controls), per-geometry/difficulty record
+  persistence, sound cancellation and screen-saver coexistence.
 - **Stream Deck display:** `linuxstreamdeck/device/screensaver.py`,
   `device/exit_display.py`, `device/manager.py`, `app.py`,
   `ui/screensaver_settings.py` and `ui/window.py`, including installed saver

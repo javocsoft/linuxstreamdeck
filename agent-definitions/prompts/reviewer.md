@@ -165,7 +165,7 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    the other; game ownership must also beat manual preview. The catalog, status-
    menu mapping, engine registry, per-game settings mapping and snapshot
    render/HUD dispatch must agree for Mole Smash, Circuit Breaker, Pulse Memory,
-   Memory Match, Minesweeper, Tic-Tac-Toe and Colour Mastermind. Engines
+   Memory Match, Minesweeper, Tic-Tac-Toe, Colour Mastermind and Neon Relay. Engines
    must remain pure clock/RNG-injected state machines, with session ownership and
    persistence centralized in `GameManager`. Layouts must derive from live
    geometry: odd Memory Match grids reserve exactly one status key, compact
@@ -178,7 +178,13 @@ Read `AGENTS.md` sections 5-6 for the rationale.
    field/winning line rather than replacing it with repeated status tiles;
    result controls must avoid the exploded cell/winning line. Compact
    Tic-Tac-Toe needs visible AI-wait feedback, and the Mastermind Plus HUD's
-   compact clue, legend and counters must not overlap. Game rendering must share
+   compact clue, legend and counters must not overlap. Every active game must
+   consume dial and touchscreen gestures before configured actions; Neon Relay
+   may use them to rotate Plus columns and activate charged stasis. Its engine
+   must retain a guaranteed randomized boundary route, difficulty-specific
+   speed/visibility/safe-tile/shield settings, sector acceleration, crash
+   recovery, crystal/combo scoring, timed Overdrive and shuffled third-sector
+   upgrades. Game rendering must share
    `RENDER_LOCK`/BASIC layout, and per-game records must remain separated by
    geometry and difficulty. Every game must resolve its cues only below its own
    `assets/games/<game_id>/` directory, whose WAV files exactly match that

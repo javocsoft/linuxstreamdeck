@@ -25,6 +25,7 @@ from linuxstreamdeck.games import (
     mastermind_render,
     memory_render,
     minesweeper_render,
+    neon_relay_render,
     pulse_render,
     tic_tac_toe_render,
 )
@@ -88,6 +89,7 @@ def _render_games() -> None:
     from linuxstreamdeck.games.mastermind import MastermindEngine
     from linuxstreamdeck.games.minesweeper import MinesweeperEngine
     from linuxstreamdeck.games.mole_smash import MoleSmashEngine
+    from linuxstreamdeck.games.neon_relay import NeonRelayEngine
     from linuxstreamdeck.games.pulse_memory import PulseMemoryEngine
     from linuxstreamdeck.games.tic_tac_toe import TicTacToeEngine
 
@@ -100,6 +102,7 @@ def _render_games() -> None:
         MinesweeperEngine(layout, rng=random.Random(1)),
         TicTacToeEngine(layout, rng=random.Random(1)),
         MastermindEngine(layout, rng=random.Random(1)),
+        NeonRelayEngine(layout, rng=random.Random(1)),
     )
     for engine in engines:
         engine.press(layout.start_key, 0.0)
@@ -228,6 +231,7 @@ class RenderLockTests(unittest.TestCase):
             touchscreen, layout_sheet, game_render, circuit_render,
             pulse_render, memory_render, minesweeper_render,
             tic_tac_toe_render, mastermind_render,
+            neon_relay_render,
         )
         with patch.object(ImageDraw, "Draw", guarded_draw):
             with ExitStack() as stack:
@@ -251,6 +255,7 @@ class RenderLockTests(unittest.TestCase):
             touchscreen, layout_sheet, game_render, circuit_render,
             pulse_render, memory_render, minesweeper_render,
             tic_tac_toe_render, mastermind_render,
+            neon_relay_render,
         ):
             self.assertIs(
                 module.RENDER_LOCK,

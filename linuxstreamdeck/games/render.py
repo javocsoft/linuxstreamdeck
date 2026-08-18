@@ -28,6 +28,8 @@ from .mole_smash import (
     GameSnapshot,
     TargetView,
 )
+from .neon_relay import NeonRelaySnapshot
+from .neon_relay_render import neon_relay_hud, render_neon_relay_keys
 from .pulse_memory import PulseSnapshot
 from .pulse_render import pulse_hud, render_pulse_keys
 from .tic_tac_toe import TicTacToeSnapshot
@@ -293,6 +295,8 @@ def render_keys(snapshot, size: tuple[int, int]) -> tuple[Image.Image, ...]:
         return render_tic_tac_toe_keys(snapshot, size)
     if isinstance(snapshot, MastermindSnapshot):
         return render_mastermind_keys(snapshot, size)
+    if isinstance(snapshot, NeonRelaySnapshot):
+        return render_neon_relay_keys(snapshot, size)
     return _render_mole_keys(snapshot, size)
 
 
@@ -310,4 +314,6 @@ def touchscreen_hud(snapshot, size: tuple[int, int]) -> Image.Image:
         return tic_tac_toe_hud(snapshot, size)
     if isinstance(snapshot, MastermindSnapshot):
         return mastermind_hud(snapshot, size)
+    if isinstance(snapshot, NeonRelaySnapshot):
+        return neon_relay_hud(snapshot, size)
     return _mole_hud(snapshot, size)

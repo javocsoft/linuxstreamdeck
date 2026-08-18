@@ -16,6 +16,7 @@ from .memory_match import MemoryMatchEngine
 from .mastermind import MastermindEngine
 from .minesweeper import MinesweeperEngine
 from .mole_smash import MoleSmashEngine
+from .neon_relay import NeonRelayEngine
 from .pulse_memory import PulseMemoryEngine
 from .tic_tac_toe import TicTacToeEngine
 from .render import render_keys, to_png_bytes, touchscreen_hud
@@ -33,6 +34,7 @@ _GAME_ENGINES = {
     "minesweeper": MinesweeperEngine,
     "tic_tac_toe": TicTacToeEngine,
     "mastermind": MastermindEngine,
+    "neon_relay": NeonRelayEngine,
 }
 
 _SETTING_FIELDS = {
@@ -77,6 +79,12 @@ _SETTING_FIELDS = {
         "mastermind_sound_enabled",
         "mastermind_volume",
         "mastermind_best_attempts",
+    ),
+    "neon_relay": (
+        "relay_difficulty",
+        "relay_sound_enabled",
+        "relay_volume",
+        "relay_high_scores",
     ),
 }
 
@@ -215,6 +223,25 @@ class GameManager:
             if not self._active.is_set():
                 return False
             self._press_locked(int(index))
+            return True
+
+    def handle_dial(self, index: int, direction: str, ticks: int = 1) -> bool:
+        """Give an active game first refusal of a Plus dial or strip gesture."""
+        with self._lock:
+            if not self._active.is_set():
+                return False
+            engine = self._engine
+            handler = getattr(engine, "dial", None)
+            if callable(handler):
+                events = handler(
+                    int(index),
+                    str(direction),
+                    int(ticks),
+                    self._monotonic(),
+                )
+                self._handle_events_locked(events)
+            # Every game owns the whole device during its session. A game that
+            # ignores dials must not leak the gesture to a configured action.
             return True
 
     def shutdown(self) -> None:

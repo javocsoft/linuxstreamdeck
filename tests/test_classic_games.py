@@ -346,6 +346,7 @@ class ClassicGameManagerTests(unittest.TestCase):
             ("minesweeper", "Minesweeper"),
             ("tic_tac_toe", "Tic-Tac-Toe"),
             ("mastermind", "Colour Mastermind"),
+            ("neon_relay", "Neon Relay"),
         ):
             with self.subTest(game=game_id):
                 bus = EventBus()
@@ -455,6 +456,10 @@ class ClassicGameConfigTests(unittest.TestCase):
                 "mastermind_sound_enabled": False,
                 "mastermind_volume": 46,
                 "mastermind_best_attempts": {"5x3:normal": 4},
+                "relay_difficulty": "hard",
+                "relay_sound_enabled": False,
+                "relay_volume": 57,
+                "relay_high_scores": {"5x3:hard": 1840},
             }
         )
 
@@ -487,6 +492,10 @@ class ClassicGameConfigTests(unittest.TestCase):
             settings.mastermind_best_attempts,
             {"5x3:normal": 4},
         )
+        self.assertEqual(settings.relay_difficulty, "hard")
+        self.assertFalse(settings.relay_sound_enabled)
+        self.assertEqual(settings.relay_volume, 57)
+        self.assertEqual(settings.relay_high_scores, {"5x3:hard": 1840})
 
 
 class ClassicGameAudioTests(unittest.TestCase):

@@ -34,6 +34,7 @@ Read `linuxstreamdeck/device/renderer.py`,
 `linuxstreamdeck/games/minesweeper_render.py`,
 `linuxstreamdeck/games/tic_tac_toe_render.py`,
 `linuxstreamdeck/games/mastermind_render.py`,
+`linuxstreamdeck/games/neon_relay_render.py`,
 `linuxstreamdeck/core/icons.py` and `AGENTS.md` sections 5-6 first.
 
 ## Absolute rules
@@ -149,12 +150,17 @@ offscreen:
   history, solution reveal and win/loss results; on Mini, verify the latest clue
   remains visible on Submit when no history key exists and Again/Back are both
   present in results.
+- Neon Relay: lobby, straight/corner route and decoy tiles, moving spark,
+  crystals, rotation flashes, boundary portals, crash/shield recovery, sector
+  clear, upgrade choices, Overdrive and results. Verify randomized routes remain
+  visually traceable from one deck edge to another and all keys stay usable as
+  circuit tiles on compact layouts.
 
 Cover Mini 3x2, Neo 4x2, Original 5x3 and XL 8x4, and separately verify every
 Stream Deck + 800x100 touchscreen HUD. Every layout must expose unique lobby
 controls, fill exactly its live key count and keep text/symbols legible. Confirm
 the Mole Smash source sprite has real alpha and non-empty content, every state
-that should differ does so objectively, all six dedicated renderers use their
+that should differ does so objectively, all seven dedicated renderers use their
 expected snapshot dispatch, and the same rendered images are emitted to physical
 and virtual paths. Memory Match must use the largest even card count and reserve
 only the final key on odd grids. Compact Minesweeper must visibly distinguish
@@ -163,6 +169,10 @@ valid three-cell line; and Mastermind must retain usable clue and result control
 when history space is absent. Every Plus HUD must contain legible live state.
 Colour Mastermind's HUD must keep compact `E`/`C` feedback, its exact/colour
 legend, attempts, Best and title visibly separate with no overlap.
+Neon Relay's Plus HUD must keep score, sector, shields, charge and speed or
+active Overdrive/stasis state legible, plus its column-rotation and press-stasis
+instructions. Physical Plus controls are not verified here; do not claim they
+were tested on hardware.
 Runtime ownership, input consumption and restoration belong to the reviewer; do
 not open HID.
 

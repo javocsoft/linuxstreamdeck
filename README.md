@@ -86,9 +86,10 @@ on the same hardware as the scene switches.
   double and long press included.
 - 🎮 **Built-in games** — take a break without reaching for another device.
   Choose **Circuit Breaker**, **Colour Mastermind**, **Memory Match**,
-  **Minesweeper**, **Mole Smash**, **Pulse Memory** or **Tic-Tac-Toe** from the
-  status menu. The seven games cover reaction, logic, recall, matching and
-  single-player strategy. Each offers three difficulty levels, original
+  **Minesweeper**, **Mole Smash**, **Neon Relay**, **Pulse Memory** or
+  **Tic-Tac-Toe** from the status menu. The eight games cover reaction, logic,
+  recall, matching, routing and single-player strategy. Each offers three
+  difficulty levels, original
   synthesized sounds and a record kept separately for each deck geometry and
   difficulty. They adapt from the six-key Mini to the XL; on Stream Deck +, the
   LCD strip becomes a game HUD, mirrored below the virtual deck.
@@ -936,9 +937,11 @@ from there still protects unsaved key changes, reopening the window if needed.
 
 ### Playing the built-in games
 
-Open the LinuxStreamDeck status menu, then choose **Games** and one of the seven
+Open the LinuxStreamDeck status menu, then choose **Games** and one of the eight
 games. The selected game temporarily owns every key and the virtual deck, so
-none of your configured actions can fire while you play. Every lobby is drawn
+every physical key edge, dial gesture and LCD tap is consumed before configured
+actions, and none of your configured actions can fire while you play. Every
+lobby is drawn
 directly on the keys:
 
 - **START** begins a new game. Mole Smash and Pulse Memory start with a
@@ -986,10 +989,25 @@ directly on the keys:
   on a Mini, the latest clue remains on Submit instead. Results reveal the full
   code and provide Again and Back, and the fewest attempts is the record. The
   Stream Deck + HUD pairs its compact `E`/`C` clue with an exact/colour legend.
+- **Neon Relay:** rotate straight and corner circuit tiles before a travelling
+  spark reaches them. Every endless sector has a randomized, guaranteed route
+  from one edge of the deck to another, with decoy rails and crystals along the
+  way. Clearing sectors raises the score and combo, the spark accelerates as the
+  sector count rises, and a shield turns a crash into a fresh route instead of
+  ending the run. Crystals, efficient rotations and sector clears charge a
+  six-second score-doubling Overdrive. Every third cleared sector offers three
+  shuffled upgrade choices: another shield, permanent stasis slowdown or a
+  score and Overdrive surge. Easy, Normal and Hard change the starting speed,
+  speed floor, route visibility, pre-aligned safe tiles and starting shields; the
+  high score is kept per deck geometry and difficulty.
 
 On Stream Deck +, score, moves, pairs, time, clues, progress and other live game
 state use the LCD strip where appropriate, leaving the keys to each game's board
-and controls; the same HUD appears below the virtual deck. The screen saver
+and controls; the same HUD appears below the virtual deck. Neon Relay also turns
+each dial to rotate its whole key column left or right. Pushing a dial, or
+tapping its LCD panel, spends 40% charge on a 3.5-second stasis slowdown and
+extends the spark's current hop by one second. These Plus controls are covered
+in simulation, not on physical Plus hardware. The screen saver
 cannot start during a game,
 OBS recording/streaming suppression remains independent, and disconnecting or
 changing deck geometry ends the session safely. While playing, the Games menu
@@ -1114,7 +1132,7 @@ linuxstreamdeck/
 ├── ai/            # OpenAI/Claude requests, bounded context and proposal validation
 ├── core/          # events, config, actions, controller, clocks, audio, secrets, icons
 ├── device/        # physical deck, startup/saver/exit displays and key rendering
-├── games/         # shared runtime plus seven pure game engines and renderers
+├── games/         # shared runtime plus eight pure game engines and renderers
 ├── obs/           # obs-websocket v5 client + full catalogue of OBS actions
 ├── twitch/        # device-code authorization, Helix client and Twitch actions
 ├── ui/            # GTK4/Libadwaita: window, editor, AI, OBS/Twitch/deck settings

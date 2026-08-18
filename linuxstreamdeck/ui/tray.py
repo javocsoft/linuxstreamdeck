@@ -52,6 +52,7 @@ MEMORY_MATCH_ID = 11
 MINESWEEPER_ID = 12
 TIC_TAC_TOE_ID = 13
 MASTERMIND_ID = 14
+NEON_RELAY_ID = 15
 PROFILE_ID_BASE = 100
 
 _GAME_IDS = {
@@ -62,6 +63,7 @@ _GAME_IDS = {
     MINESWEEPER_ID: "minesweeper",
     TIC_TAC_TOE_ID: "tic_tac_toe",
     MASTERMIND_ID: "mastermind",
+    NEON_RELAY_ID: "neon_relay",
 }
 
 # Status areas choose their closest representation rather than scaling one

@@ -84,6 +84,19 @@ CUE_FILES = {
         "submit": "submit.wav",
         "wrong": "wrong.wav",
     },
+    "neon_relay": {
+        "crash": "crash.wav",
+        "crystal": "crystal.wav",
+        "gate": "gate.wav",
+        "go": "go.wav",
+        "overdrive": "overdrive.wav",
+        "record": "record.wav",
+        "rotate": "rotate.wav",
+        "select": "select.wav",
+        "shield": "shield.wav",
+        "stasis": "stasis.wav",
+        "upgrade": "upgrade.wav",
+    },
 }
 
 

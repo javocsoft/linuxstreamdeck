@@ -337,6 +337,46 @@ class ManagerTests(unittest.TestCase):
         finally:
             manager.shutdown()
 
+    def test_neon_relay_owns_and_uses_plus_dials(self) -> None:
+        deck = FakePlusDeck()
+        manager = GameManager(
+            self.bus,
+            deck,
+            GameSettings(relay_sound_enabled=False),
+            lambda: None,
+            sound_player=FakeSound(),
+        )
+        try:
+            self.assertTrue(manager.start("neon_relay"))
+            self.assertTrue(manager.press_virtual(manager._engine.layout.start_key))
+            with manager._lock:
+                engine = manager._engine
+                column = (engine._entry_key + 1) % engine.layout.columns
+                before = tuple(tile.rotation for tile in engine._tiles)
+
+            self.assertTrue(manager.handle_dial(column, "right", 1))
+
+            with manager._lock:
+                after = tuple(tile.rotation for tile in engine._tiles)
+                engine._overdrive_level = 40
+            changed = {
+                index
+                for index, rotations in enumerate(zip(before, after))
+                if rotations[0] != rotations[1]
+            }
+            self.assertTrue(changed)
+            self.assertTrue(
+                all(index % engine.layout.columns == column for index in changed)
+            )
+            self.assertTrue(manager.handle_dial(0, "press", 1))
+            with manager._lock:
+                self.assertTrue(engine.snapshot(manager._monotonic()).stasis_active)
+            self.assertTrue(manager.stop())
+            self.assertTrue(self._until(lambda: not manager.active))
+            self.assertFalse(manager.handle_dial(0, "right", 1))
+        finally:
+            manager.shutdown()
+
 
 class GameConfigTests(unittest.TestCase):
     def test_preferences_and_high_scores_round_trip(self) -> None:

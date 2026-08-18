@@ -824,6 +824,10 @@ class GameSettings:
     mastermind_sound_enabled: bool = True
     mastermind_volume: int = DEFAULT_GAME_VOLUME
     mastermind_best_attempts: dict[str, int] = field(default_factory=dict)
+    relay_difficulty: str = DEFAULT_GAME_DIFFICULTY
+    relay_sound_enabled: bool = True
+    relay_volume: int = DEFAULT_GAME_VOLUME
+    relay_high_scores: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -1059,6 +1063,10 @@ class Config:
                 mastermind_best_attempts=game_scores(
                     "mastermind_best_attempts"
                 ),
+                relay_difficulty=game_difficulty("relay_difficulty"),
+                relay_sound_enabled=game_bool("relay_sound_enabled"),
+                relay_volume=game_volume("relay_volume"),
+                relay_high_scores=game_scores("relay_high_scores"),
             )
             brightness = max(10, min(100, int(raw.get("brightness", 80))))
             editor_width = max(MIN_EDITOR_WIDTH, min(MAX_EDITOR_WIDTH, int(

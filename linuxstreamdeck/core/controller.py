@@ -1396,7 +1396,11 @@ class DeckController:
         return self.page.dial(index)
 
     def _on_deck_dial(self, _topic: str, data: dict) -> None:
-        if _game_active(self):
+        if self.games.handle_dial(
+            int(data.get("index", 0)),
+            str(data.get("direction", "")),
+            int(data.get("ticks", 1)),
+        ):
             return
         self.turn_dial(
             int(data.get("index", 0)),
@@ -1410,8 +1414,9 @@ class DeckController:
         The strip has no configuration of its own: it labels the encoders, so
         tapping a panel is a second way of pressing the dial under it.
         """
-        if not _game_active(self):
-            self.turn_dial(int(data.get("index", 0)), "press", 1)
+        if self.games.handle_dial(int(data.get("index", 0)), "press", 1):
+            return
+        self.turn_dial(int(data.get("index", 0)), "press", 1)
 
     def turn_dial(self, index: int, direction: str, ticks: int = 1) -> None:
         """Run what an encoder gesture is configured to do.

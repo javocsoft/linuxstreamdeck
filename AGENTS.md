@@ -210,9 +210,10 @@ linuxstreamdeck/
 │   ├── minesweeper.py Pure first-reveal-safe adaptive minefield engine.
 │   ├── tic_tac_toe.py Pure compact/3x3 player-versus-AI engine.
 │   ├── mastermind.py Pure adaptive colour-code and clue engine.
+│   ├── neon_relay.py Pure endless edge-to-edge circuit-routing engine.
 │   ├── manager.py     Shared exclusive input/display session, worker, persistence and restore.
 │   ├── render.py      Snapshot dispatch plus Mole Smash key frames and Plus HUD.
-│   ├── *_render.py    Code-native key frames and Plus HUDs for the other six games.
+│   ├── *_render.py    Code-native key frames and Plus HUDs for the other seven games.
 │   ├── rendering.py   Shared BASIC-font lobby and HUD rendering helpers.
 │   └── audio.py       Bounded, cancellable workers for the bundled WAV effects.
 ├── core/
@@ -1421,6 +1422,34 @@ Start, difficulty, sound, record and Back. Their rules differ:
   spare history key at Normal, so Submit keeps the latest `E`/`C` clue visible;
   results reveal every solution peg and turn Submit/Reset into Again/Back. The
   lowest successful attempt count is the record.
+- `neon_relay.py` is an endless circuit-routing run. Each sector builds a
+  randomized, non-repeating, guaranteed orthogonal route between two boundary
+  portals, then scrambles its straight/corner tiles among decoys. The player
+  rotates tiles before the travelling spark reaches them, collects crystals and
+  carries a growing sector combo; efficient rotations earn a perfect-sector
+  bonus. Speed rises by sector to the difficulty's floor. Easy/Normal/Hard also
+  differ in initial hop time, route brightness, pre-aligned safe tiles and
+  starting shields. A crash spends a shield and rebuilds the sector after a
+  recovery pause, or ends the run when none remain. Crystals, perfect clears and
+  completed sectors charge a six-second score-doubling Overdrive. Every third
+  cleared sector presents shuffled shield, permanent stasis-slowdown and
+  score/Overdrive-surge upgrades. The highest score is the record.
+
+Neon Relay's difficulty tuple is load-bearing rather than cosmetic:
+
+| Difficulty | Initial/floor seconds per tile | Sector acceleration | Pre-aligned route tiles | Starting shields | Route light |
+| --- | --- | --- | --- | --- | --- |
+| Easy | 1.08 / 0.58 | 0.035 | 3 | 2 | 1.00 |
+| Normal | 0.84 / 0.42 | 0.040 | 2 | 1 | 0.78 |
+| Hard | 0.66 / 0.32 | 0.044 | 1 | 0 | 0.58 |
+
+A collected crystal scores 30 and adds 16 charge. A cleared sector scores
+`110 + sector*28 + crystals*35`, plus 85 for optimal rotations, under a combo
+multiplier that rises every three clears to a maximum of 5; active Overdrive
+doubles both crystal and clear rewards. A clear adds `18 + crystals*8`, plus 24
+for a perfect sector, to charge. The shield upgrade adds one to a maximum of
+three, stasis adds 0.07 seconds per tile to a 0.24-second cap, and surge adds 300
+points plus 55 charge.
 
 Each record key is `<columns>x<rows>[+lcd]:<difficulty>`, so decks with different
 playable areas do not share an unfair leaderboard.
@@ -1430,8 +1459,9 @@ On decks without a touchscreen, Mole Smash reserves the two top corners for
 score/time and Memory Match reserves the last key only when an odd key count
 would leave an unpaired card; Circuit Breaker and Pulse Memory use the full grid.
 Minesweeper reserves one mode key, Tic-Tac-Toe centers 3x3 when it can and uses
-the complete compact grid below nine keys, and Colour Mastermind sizes its peg
-row around Submit/Reset before assigning leftover keys to clue history. On
+the complete compact grid below nine keys, Colour Mastermind sizes its peg row
+around Submit/Reset before assigning leftover keys to clue history, and Neon
+Relay uses every key as a circuit tile. On
 Stream Deck +, `dial_count` selects the `+lcd` layout and each renderer puts its
 live score/moves/sequence/pairs/time/clue/progress state on the strip where
 appropriate. The same PNG travels on `ui.game_hud` to a 480x60
@@ -1447,27 +1477,36 @@ and render the other extras as subdued dots rather than repeated status tiles.
 Colour Mastermind's Plus HUD uses compact `E`/`C` feedback and supplies the
 `E = exact` / `C = colour` legend on its lower row; keep that legend, Best,
 attempts and the title in separate measured regions so they cannot overlap.
+Neon Relay's Plus HUD carries score, sector, shields, speed or active
+Overdrive/stasis state and the charge bar. Turning a dial rotates every tile in
+that dial's column by the reported tick count, except the tile currently holding
+the spark. Pushing any dial or tapping its LCD segment spends 40 charge to apply
+3.5 seconds of stasis and extends the current hop, so a near-deadline press takes
+effect immediately; the direct extension is one second. This has simulation
+coverage only; no Plus game control has been tested on physical hardware.
 
 `games/render.py` dispatches engine snapshots to the Mole Smash renderer or the
-six `*_render.py` modules, and sends the same Pillow images to physical and
+seven `*_render.py` modules, and sends the same Pillow images to physical and
 virtual decks under the shared `RENDER_LOCK`; every TrueType font uses BASIC
-layout. `GameManager` is shared by all seven engines, compares encoded PNGs and
+layout. `GameManager` is shared by all eight engines, compares encoded PNGs and
 sends only changed keys at its 20 Hz tick; the engines remain deterministic even
 though their sessions are animated.
 
 Every game owns a self-contained asset directory named after its catalog ID:
 `assets/games/mole_smash/`, `circuit_breaker/`, `pulse_memory/` and
-`memory_match/`, plus `minesweeper/`, `tic_tac_toe/` and `mastermind/`. The Mole
+`memory_match/`, plus `minesweeper/`, `tic_tac_toe/`, `mastermind/` and
+`neon_relay/`. The Mole
 Smash directory also owns its original transparent mole sprite.
 `games/audio.py::CUE_FILES` is keyed first by game ID, and every
 cue resolves only below that game's directory; shared waveforms are duplicated
 deliberately so one game never depends on another game's assets. Each directory's
 WAV set must exactly match its cue mapping and its own `LICENSE-GAME-ASSETS.txt`.
 `tools/generate_game_sounds.py` deterministically writes the complete set for
-all seven directories, including Circuit Breaker's `circuit.wav`, Pulse
+all eight directories, including Circuit Breaker's `circuit.wav`, Pulse
 Memory's six pitch-mapped `pulse-0.wav` through `pulse-5.wav`, and the distinct
 reveal/flag/explosion, mark/AI/result and peg/submit/result cue sets of the three
-new games. Keep all seven directory patterns in `pyproject.toml` package data
+new games and Neon Relay's reactor cues. Keep all eight directory patterns in
+`pyproject.toml` package data
 whenever the mapping changes.
 Playback uses a bounded two-worker queue and a per-session generation so rapid
 hits never leave delayed sounds playing after exit.
@@ -1479,11 +1518,18 @@ The exact new-game WAV sets are load-bearing: Minesweeper owns
 `finish.wav`, `go.wav`, `peg.wav`, `record.wav`, `select.wav`, `submit.wav` and
 `wrong.wav`. Each set is original synthesized audio reproduced by
 `tools/generate_game_sounds.py` and licensed by the file beside it.
+Neon Relay owns exactly `crash.wav`, `crystal.wav`, `gate.wav`, `go.wav`,
+`overdrive.wav`, `record.wav`, `rotate.wav`, `select.wav`, `shield.wav`,
+`stasis.wav` and `upgrade.wav` under `assets/games/neon_relay/`; its license,
+deterministic generator mapping, cue map and package-data pattern must move in
+lockstep.
 
 `GameSettings` stores separate difficulty, sound, bounded volume and bounded
-per-layout record mappings for all seven games in the normal JSON/export.
+per-layout record mappings for all eight games in the normal JSON/export.
 Minesweeper persists best times, Tic-Tac-Toe persists cumulative player wins,
-and Colour Mastermind persists best attempt counts. `game.settings` asks the GTK
+Colour Mastermind persists best attempt counts and Neon Relay persists high
+scores through `relay_difficulty`, `relay_sound_enabled`, `relay_volume` and
+`relay_high_scores`. `game.settings` asks the GTK
 thread to save only when the active game's choice or record actually changes.
 Import and backup restore replace `Config.games` as an object, so
 `_adopt_replaced_configuration()` must also pass that new object to
@@ -1493,9 +1539,13 @@ records disappear into detached state.
 `tests/test_new_games.py` pins registry parity, first-reveal safety, flagging,
 compact mine densities, deferred result-screen difficulty, both Tic-Tac-Toe
 geometries and AI levels, duplicate-safe Mastermind clues, Mini clue/results UX,
-all supported key counts and every new Plus HUD. `tests/test_classic_games.py`
-pins exact per-game asset isolation and persisted settings for all seven, while
-`tests/test_invariants.py` drives all seven dispatch paths through BASIC font
+all supported key counts and every new Plus HUD. `tests/test_neon_relay.py` pins
+boundary-to-boundary route generation, spark traversal, shield recovery,
+difficulty speed progression, third-sector upgrades, Overdrive, Plus column
+rotation/stasis and representative key/HUD rendering. `tests/test_games.py`
+pins the manager's exclusive Plus-dial routing. `tests/test_classic_games.py`
+pins exact per-game asset isolation and persisted settings for all eight, while
+`tests/test_invariants.py` drives all eight dispatch paths through BASIC font
 and shared-`RENDER_LOCK` checks.
 
 ### Status icon and application lifetime
@@ -1534,7 +1584,7 @@ counts as unregistered, which is the safe direction. The menu is **Open**, a
 **Profile** submenu of radio entries, a **Games** submenu and **Quit**. The Games
 submenu lists every entry in `games/catalog.py` alphabetically by its displayed
 name: Circuit Breaker, Colour Mastermind, Memory Match, Minesweeper, Mole Smash,
-Pulse Memory and Tic-Tac-Toe.
+Neon Relay, Pulse Memory and Tic-Tac-Toe.
 While a game is active, Profile is disabled and that submenu becomes **Stop [game
 name]**; `ItemIsMenu` is true, so a plain click opens it. `menu_items()` and
 `build_layout()` are pure functions, which is what the tests exercise. Profile
@@ -3160,7 +3210,7 @@ ignored and you will chase a ghost.
 
    *Guarded by* `BasicFontLayoutTests`, which records every `ImageFont.truetype`
    call made while rendering an icon, key images, four screen-saver styles, the
-   startup sequence, exit tiles and all seven built-in game renderers, and fails
+   startup sequence, exit tiles and all eight built-in game renderers, and fails
    if any of them omitted `layout_engine`. Clear the cached font loaders first or
    a patched loader is never reached.
 
@@ -3174,7 +3224,7 @@ ignored and you will chase a ghost.
    caches failures** (safety net).
    *Guarded by* `RenderLockTests`, which swaps the lock for a depth-tracking
    proxy, patches `ImageDraw.Draw` to record anything drawn at depth 0 while
-   exercising all seven games too, and pins that every drawing module holds the
+   exercising all eight games too, and pins that every drawing module holds the
    *same* object: each imports it by value, so a second lock would serialize
    nothing while still looking correct.
 
@@ -3502,8 +3552,10 @@ ignored and you will chase a ghost.
    `GameManager`. Route
    physical input through `GameManager` before actions and preserve `_owned_down`
    until each release, including a release after Back made the session inactive.
-   Suppress virtual actions, dials, touchscreen input, normal renders, report
-   boards, alert flashes, editing and DnD while active. Screen-saver suppression
+   Suppress virtual actions, normal renders, report boards, alert flashes,
+   editing and DnD while active. Every active game must consume every dial turn,
+   dial push and touchscreen tap before configured dial actions; a game without
+   a handler simply ignores the gesture. Screen-saver suppression
    must be a union of named reasons: releasing `game` may not release OBS, and
    game ownership must block even manual preview while ordinary OBS suppression
    must not. Derive layouts from live key count/columns, use the Plus LCD only
@@ -3511,7 +3563,12 @@ ignored and you will chase a ghost.
    one/two/three compact Minesweeper densities and defer a result-time difficulty
    change until Start; derive valid compact Tic-Tac-Toe lines below nine keys;
    and keep Mastermind's latest Mini clue plus complete solution/Again/Back
-   result controls. Draw under the shared
+   result controls. Neon Relay must preserve its guaranteed randomized boundary
+   route, difficulty-specific visibility/safe-tile/shield/speed settings, sector
+   acceleration, shield recovery, combo/crystal scoring, timed Overdrive and
+   shuffled every-third-sector upgrades. On Plus, it rotates a whole dial column
+   by the reported ticks and spends 40 charge on immediate stasis for a dial or
+   strip press. Draw under the shared
    `RENDER_LOCK` with BASIC fonts. Keep every game's cue map, exact WAV set,
    asset license, generator output and package-data entry isolated below that
    game's own `assets/games/<game_id>/` directory. Bound/cancel audio work,

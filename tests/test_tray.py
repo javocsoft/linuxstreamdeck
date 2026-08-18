@@ -33,6 +33,7 @@ class MenuItemTests(unittest.TestCase):
                 {"id": tray.MEMORY_MATCH_ID, "label": "Memory Match"},
                 {"id": tray.MINESWEEPER_ID, "label": "Minesweeper"},
                 {"id": tray.MOLE_SMASH_ID, "label": "Mole Smash"},
+                {"id": tray.NEON_RELAY_ID, "label": "Neon Relay"},
                 {"id": tray.PULSE_MEMORY_ID, "label": "Pulse Memory"},
                 {"id": tray.TIC_TAC_TOE_ID, "label": "Tic-Tac-Toe"},
             ],
@@ -84,6 +85,10 @@ class MenuItemTests(unittest.TestCase):
             tray.CIRCUIT_BREAKER_ID,
             tray.PULSE_MEMORY_ID,
             tray.MEMORY_MATCH_ID,
+            tray.MINESWEEPER_ID,
+            tray.TIC_TAC_TOE_ID,
+            tray.MASTERMIND_ID,
+            tray.NEON_RELAY_ID,
         }
 
         profile_ids = {
@@ -396,6 +401,7 @@ class EventRoutingTests(unittest.TestCase):
             (tray.MINESWEEPER_ID, "minesweeper"),
             (tray.TIC_TAC_TOE_ID, "tic_tac_toe"),
             (tray.MASTERMIND_ID, "mastermind"),
+            (tray.NEON_RELAY_ID, "neon_relay"),
         ):
             self._click(item_id)
             self.assertEqual(self.calls.pop(), ("start-game", game_id))
